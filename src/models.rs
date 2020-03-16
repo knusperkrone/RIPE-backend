@@ -1,12 +1,14 @@
+use crate::error::DBError;
 use crate::logging::APP_LOGGING;
-use crate::schema::*;
+use crate::schema::{agent_configs, sensors};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenv::dotenv;
 use std::env;
+use std::fmt::Debug;
 use std::string::String;
 
-pub fn establish_connection() -> PgConnection {
+pub fn establish_db_connection() -> PgConnection {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
@@ -14,54 +16,73 @@ pub fn establish_connection() -> PgConnection {
 
 pub fn get_sensors(conn: &PgConnection) -> Vec<SensorDao> {
     use crate::schema::sensors::dsl::*;
-    if let Ok(result) = sensors.load(conn) {
-        result
-    } else {
-        Vec::new()
+    match sensors.load(conn) {
+        Ok(result) => result,
+        Err(msg) => {
+            error!(APP_LOGGING, "Coulnd't find sensors: {}", msg);
+            Vec::new()
+        }
+    }
+}
+
+pub fn get_agent_config(conn: &PgConnection, sensor_dao: &SensorDao) -> Vec<AgentConfigDao> {
+    use crate::schema::agent_configs::dsl::*;
+    match agent_configs
+        .filter(sensor_id.eq(sensor_dao.id))
+        .load::<AgentConfigDao>(conn)
+    {
+        Ok(result) => result,
+        Err(msg) => {
+            error!(APP_LOGGING, "Coulnd't find sensors: {}", msg);
+            Vec::new()
+        }
     }
 }
 
 pub fn create_new_sensor(
     conn: &PgConnection,
     name_opt: &Option<String>,
-    config: &Vec<NewSensorAgentConfig>,
-) -> Option<SensorDao> {
+    mut configs: Vec<NewAgentConfig>,
+) -> Result<(SensorDao, Vec<AgentConfigDao>), DBError> {
     let name = name_opt.clone().unwrap_or_else(|| {
         use crate::schema::sensors::dsl::*;
         let count = sensors.count().get_result::<i64>(conn).unwrap_or(0) + 1;
-
+        // Not thread safe - but also not critical
         format!("Sensor {}", count)
     });
 
-    let new_sensor = NewSensor { name: name };
-    let sensor_result: QueryResult<SensorDao> = diesel::insert_into(sensors::table)
+    let new_sensor = NewSensor { name };
+    let sensor_dao: SensorDao = diesel::insert_into(sensors::table)
         .values(&new_sensor)
-        .get_result(conn);
-    if let Ok(sensor) = sensor_result {
-        Some(sensor)
-    } else {
-        None
-    }
+        .get_result(conn)?;
+    let config_daos: Vec<AgentConfigDao> = configs
+        .drain(..)
+        .map(|c| AgentConfigDao::from(sensor_dao.id, c))
+        .collect();
+
+    // Safe config
+    let agent_daos = diesel::insert_into(agent_configs::table)
+        .values(config_daos)
+        .get_results::<AgentConfigDao>(conn)?;
+    Ok((sensor_dao, agent_daos))
 }
 
-pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), String> {
-    use crate::schema::sensor_agent_config::dsl::*;
-    use crate::schema::sensors::dsl::*;
-    if let Err(_) =
-        diesel::delete(sensor_agent_config.filter(sensor_id.eq(sensor_id))).execute(conn)
-    {
-        return Err(format!(
-            "Fail removing sensor actions for id: {}",
-            remove_id
-        ));
-    }
-    info!(APP_LOGGING, "Removed sensor actions for id: {}", remove_id);
+fn delete_sensor_config(conn: &PgConnection, remove_id: i32) -> Result<(), DBError> {
+    use crate::schema::agent_configs::dsl::*;
+    diesel::delete(agent_configs.filter(sensor_id.eq(sensor_id))).execute(conn)?;
+    info!(APP_LOGGING, "Unpersisted sensor config: {}", remove_id);
+    Ok(())
+}
 
-    if let Ok(_) = diesel::delete(sensors.filter(id.eq(remove_id))).execute(conn) {
-        info!(APP_LOGGING, "Removed sensor for id: {}", remove_id);
-        Ok(())
+pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError> {
+    use crate::schema::sensors::dsl::*;
+    delete_sensor_config(conn, remove_id)?;
+    let count = diesel::delete(sensors.filter(id.eq(remove_id))).execute(conn)?;
+    if count == 0 {
+        Err(DBError::SensorNotFound(remove_id))
     } else {
-        Err(format!("Failed removing sensor for id: {}", remove_id))
+        info!(APP_LOGGING, "Unpersisted sensor: {}", remove_id);
+        Ok(())
     }
 }
 
@@ -71,29 +92,38 @@ struct NewSensor {
     pub name: String,
 }
 
-#[derive(Identifiable, Queryable, Debug)]
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct NewAgentConfig {
+    pub domain: String,
+    pub agent_impl: String,
+    pub state_json: String,
+}
+
+#[derive(Identifiable, Queryable, PartialEq, Debug)]
 #[table_name = "sensors"]
 pub struct SensorDao {
     pub id: i32,
     pub name: String,
 }
 
-#[derive(Insertable, std::fmt::Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-#[table_name = "sensor_agent_config"]
-pub struct NewSensorAgentConfig {
-    pub action: String,
+#[derive(Insertable, Queryable, PartialEq, Debug)]
+#[table_name = "agent_configs"]
+pub struct AgentConfigDao {
+    pub sensor_id: i32,
+    pub domain: String,
     pub agent_impl: String,
-    pub config_json: String,
+    pub state_json: String,
 }
 
-#[derive(Queryable, Associations)]
-#[belongs_to(parent = SensorDao)]
-#[table_name = "sensor_agent_config"]
-pub struct SensorAgentConfigDao {
-    sensor_id: i32,
-    pub action: String,
-    pub agent_impl: String,
-    pub config_json: String,
+impl AgentConfigDao {
+    fn from(sensor_id: i32, user_config: NewAgentConfig) -> Self {
+        AgentConfigDao {
+            sensor_id: sensor_id,
+            domain: user_config.domain,
+            agent_impl: user_config.agent_impl,
+            state_json: user_config.state_json,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -102,28 +132,28 @@ mod test {
 
     #[test]
     fn test_db_connection() {
-        establish_connection();
+        establish_db_connection();
     }
 
     #[test]
     fn test_insert_remove_sensor() {
-        let conn = establish_connection();
-        let sensor = create_new_sensor(&conn, &None, &vec![]);
-        assert!(sensor.is_some(), true);
+        let conn = establish_db_connection();
+        let sensor = create_new_sensor(&conn, &None, vec![]);
+        assert!(sensor.is_ok(), true);
 
-        let deleted = delete_sensor(&conn, sensor.unwrap().id);
+        let deleted = delete_sensor(&conn, sensor.unwrap().0.id);
         assert!(deleted.is_ok(), true);
     }
 
     #[test]
     fn test_insert_get_delete_sensor() {
-        let conn = establish_connection();
-        let sensor = create_new_sensor(&conn, &None, &vec![]);
-        assert!(sensor.is_some(), true);
+        let conn = establish_db_connection();
+        let sensor = create_new_sensor(&conn, &None, vec![]);
+        assert!(sensor.is_ok(), true);
 
         assert_ne!(get_sensors(&conn).is_empty(), true);
 
-        let deleted = delete_sensor(&conn, sensor.unwrap().id);
+        let deleted = delete_sensor(&conn, sensor.unwrap().0.id);
         assert!(deleted.is_ok(), true);
     }
 }

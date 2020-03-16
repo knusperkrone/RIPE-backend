@@ -1,22 +1,22 @@
 table! {
-    sensor_agent_config (sensor_id, action) {
+    agent_configs (sensor_id, domain) {
         sensor_id -> Int4,
-        action -> Text,
+        domain -> Text,
         agent_impl -> Text,
-        config_json -> Text,
+        state_json -> Text,
     }
 }
 
 table! {
     sensors (id) {
         id -> Int4,
-        name -> Text,
+        name -> Varchar,
     }
 }
 
-joinable!(sensor_agent_config -> sensors (sensor_id));
+joinable!(agent_configs -> sensors (sensor_id));
 
 allow_tables_to_appear_in_same_query!(
-    sensor_agent_config,
+    agent_configs,
     sensors,
 );

@@ -8,8 +8,8 @@ use sloggers::{
 pub static APP_LOGGING: Lazy<slog::Logger> = Lazy::new(|| {
     let mut builder = TerminalLoggerBuilder::new();
     if cfg!(test) {
-        builder.level(Severity::Error);
-        builder.destination(Destination::Stderr);
+        builder.level(Severity::Debug);
+        builder.destination(Destination::Stdout);
     } else {
         builder.level(Severity::Debug);
         builder.destination(Destination::Stdout);

@@ -1,3 +1,4 @@
+use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::observer::SensorContainer;
 use crate::sensor::SensorData;
@@ -26,7 +27,7 @@ impl MqttSensorClient {
             .unwrap();
 
         let mqttoptions = MqttOptions::new(mqtt_name, mqtt_url, mqtt_port);
-        let (requests_tx, requests_rx) = channel(10);
+        let (requests_tx, requests_rx) = channel(std::i32::MAX as usize); // FIXME?
         let eventloop = eventloop(mqttoptions, requests_rx);
         let client = MqttSensorClient {
             requests_tx: requests_tx,
@@ -34,16 +35,30 @@ impl MqttSensorClient {
         (client, eventloop)
     }
 
-    pub async fn subscribe_sensor(&mut self, sensor_id: i32) {
-        let mut sub = rumq_client::empty_subscribe();
-        for topic in self.build_topics(sensor_id) {
+    pub async fn subscribe_sensor(&mut self, sensor_id: i32) -> Result<(), MQTTError> {
+        let mut topics = self.build_topics(sensor_id);
+        let mut sub = rumq_client::subscribe(topics.pop().unwrap(), QoS::AtLeastOnce);
+        for topic in topics {
             sub.add(topic, QoS::AtLeastOnce);
         }
 
-        let _ = self.requests_tx.send(Request::Subscribe(sub)).await;
+        if cfg!(test) {
+            // WORKAROUND: Test instances are sometimes not attached to eventloop
+            let result = self.requests_tx.send(Request::Subscribe(sub)).await;
+            info!(APP_LOGGING, "[TEST] subscribe result: {:?}", result);
+        } else {
+            self.requests_tx.send(Request::Subscribe(sub)).await?;
+            info!(
+                APP_LOGGING,
+                "Subscribed topics: {:?}",
+                self.build_topics(sensor_id)
+            );
+        }
+        Ok(())
     }
 
-    pub async fn unsubscribe_sensor(&mut self, _sensor_id: i32) {
+    pub async fn unsubscribe_sensor(&mut self, sensor_id: i32) {
+        let mut _topics = self.build_topics(sensor_id);
         warn!(
             APP_LOGGING,
             "Cannot unsubscribe yet, due rumq-clients alpha state!"

@@ -1,5 +1,6 @@
 use crate::agent::Agent;
-use crate::models::{SensorDao, SensorAgentConfigDao};
+use crate::error::AgentError;
+use crate::models::{AgentConfigDao, SensorDao};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::vec::Vec;
@@ -10,23 +11,23 @@ pub struct SensorHandle {
 }
 
 impl SensorHandle {
-    pub fn from(sensor: SensorDao, actions: &Vec<SensorAgentConfigDao>) -> Option<SensorHandle> {
-        let agent_optionals: Vec<Option<Agent>> =
-            actions.iter().map(|config| Agent::new(config)).collect();
+    pub fn from(sensor: SensorDao, actions: &Vec<AgentConfigDao>) -> Result<SensorHandle, AgentError> {
+        // TODO: Filter invalid!
+        let agents: Vec<Agent> = actions
+            .into_iter()
+            .map(|config| Agent::from(config))
+            .filter_map(Result::ok)
+            .collect();
 
-        if agent_optionals.contains(&Option::None) {
-            None // Invalid config provided!
-        } else {
-            Some(SensorHandle {
-                dao: sensor,
-                agents: agent_optionals.into_iter().filter_map(|a| a).collect(),
-            })
-        }
+        Ok(SensorHandle {
+            dao: sensor,
+            agents,
+        })
     }
 
     pub fn on_data(&mut self, data: SensorData) {
         for agent in &mut self.agents {
-            // TODO: Async!
+            // TODO: Async
             agent.on_data(data.clone());
         }
     }
@@ -38,7 +39,7 @@ impl SensorHandle {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SensorData {
-    #[serde(skip, default = "now_timestamp")]
+    #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
     pub sensor_id: u32,
     pub grow_id: u32,
@@ -53,7 +54,7 @@ pub struct SensorData {
 impl std::default::Default for SensorData {
     fn default() -> Self {
         SensorData {
-            timestamp: now_timestamp(),
+            timestamp: Utc::now(),
             sensor_id: 0,
             grow_id: 0,
             temperature: None,
@@ -64,8 +65,4 @@ impl std::default::Default for SensorData {
             carbon: None,
         }
     }
-}
-
-fn now_timestamp() -> DateTime<Utc> {
-    Utc::now()
 }

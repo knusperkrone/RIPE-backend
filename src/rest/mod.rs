@@ -1,16 +1,20 @@
+use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
 use crate::observer::ConcurrentSensorObserver;
+use actix_web::http::StatusCode;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use std::sync::Arc;
 
 pub mod dto {
-    use crate::models::NewSensorAgentConfig;
-    use serde::{Deserialize, Serialize};
     use std::string::String;
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::agent::AgentRegisterConfig;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct RegisterRequestDto {
-        pub actions: Vec<AgentRegisterConfig>,
+        pub agents: Vec<AgentRegisterConfig>,
         pub name: Option<String>,
     }
 
@@ -24,35 +28,56 @@ pub mod dto {
         pub id: i32,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize)]
     pub struct UnregisterResponseDto {
         pub id: i32,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct ErrorResponseDto {
+        pub error: String,
     }
 }
 
 async fn sensor_register(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     register_request: web::Json<dto::RegisterRequestDto>,
-) -> Option<HttpResponse> {
-    if let Some(insert_id) = observer
-        .register_new_sensor(&register_request.name, &register_request.actions)
-        .await
-    {
-        Some(HttpResponse::Ok().json(dto::RegisterResponseDto { id: insert_id }))
-    } else {
-        None
+) -> HttpResponse {
+    let resp = observer
+        .register_new_sensor(&register_request.name, &register_request.agents)
+        .await;
+    match resp {
+        Ok(insert_id) => HttpResponse::Ok().json(dto::RegisterResponseDto { id: insert_id }),
+        Err(ObserverError::Internal(err)) => {
+            error!(APP_LOGGING, "{}", err);
+            HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Err(ObserverError::User(err_msg)) => {
+            warn!(APP_LOGGING, "{}", err_msg);
+            HttpResponse::build(StatusCode::BAD_REQUEST).json(dto::ErrorResponseDto {
+                error: format!("{}", err_msg),
+            })
+        }
     }
 }
 
 async fn sensor_unregister(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     unregister_request: web::Json<dto::UnregisterRequestDto>,
-) -> Option<HttpResponse> {
+) -> HttpResponse {
     let remove_id = unregister_request.id;
-    if observer.remove_sensor(remove_id).await {
-        Some(HttpResponse::Ok().json(dto::RegisterResponseDto { id: remove_id }))
-    } else {
-        None
+    match observer.remove_sensor(remove_id).await {
+        Ok(_) => HttpResponse::Ok().json(dto::RegisterResponseDto { id: remove_id }),
+        Err(ObserverError::Internal(err)) => {
+            error!(APP_LOGGING, "{}", err);
+            HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+        Err(ObserverError::User(err_msg)) => {
+            warn!(APP_LOGGING, "{}", err_msg);
+            HttpResponse::build(StatusCode::BAD_REQUEST).json(dto::ErrorResponseDto {
+                error: format!("{}", err_msg),
+            })
+        }
     }
 }
 
@@ -84,7 +109,7 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::agent::Agent;
+    use crate::agent::{Agent, AgentRegisterConfig};
     use actix_web::dev::Service;
     use actix_web::{test, web, App};
 
@@ -92,24 +117,21 @@ mod test {
     async fn test_insert_sensor() {
         // prepare
         let (observer, _) = ConcurrentSensorObserver::new();
-        let mut app = test::init_service(
-            App::new().app_data(web::Data::new(observer)).service(
-                web::resource("/api/sensor/register")
-                    .route(web::post().to(sensor_register))
-                    .route(web::delete().to(sensor_unregister)),
-            ),
-        )
-        .await;
+        let mut app =
+            test::init_service(App::new().app_data(web::Data::new(observer)).service(
+                web::resource("/api/sensor/register").route(web::post().to(sensor_register)),
+            ))
+            .await;
 
         let request_json = dto::RegisterRequestDto {
             name: None,
-            actions: vec![AgentRegisterConfig::new(
-                Agent::WATER_IDENTIFIER.to_string(),
-            )],
+            agents: vec![AgentRegisterConfig {
+                domain: Agent::WATER_DOMAIN.to_string(),
+            }],
         };
 
         // execute
-        for i in 0..10 {
+        for _ in 0..2 {
             let req = test::TestRequest::post()
                 .uri("/api/sensor/register")
                 .set_json(&request_json)
@@ -122,67 +144,74 @@ mod test {
                 _ => panic!("Response error"),
             };
 
-            // validate
-            let serialized_resp: dto::RegisterResponseDto = serde_json::from_slice(body).unwrap();
-            assert_eq!(serialized_resp.id, i);
+            // check panic
+            serde_json::from_slice::<dto::RegisterResponseDto>(body).unwrap();
         }
     }
 
     #[actix_rt::test]
     async fn test_remove_sensor() {
         // prepare
-        let preferred_id = 0x0;
         let (observer, _) = ConcurrentSensorObserver::new();
         let mut app = test::init_service(
             App::new().app_data(web::Data::new(observer)).service(
                 web::resource("api/sensor/register")
-                    .route(web::post().to(sensor_register))
-                    .route(web::delete().to(sensor_unregister)),
+                    .route(web::delete().to(sensor_unregister))
+                    .route(web::post().to(sensor_register)),
             ),
         )
         .await;
+
+        // Create new json and parse id
         let create_json = dto::RegisterRequestDto {
             name: None,
-            actions: vec![AgentRegisterConfig::new(
-                Agent::WATER_IDENTIFIER.to_string(),
-            )],
+            agents: vec![AgentRegisterConfig {
+                domain: Agent::WATER_DOMAIN.to_string(),
+            }],
         };
-        let delete_json = dto::UnregisterRequestDto { id: preferred_id };
-
-        // execute
         let mut req = test::TestRequest::post()
             .uri("/api/sensor/register")
             .set_json(&create_json)
             .to_request();
-        let _ = app.call(req).await.unwrap();
 
+        let mut resp = app.call(req).await.unwrap();
+        assert_eq!(200, resp.status());
+        let body = match resp.response().body().as_ref() {
+            Some(actix_web::body::Body::Bytes(bytes)) => bytes,
+            _ => panic!("Response error"),
+        };
+
+        // Prepare delete call
+        let created_id = serde_json::from_slice::<dto::RegisterResponseDto>(body)
+            .unwrap()
+            .id;
+        let delete_json = dto::UnregisterRequestDto { id: created_id };
+
+        // execute
         req = test::TestRequest::delete()
             .uri("/api/sensor/register")
             .set_json(&delete_json)
             .to_request();
-        let resp_delete = app.call(req).await.unwrap();
+        resp = app.call(req).await.unwrap();
+        assert_eq!(200, resp.status());
 
         // validate
-        let body = match resp_delete.response().body().as_ref() {
+        let body = match resp.response().body().as_ref() {
             Some(actix_web::body::Body::Bytes(bytes)) => bytes,
             _ => panic!("Response error"),
         };
-        let serialized_resp: dto::UnregisterResponeDto = serde_json::from_slice(&body).unwrap();
-        assert_eq!(serialized_resp.id, preferred_id);
+        let del_resp: dto::UnregisterResponseDto = serde_json::from_slice(&body).unwrap();
+        assert_eq!(created_id, del_resp.id);
     }
 
     #[actix_rt::test]
     async fn test_invalid_remove_sensor() {
         // prepare
-        let preferred_id = 0x80;
+        let preferred_id = std::i32::MAX;
         let (observer, _) = ConcurrentSensorObserver::new();
-        let mut app = test::init_service(
-            App::new().app_data(web::Data::new(observer)).service(
-                web::resource("api/sensor/register")
-                    .route(web::post().to(sensor_register))
-                    .route(web::delete().to(sensor_unregister)),
-            ),
-        )
+        let mut app = test::init_service(App::new().app_data(web::Data::new(observer)).service(
+            web::resource("api/sensor/register").route(web::delete().to(sensor_unregister)),
+        ))
         .await;
         let delete_json = dto::UnregisterRequestDto { id: preferred_id };
 
@@ -194,6 +223,6 @@ mod test {
         let resp_delete = app.call(req).await.unwrap();
 
         // validate
-        assert_eq!(404, resp_delete.status());
+        assert_eq!(400, resp_delete.status());
     }
 }

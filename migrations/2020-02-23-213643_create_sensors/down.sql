@@ -1,3 +1,3 @@
 -- This file should undo anything in `up.sql`
-DROP TABLE sensor_agent_config;
+DROP TABLE agent_configs;
 DROP TABLE sensors;

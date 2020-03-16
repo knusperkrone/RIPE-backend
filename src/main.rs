@@ -3,22 +3,13 @@ extern crate diesel;
 #[macro_use]
 extern crate slog;
 
-extern crate actix;
-extern crate actix_web;
-extern crate dotenv;
-extern crate futures;
-extern crate rumq_client;
-extern crate serde;
-extern crate serde_json;
-extern crate sloggers;
-extern crate tokio;
-
 mod agent;
+mod error;
 mod logging;
-pub mod models;
+mod models;
 mod observer;
 mod rest;
-pub mod schema;
+mod schema;
 mod sensor;
 
 #[actix_rt::main]

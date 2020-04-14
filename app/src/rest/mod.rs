@@ -28,12 +28,12 @@ pub mod dto {
         pub id: i32,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize)]
     pub struct UnregisterResponseDto {
         pub id: i32,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize)]
     pub struct ErrorResponseDto {
         pub error: String,
     }
@@ -83,7 +83,7 @@ async fn sensor_unregister(
 
 pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
     // Set up logging
-    info!(APP_LOGGING, "Start listening to REST endpoints");
+    info!(APP_LOGGING, "Start listening to REST endpoints"); 
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
@@ -123,12 +123,12 @@ mod test {
             ))
             .await;
 
+        
         let request_json = dto::RegisterRequestDto {
             name: None,
-            agents: vec![AgentRegisterConfig {
-                domain: Agent::WATER_DOMAIN.to_string(),
-            }],
+            agents: vec![], // TODO: Load plugin
         };
+
 
         // execute
         for _ in 0..2 {
@@ -165,9 +165,7 @@ mod test {
         // Create new json and parse id
         let create_json = dto::RegisterRequestDto {
             name: None,
-            agents: vec![AgentRegisterConfig {
-                domain: Agent::WATER_DOMAIN.to_string(),
-            }],
+            agents: vec![], // TODO: Load plugin
         };
         let mut req = test::TestRequest::post()
             .uri("/api/sensor/register")

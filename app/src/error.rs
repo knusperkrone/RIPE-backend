@@ -1,3 +1,4 @@
+use plugins_core::error::AgentError;
 use std::error;
 use std::fmt;
 
@@ -25,32 +26,21 @@ impl From<diesel::result::Error> for DBError {
 }
 
 #[derive(Debug)]
-pub enum AgentError {
-    InvalidConfig(std::string::String, serde_json::error::Error),
-    InvalidDomain(std::string::String),
-    InvalidIdentifier(std::string::String),
-}
-
-impl fmt::Display for AgentError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            AgentError::InvalidConfig(msg, e) => write!(f, "invalid config: {}, {:?}", msg, e),
-            AgentError::InvalidDomain(msg) => write!(f, "Invalid domain: {}", msg),
-            AgentError::InvalidIdentifier(msg) => write!(f, "Invalid identifier: {}", msg),
-        }
-    }
-}
-
-impl error::Error for AgentError {}
-
-#[derive(Debug)]
 pub enum MQTTError {
+    NoSensor(),
+    PathError(std::string::String),
+    PayloadError(std::string::String),
+    ParseError(serde_json::error::Error),
     SendError(tokio::sync::mpsc::error::SendError<rumq_client::Request>),
 }
 
 impl fmt::Display for MQTTError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            MQTTError::NoSensor() => write!(f, "No sensor found"),
+            MQTTError::PathError(msg) => write!(f, "Patherror: {}", msg),
+            MQTTError::PayloadError(msg) => write!(f, "Invalid payload: {}", msg),
+            MQTTError::ParseError(e) => e.fmt(f),
             MQTTError::SendError(e) => e.fmt(f),
         }
     }
@@ -61,6 +51,12 @@ impl error::Error for MQTTError {}
 impl From<tokio::sync::mpsc::error::SendError<rumq_client::Request>> for MQTTError {
     fn from(err: tokio::sync::mpsc::error::SendError<rumq_client::Request>) -> Self {
         MQTTError::SendError(err)
+    }
+}
+
+impl From<serde_json::error::Error> for MQTTError {
+    fn from(err: serde_json::error::Error) -> Self {
+        MQTTError::ParseError(err)
     }
 }
 

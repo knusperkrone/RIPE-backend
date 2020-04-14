@@ -4,6 +4,7 @@ use crate::schema::{agent_configs, sensors};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenv::dotenv;
+use plugins_core::AgentConfig;
 use std::env;
 use std::fmt::Debug;
 use std::string::String;
@@ -97,6 +98,16 @@ pub struct NewAgentConfig {
     pub domain: String,
     pub agent_impl: String,
     pub state_json: String,
+}
+
+impl From<AgentConfig> for NewAgentConfig {
+    fn from(other: AgentConfig) -> Self {
+        NewAgentConfig {
+            domain: other.domain,
+            agent_impl: other.name,
+            state_json: other.state_json,
+        }
+    }
 }
 
 #[derive(Identifiable, Queryable, PartialEq, Debug)]

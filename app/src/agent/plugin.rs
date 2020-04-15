@@ -1,4 +1,3 @@
-use crate::agent::AgentRegisterConfig;
 use crate::logging::APP_LOGGING;
 use crate::models::AgentConfigDao;
 use crate::models::NewAgentConfig;
@@ -11,7 +10,7 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn new(proxy: Box<dyn AgentTrait>) -> Self {
+    pub fn new(proxy: Box<dyn AgentTrait>) -> Self {
         Agent { proxy: proxy }
     }
 
@@ -35,30 +34,39 @@ impl AgentFactory {
             libraries: HashMap::new(),
         };
 
+        // load plugins
         let plugins_dir = std::path::Path::new("./plugins/target/release/");
-        for entry in std::fs::read_dir(plugins_dir).unwrap() {
-            let path: std::path::PathBuf = entry.unwrap().path();
-            if path.is_file() && path.extension().is_some() {
-                let ext = path.extension().unwrap();
-                // load dynamic libraries
-                if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
-                    unsafe {
-                        match factory.load_library(path.as_os_str()) {
-                            Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
-                            Err(err) => {
-                                error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
+        if let Ok(entries) = std::fs::read_dir(plugins_dir) {
+            for entry in entries {
+                let path: std::path::PathBuf = entry.unwrap().path();
+                if path.is_file() && path.extension().is_some() {
+                    let ext = path.extension().unwrap();
+                    // load dynamic libraries
+                    if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
+                        unsafe {
+                            match factory.load_library(path.as_os_str()) {
+                                Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
+                                Err(err) => {
+                                    error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
+                                }
                             }
                         }
                     }
                 }
             }
+        } else {
+            warn!(APP_LOGGING, "Coulnd't load default plugins!");
         }
 
         factory
     }
 
-    pub fn new_agent(&self, config: &AgentRegisterConfig) -> Result<Agent, AgentError> {
-        unsafe { Ok(self.build_agent(&config.agent_name, None)?) }
+    pub fn agents(&self) -> Vec<String> {
+        self.libraries.keys().map(|name| name.clone()).collect()
+    }
+
+    pub fn new_agent(&self, agent_name: &String) -> Result<Agent, AgentError> {
+        unsafe { Ok(self.build_agent(agent_name, None)?) }
     }
 
     pub fn restore_agent(&self, config: &AgentConfigDao) -> Result<Agent, AgentError> {
@@ -74,14 +82,12 @@ impl AgentFactory {
             .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
             .read();
 
-        
         if decl.rustc_version != plugins_core::RUSTC_VERSION
             || decl.core_version != plugins_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
             Err(io::Error::new(io::ErrorKind::Other, "Version mismatch"))
         } else if self.libraries.contains_key(decl.agent_name) {
-            
             Err(io::Error::new(io::ErrorKind::Other, "Duplicate library"))
         } else {
             self.libraries.insert(decl.agent_name.to_owned(), library);

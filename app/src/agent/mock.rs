@@ -7,6 +7,12 @@ pub struct MockAgent {
     pub last_forced: Option<Duration>,
 }
 
+impl MockAgent {
+    pub fn new() -> Self {
+        MockAgent { last_action: None, last_forced: None }
+    }
+}
+
 impl AgentTrait for MockAgent {
     fn do_action(&mut self, _data: &SensorData) -> Option<Payload> {
         self.last_action = Some(1);
@@ -20,11 +26,10 @@ impl AgentTrait for MockAgent {
     fn deserialize(&self) -> AgentConfig {
         AgentConfig {
             domain: "Mock".to_owned(),
-            name: "MockAgent".to_string(), 
+            name: "MockAgent".to_string(),
             state_json: "{}".to_string(),
         }
     }
-    
     fn state(&self) -> AgentState {
         AgentState::Active
     }

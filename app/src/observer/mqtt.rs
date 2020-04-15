@@ -166,6 +166,7 @@ impl MqttSensorClient {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::agent::{mock::MockAgent, Agent};
     use crate::models::SensorDao;
     use crate::sensor::SensorHandle;
 
@@ -208,7 +209,7 @@ mod test {
                 id: sensor_id,
                 name: "mock".to_string(),
             },
-            agents: vec![],
+            agents: vec![Agent::new(Box::new(MockAgent::new()))],
         };
         container.insert_sensor(mock_sensor);
         let mocked_container = Arc::new(RwLock::new(container));
@@ -228,17 +229,9 @@ mod test {
             .await;
 
         // validate
-
-        /*
-        // TODO:
         assert_eq!(result.is_ok(), true);
         let container = mocked_container.read().unwrap();
-        let sensor = container.sensors(sensor_id).unwrap();
-        if let Agent::MockAgent(sensor) = &sensor.agents[0] {
-            assert_eq!(sensor.last_action.is_some(), true)
-        } else {
-            panic!("Invalid agent!");
-        }
-        */
+        let _sensor = container.sensors(sensor_id).unwrap();
+        // TODO: check agent
     }
 }

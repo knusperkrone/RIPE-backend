@@ -38,6 +38,11 @@ impl ConcurrentSensorObserver {
         (observer_arc, dispatcher_future)
     }
 
+    pub fn agents(&self) -> Vec<String> {
+        let container_factory = self.agent_factory.lock().unwrap();
+        container_factory.agents()
+    }
+
     pub async fn on_message(&self, msg: Publish) {
         let mut client = self.mqtt_client.write().unwrap();
         match client.on_message(self.container_ref.clone(), msg).await {
@@ -49,59 +54,23 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    async fn dispatch_mqtt(
-        self: Arc<ConcurrentSensorObserver>,
-        mut eventloop: rumq_client::MqttEventLoop,
-    ) -> () {
-        let mut reconnects: i32 = 0;
-        let mut stream = eventloop.connect().await.unwrap();
-
-        info!(APP_LOGGING, "MQTT Connected");
-        self.populate().await; // Subscribing to persisted sensors
-
-        loop {
-            while let Some(item) = stream.next().await {
-                match item {
-                    rumq_client::Notification::Publish(msg) => {
-                        info!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic_name);
-                        self.on_message(msg).await;
-                    }
-                    rumq_client::Notification::Suback(_) => (),
-                    _ => warn!(APP_LOGGING, "Received unexpected = {:?}", item),
-                };
-            }
-
-            tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
-            error!(APP_LOGGING, "MQTT Disconnected - retry {}", reconnects);
-            reconnects += 1;
-        }
-    }
-
     pub async fn register_new_sensor(
         &self,
         name: &Option<String>,
         configs: &Vec<AgentRegisterConfig>,
     ) -> Result<i32, ObserverError> {
-        // Transform configs
-        let agent_factory = self.agent_factory.lock().unwrap();
-
-        let agents_opts: Result<Vec<Agent>, _> = configs
-            .into_iter()
-            .map(|config| agent_factory.new_agent(config))
-            .collect();
-        if agents_opts.is_err() {
-            return Err(ObserverError::from(agents_opts.err().unwrap()));
-        }
-        let agents: Vec<Agent> = agents_opts.ok().unwrap();
+        // Build agents - and generate their configs
+        let agents: Vec<Agent> = self.build_agents(configs)?;
         let agent_config: Vec<NewAgentConfig> = agents.iter().map(|x| x.deserialize()).collect();
 
+        // Persist agent configs
         let conn = self.db_conn.lock().unwrap();
         let (sensor_dao, agent_daos) = models::create_new_sensor(&conn, name, agent_config)?;
         let dao_id = sensor_dao.id;
         match self.register_sensor_dao(sensor_dao, &agent_daos).await {
             Ok(id) => Ok(id),
             Err(err) => {
-                models::delete_sensor(&conn, dao_id)?;
+                models::delete_sensor(&conn, dao_id)?; // Fallback delete
                 Err(ObserverError::from(err))
             }
         }
@@ -139,6 +108,18 @@ impl ConcurrentSensorObserver {
         }
     }
 
+    fn build_agents(
+        &self,
+        configs: &Vec<AgentRegisterConfig>,
+    ) -> Result<Vec<Agent>, ObserverError> {
+        let agent_factory = self.agent_factory.lock().unwrap();
+        let agents_result: Result<Vec<Agent>, _> = configs
+            .into_iter()
+            .map(|config| agent_factory.new_agent(&config.agent_name))
+            .collect();
+        Ok(agents_result?)
+    }
+
     async fn register_sensor_dao(
         &self,
         sensor_dao: SensorDao,
@@ -155,6 +136,34 @@ impl ConcurrentSensorObserver {
             .subscribe_sensor(sensor_id)
             .await?;
         Ok(sensor_id)
+    }
+
+    async fn dispatch_mqtt(
+        self: Arc<ConcurrentSensorObserver>,
+        mut eventloop: rumq_client::MqttEventLoop,
+    ) -> () {
+        let mut reconnects: i32 = 0;
+        let mut stream = eventloop.connect().await.unwrap();
+
+        info!(APP_LOGGING, "MQTT Connected");
+        self.populate().await; // Subscribing to persisted sensors
+
+        loop {
+            while let Some(item) = stream.next().await {
+                match item {
+                    rumq_client::Notification::Publish(msg) => {
+                        info!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic_name);
+                        self.on_message(msg).await;
+                    }
+                    rumq_client::Notification::Suback(_) => (),
+                    _ => warn!(APP_LOGGING, "Received unexpected = {:?}", item),
+                };
+            }
+
+            tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
+            error!(APP_LOGGING, "MQTT Disconnected - retry {}", reconnects);
+            reconnects += 1;
+        }
     }
 }
 

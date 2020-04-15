@@ -81,9 +81,14 @@ async fn sensor_unregister(
     }
 }
 
+async fn agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
+    let agents = observer.agents();
+    HttpResponse::Ok().json(agents)
+}
+
 pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
     // Set up logging
-    info!(APP_LOGGING, "Start listening to REST endpoints"); 
+    info!(APP_LOGGING, "Start listening to REST endpoints");
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
@@ -93,7 +98,8 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
             .data(web::JsonConfig::default().limit(4096))
             .wrap(middleware::Logger::default())
             .service(
-                web::resource("api/sensor/register")
+                web::resource("api/sensor")
+                    .route(web::get().to(agents))
                     .route(web::post().to(sensor_register))
                     .route(web::delete().to(sensor_unregister)),
             )
@@ -109,7 +115,6 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::agent::{Agent, AgentRegisterConfig};
     use actix_web::dev::Service;
     use actix_web::{test, web, App};
 
@@ -117,23 +122,22 @@ mod test {
     async fn test_insert_sensor() {
         // prepare
         let (observer, _) = ConcurrentSensorObserver::new();
-        let mut app =
-            test::init_service(App::new().app_data(web::Data::new(observer)).service(
-                web::resource("/api/sensor/register").route(web::post().to(sensor_register)),
-            ))
-            .await;
+        let mut app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(observer))
+                .service(web::resource("/api/sensor").route(web::post().to(sensor_register))),
+        )
+        .await;
 
-        
         let request_json = dto::RegisterRequestDto {
             name: None,
             agents: vec![], // TODO: Load plugin
         };
 
-
         // execute
         for _ in 0..2 {
             let req = test::TestRequest::post()
-                .uri("/api/sensor/register")
+                .uri("/api/sensor")
                 .set_json(&request_json)
                 .to_request();
             let resp = app.call(req).await.unwrap();
@@ -155,7 +159,7 @@ mod test {
         let (observer, _) = ConcurrentSensorObserver::new();
         let mut app = test::init_service(
             App::new().app_data(web::Data::new(observer)).service(
-                web::resource("api/sensor/register")
+                web::resource("api/sensor")
                     .route(web::delete().to(sensor_unregister))
                     .route(web::post().to(sensor_register)),
             ),
@@ -168,7 +172,7 @@ mod test {
             agents: vec![], // TODO: Load plugin
         };
         let mut req = test::TestRequest::post()
-            .uri("/api/sensor/register")
+            .uri("/api/sensor")
             .set_json(&create_json)
             .to_request();
 
@@ -187,7 +191,7 @@ mod test {
 
         // execute
         req = test::TestRequest::delete()
-            .uri("/api/sensor/register")
+            .uri("/api/sensor")
             .set_json(&delete_json)
             .to_request();
         resp = app.call(req).await.unwrap();
@@ -207,15 +211,17 @@ mod test {
         // prepare
         let preferred_id = std::i32::MAX;
         let (observer, _) = ConcurrentSensorObserver::new();
-        let mut app = test::init_service(App::new().app_data(web::Data::new(observer)).service(
-            web::resource("api/sensor/register").route(web::delete().to(sensor_unregister)),
-        ))
+        let mut app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(observer))
+                .service(web::resource("api/sensor").route(web::delete().to(sensor_unregister))),
+        )
         .await;
         let delete_json = dto::UnregisterRequestDto { id: preferred_id };
 
         // execute
         let req = test::TestRequest::delete()
-            .uri("/api/sensor/register")
+            .uri("/api/sensor")
             .set_json(&delete_json)
             .to_request();
         let resp_delete = app.call(req).await.unwrap();

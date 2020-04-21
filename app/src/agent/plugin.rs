@@ -1,8 +1,10 @@
 use crate::logging::APP_LOGGING;
 use crate::models::AgentConfigDao;
 use crate::models::NewAgentConfig;
+use dotenv::dotenv;
 use libloading::Library;
 use plugins_core::{error::AgentError, AgentTrait, Payload, PluginDeclaration, SensorData};
+use std::env;
 use std::{collections::HashMap, ffi::OsStr, io, string::String};
 
 pub struct Agent {
@@ -33,31 +35,9 @@ impl AgentFactory {
         let mut factory = AgentFactory {
             libraries: HashMap::new(),
         };
-
-        // load plugins
-        let plugins_dir = std::path::Path::new("./plugins/target/release/");
-        if let Ok(entries) = std::fs::read_dir(plugins_dir) {
-            for entry in entries {
-                let path: std::path::PathBuf = entry.unwrap().path();
-                if path.is_file() && path.extension().is_some() {
-                    let ext = path.extension().unwrap();
-                    // load dynamic libraries
-                    if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
-                        unsafe {
-                            match factory.load_library(path.as_os_str()) {
-                                Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
-                                Err(err) => {
-                                    error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            warn!(APP_LOGGING, "Coulnd't load default plugins!");
+        unsafe {
+            factory.load_plugins();
         }
-
         factory
     }
 
@@ -71,6 +51,37 @@ impl AgentFactory {
 
     pub fn restore_agent(&self, config: &AgentConfigDao) -> Result<Agent, AgentError> {
         unsafe { Ok(self.build_agent(&config.agent_impl, Some(&config.state_json))?) }
+    }
+
+    unsafe fn load_plugins(&mut self) {
+        dotenv().ok();
+        let plugin_dirs = env::var("PLUGIN_DIRS").expect("PLUGIN_DIRS must be set");
+        let dir_list: Vec<&str> = plugin_dirs.split(",").collect();
+
+        for path in dir_list {
+            let plugins_dir = std::path::Path::new(path);
+            let entries_res = std::fs::read_dir(plugins_dir);
+            if entries_res.is_err() {
+                error!(APP_LOGGING, "Invalid plugin dir: {}", path);
+                continue;
+            }
+
+            for entry in entries_res.unwrap() {
+                let path: std::path::PathBuf = entry.unwrap().path();
+                if path.is_file() && path.extension().is_some() {
+                    // Extact file extension and load .so/.ddl
+                    let ext = path.extension().unwrap();
+                    if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
+                        match self.load_library(path.as_os_str()) {
+                            Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
+                            Err(err) => {
+                                error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     unsafe fn load_library<P: AsRef<OsStr>>(&mut self, library_path: P) -> io::Result<()> {

@@ -1413,15 +1413,15 @@ checksum = "cabe4fa914dec5870285fa7f71f602645da47c486e68486d2b4ceb4a343e90ac"
 
 [[package]]
 name = "rumq-client"
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6686ed5605b678a0e2c53d4dcc6a35be0f8160735afb95f92313961a0ba53be8"
+checksum = "ac62c2ceeedd62c2e492fd91b5e555a6f1cb5008be0c7d87f2ea691b6c5443ef"
 dependencies = [
  "async-stream",
- "derive_more",
  "futures-util",
  "log 0.4.8",
  "rumq-core",
+ "thiserror",
  "tokio",
  "tokio-rustls",
  "tokio-util 0.3.1",
@@ -1430,14 +1430,14 @@ dependencies = [
 
 [[package]]
 name = "rumq-core"
-version = "0.1.0-alpha.8"
+version = "0.1.0-alpha.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "731b4f7e07a40995531d2e81e5140d4b2fc2143db2db1eea39d7d5502cefc55e"
+checksum = "7a9e1af4026f37c89a92e70f0e80208515917990b50128943f6110117a9540af"
 dependencies = [
  "async-trait",
  "byteorder",
  "bytes",
- "derive_more",
+ "thiserror",
  "tokio",
  "tokio-util 0.3.1",
 ]
@@ -1738,6 +1738,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb6bfa289a4d7c5766392812c0a1f4c1ba45afa1ad47803c11e1f407d846d75f"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "thiserror"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54b3d3d2ff68104100ab257bb6bb0cb26c901abe4bd4ba15961f3bf867924012"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca972988113b7715266f91250ddb98070d033c62a011fa0fcc57434a649310dd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

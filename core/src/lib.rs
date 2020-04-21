@@ -14,8 +14,10 @@ pub struct PluginDeclaration {
     pub rustc_version: &'static str,
     pub core_version: &'static str,
     pub agent_name: &'static str,
-    pub agent_builder:
-        unsafe extern "C" fn(config: Option<&std::string::String>) -> Box<dyn AgentTrait>,
+    pub agent_builder: unsafe extern "C" fn(
+        config: Option<&std::string::String>,
+        logger: slog::Logger,
+    ) -> Box<dyn AgentTrait>,
 }
 
 #[macro_export]

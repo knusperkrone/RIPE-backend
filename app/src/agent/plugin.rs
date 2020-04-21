@@ -116,7 +116,10 @@ impl AgentFactory {
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
                 .unwrap() // Panic should be impossible
                 .read();
-            let plugin_agent = (decl.agent_builder)(state_json);
+
+            // Init logger and pass it to plugin
+            let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
+            let plugin_agent = (decl.agent_builder)(state_json, logger.clone());
             Ok(Agent::new(plugin_agent))
         } else {
             Err(AgentError::InvalidIdentifier(agent_name.clone()))

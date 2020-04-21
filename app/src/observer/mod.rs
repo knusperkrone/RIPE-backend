@@ -50,7 +50,7 @@ impl ConcurrentSensorObserver {
                 // TODO: Persist data
             }
             Ok(None) => (),
-            Err(e) => warn!(APP_LOGGING, "On message{}", e),
+            Err(e) => warn!(APP_LOGGING, "On message error: {}", e),
         }
     }
 
@@ -143,12 +143,21 @@ impl ConcurrentSensorObserver {
         mut eventloop: rumq_client::MqttEventLoop,
     ) -> () {
         let mut reconnects: i32 = 0;
-        let mut stream = eventloop.connect().await.unwrap();
-
-        info!(APP_LOGGING, "MQTT Connected");
-        self.populate().await; // Subscribing to persisted sensors
 
         loop {
+            let stream_res = eventloop.connect().await;
+            if stream_res.is_err() {
+                info!(APP_LOGGING, "Failed connecting mqtt!");
+                tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+
+            info!(APP_LOGGING, "MQTT Connected");
+            if reconnects == 0 {
+                self.populate().await; // Subscribing to persisted sensors
+            }
+
+            let mut stream = stream_res.unwrap();
             while let Some(item) = stream.next().await {
                 match item {
                     rumq_client::Notification::Publish(msg) => {

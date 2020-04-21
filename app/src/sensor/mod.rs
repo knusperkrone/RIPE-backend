@@ -73,6 +73,7 @@ impl SensorHandleData {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SensorDataDto {
+    #[serde(default = "Utc::now", skip_deserializing)]
     pub timestamp: DateTime<Utc>,
     pub refresh: Option<bool>,
     pub temperature: Option<f32>,

@@ -15,6 +15,7 @@ pub struct MqttSensorClient {
 
 impl MqttSensorClient {
     pub const SENSOR_TOPIC: &'static str = "sensor";
+    pub const CMD_TOPIC: &'static str = "cmd";
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
@@ -83,7 +84,8 @@ impl MqttSensorClient {
         }
 
         let sensor_id: i32;
-        if let Ok(parsed_id) = path[1].parse() {
+        let endpoint = path[1];
+        if let Ok(parsed_id) = path[2].parse() {
             sensor_id = parsed_id;
         } else {
             return Err(MQTTError::PathError(format!(
@@ -101,10 +103,9 @@ impl MqttSensorClient {
             ));
         }
 
-        let endpoint = path[2];
         match endpoint {
             MqttSensorClient::DATA_TOPIC => {
-                let sensor_dto = serde_json::from_str::<SensorDataDto>(&payload.as_str())?;
+                let sensor_dto = serde_json::from_str::<SensorDataDto>(&payload)?;
                 let sensor_data: SensorData = sensor_dto.into();
                 let container = container_lock.read().unwrap();
                 let mut sensor = container.sensors(sensor_id).ok_or(MQTTError::NoSensor())?;
@@ -113,7 +114,12 @@ impl MqttSensorClient {
                 Ok(Some(SensorHandleData::new(sensor_id, sensor_data)))
             }
             MqttSensorClient::LOG_TOPIC => {
-                // TODO: LOG!
+                info!(
+                    APP_LOGGING,
+                    "Log sensor[{}]: {}",
+                    sensor_id,
+                    payload.to_string()
+                );
                 Ok(None)
             }
             _ => Err(MQTTError::PathError(format!(
@@ -131,7 +137,7 @@ impl MqttSensorClient {
         let cmd_topic = format!(
             "{}/{}/{}",
             MqttSensorClient::SENSOR_TOPIC,
-            MqttSensorClient::DATA_TOPIC,
+            MqttSensorClient::CMD_TOPIC,
             sensor_id
         );
 
@@ -220,7 +226,7 @@ mod test {
             retain: false,
             qos: QoS::ExactlyOnce,
             pkid: None,
-            topic_name: format!("sensor/{}/data", sensor_id),
+            topic_name: format!("sensor/data/{}", sensor_id),
             payload: serde_json::to_vec(&SensorDataDto::default()).unwrap(),
         };
 

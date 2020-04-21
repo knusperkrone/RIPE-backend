@@ -4,10 +4,110 @@ use crate::schema::{agent_configs, sensors};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenv::dotenv;
-use plugins_core::AgentConfig;
 use std::env;
 use std::fmt::Debug;
 use std::string::String;
+
+pub mod dao {
+    use super::*;
+
+    #[derive(Insertable)]
+    #[table_name = "sensors"]
+    pub(super) struct NewSensor {
+        pub name: String,
+    }
+
+    #[derive(Identifiable, Queryable, PartialEq, Debug)]
+    #[table_name = "sensors"]
+    pub struct SensorDao {
+        id: i32,
+        name: String,
+    }
+
+    impl SensorDao {
+        pub fn new(id: i32, name: String) -> Self {
+            SensorDao { id: id, name: name }
+        }
+
+        pub fn id(&self) -> i32 {
+            self.id
+        }
+
+        pub fn name(&self) -> &String {
+            &self.name
+        }
+    }
+
+    #[derive(Insertable, Queryable, PartialEq, Debug)]
+    #[table_name = "agent_configs"]
+    pub struct AgentConfigDao {
+        sensor_id: i32,
+        domain: String,
+        agent_impl: String,
+        state_json: String,
+    }
+
+    impl AgentConfigDao {
+        pub fn new(sensor_id: i32, domain: String, agent_impl: String, state_json: String) -> Self {
+            AgentConfigDao {
+                sensor_id: sensor_id,
+                domain: domain,
+                agent_impl: agent_impl,
+                state_json: state_json,
+            }
+        }
+
+        pub fn domain(&self) -> &String {
+            &self.domain
+        }
+
+        pub fn agent_impl(&self) -> &String {
+            &self.agent_impl
+        }
+
+        pub fn state_json(&self) -> &String {
+            &self.state_json
+        }
+    }
+}
+
+pub mod dto {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct AgentRegisterDto {
+        pub domain: String,
+        pub agent_name: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct RegisterRequestDto {
+        pub agents: Vec<AgentRegisterDto>,
+        pub name: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct RegisterResponseDto {
+        pub id: i32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct UnregisterRequestDto {
+        pub id: i32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct UnregisterResponseDto {
+        pub id: i32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct ErrorResponseDto {
+        pub error: String,
+    }
+}
+
+use dao::*;
 
 pub fn establish_db_connection() -> PgConnection {
     dotenv().ok();
@@ -29,7 +129,7 @@ pub fn get_sensors(conn: &PgConnection) -> Vec<SensorDao> {
 pub fn get_agent_config(conn: &PgConnection, sensor_dao: &SensorDao) -> Vec<AgentConfigDao> {
     use crate::schema::agent_configs::dsl::*;
     match agent_configs
-        .filter(sensor_id.eq(sensor_dao.id))
+        .filter(sensor_id.eq(sensor_dao.id()))
         .load::<AgentConfigDao>(conn)
     {
         Ok(result) => result,
@@ -43,8 +143,7 @@ pub fn get_agent_config(conn: &PgConnection, sensor_dao: &SensorDao) -> Vec<Agen
 pub fn create_new_sensor(
     conn: &PgConnection,
     name_opt: &Option<String>,
-    mut configs: Vec<NewAgentConfig>,
-) -> Result<(SensorDao, Vec<AgentConfigDao>), DBError> {
+) -> Result<SensorDao, DBError> {
     let name = name_opt.clone().unwrap_or_else(|| {
         use crate::schema::sensors::dsl::*;
         let count = sensors.count().get_result::<i64>(conn).unwrap_or(0) + 1;
@@ -56,16 +155,17 @@ pub fn create_new_sensor(
     let sensor_dao: SensorDao = diesel::insert_into(sensors::table)
         .values(&new_sensor)
         .get_result(conn)?;
-    let config_daos: Vec<AgentConfigDao> = configs
-        .drain(..)
-        .map(|c| AgentConfigDao::from(sensor_dao.id, c))
-        .collect();
+    Ok(sensor_dao)
+}
 
-    // Safe config
-    let agent_daos = diesel::insert_into(agent_configs::table)
-        .values(config_daos)
-        .get_results::<AgentConfigDao>(conn)?;
-    Ok((sensor_dao, agent_daos))
+pub fn create_sensor_agents(
+    conn: &PgConnection,
+    configs: Vec<AgentConfigDao>,
+) -> Result<Vec<AgentConfigDao>, DBError> {
+    let config_daos: Vec<AgentConfigDao> = diesel::insert_into(agent_configs::table)
+        .values(configs)
+        .get_results(conn)?;
+    Ok(config_daos)
 }
 
 fn delete_sensor_config(conn: &PgConnection, remove_id: i32) -> Result<(), DBError> {
@@ -87,56 +187,6 @@ pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError>
     }
 }
 
-#[derive(Insertable)]
-#[table_name = "sensors"]
-struct NewSensor {
-    pub name: String,
-}
-
-#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct NewAgentConfig {
-    pub domain: String,
-    pub agent_impl: String,
-    pub state_json: String,
-}
-
-impl From<AgentConfig> for NewAgentConfig {
-    fn from(other: AgentConfig) -> Self {
-        NewAgentConfig {
-            domain: other.domain,
-            agent_impl: other.name,
-            state_json: other.state_json,
-        }
-    }
-}
-
-#[derive(Identifiable, Queryable, PartialEq, Debug)]
-#[table_name = "sensors"]
-pub struct SensorDao {
-    pub id: i32,
-    pub name: String,
-}
-
-#[derive(Insertable, Queryable, PartialEq, Debug)]
-#[table_name = "agent_configs"]
-pub struct AgentConfigDao {
-    pub sensor_id: i32,
-    pub domain: String,
-    pub agent_impl: String,
-    pub state_json: String,
-}
-
-impl AgentConfigDao {
-    fn from(sensor_id: i32, user_config: NewAgentConfig) -> Self {
-        AgentConfigDao {
-            sensor_id: sensor_id,
-            domain: user_config.domain,
-            agent_impl: user_config.agent_impl,
-            state_json: user_config.state_json,
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -149,22 +199,22 @@ mod test {
     #[test]
     fn test_insert_remove_sensor() {
         let conn = establish_db_connection();
-        let sensor = create_new_sensor(&conn, &None, vec![]);
+        let sensor = create_new_sensor(&conn, &None);
         assert!(sensor.is_ok(), true);
 
-        let deleted = delete_sensor(&conn, sensor.unwrap().0.id);
+        let deleted = delete_sensor(&conn, sensor.unwrap().id());
         assert!(deleted.is_ok(), true);
     }
 
     #[test]
     fn test_insert_get_delete_sensor() {
         let conn = establish_db_connection();
-        let sensor = create_new_sensor(&conn, &None, vec![]);
+        let sensor = create_new_sensor(&conn, &None);
         assert!(sensor.is_ok(), true);
 
         assert_ne!(get_sensors(&conn).is_empty(), true);
 
-        let deleted = delete_sensor(&conn, sensor.unwrap().0.id);
+        let deleted = delete_sensor(&conn, sensor.unwrap().id());
         assert!(deleted.is_ok(), true);
     }
 }

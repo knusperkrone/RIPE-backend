@@ -1,5 +1,6 @@
 use crate::agent::{plugin::AgentFactory, Agent, AgentPayload};
-use crate::models::{AgentConfigDao, SensorDao};
+use crate::logging::APP_LOGGING;
+use crate::models::dao::{AgentConfigDao, SensorDao};
 use chrono::{DateTime, Utc};
 use plugins_core::{error::AgentError, SensorData};
 use serde::{Deserialize, Serialize};
@@ -19,9 +20,15 @@ impl SensorHandle {
         // TODO: Filter invalid!
         let agents: Vec<Agent> = actions
             .into_iter()
-            .map(|config| factory.restore_agent(config))
+            .map(|config| factory.restore_agent(sensor.id(), config))
             .filter_map(Result::ok)
             .collect();
+        debug!(
+            APP_LOGGING,
+            "Sensor \"{}\" with agents: {:?}",
+            sensor.name(),
+            agents
+        );
 
         Ok(SensorHandle {
             dao: sensor,
@@ -36,8 +43,9 @@ impl SensorHandle {
             .filter_map(|agent| {
                 if let Some(payload) = agent.on_data(data) {
                     Some(SensorMessage {
-                        payload: payload.into(),
                         sensor_id: id,
+                        domain: agent.domain().clone(),
+                        payload: payload.into(),
                     })
                 } else {
                     None
@@ -47,13 +55,15 @@ impl SensorHandle {
     }
 
     pub fn id(&self) -> i32 {
-        self.dao.id
+        self.dao.id()
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 pub struct SensorMessage {
+    #[serde(skip_serializing)]
     pub sensor_id: i32,
+    pub domain: String,
     pub payload: AgentPayload,
 }
 

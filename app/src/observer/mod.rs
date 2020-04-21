@@ -1,7 +1,12 @@
-use crate::agent::{plugin::AgentFactory, Agent, AgentRegisterConfig};
+use crate::agent::{plugin::AgentFactory, Agent};
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
-use crate::models::{self, establish_db_connection, AgentConfigDao, NewAgentConfig, SensorDao};
+use crate::models::{
+    self,
+    dao::{AgentConfigDao, SensorDao},
+    dto::AgentRegisterDto,
+    establish_db_connection,
+};
 use crate::sensor::SensorHandle;
 use diesel::pg::PgConnection;
 use mqtt::MqttSensorClient;
@@ -44,8 +49,12 @@ impl ConcurrentSensorObserver {
     }
 
     pub async fn on_message(&self, msg: Publish) {
+        // TODO: Check for api call or sensor data
         let mut client = self.mqtt_client.write().unwrap();
-        match client.on_message(self.container_ref.clone(), msg).await {
+        match client
+            .on_sensor_message(self.container_ref.clone(), msg)
+            .await
+        {
             Ok(Some(_data)) => {
                 // TODO: Persist data
             }
@@ -57,18 +66,26 @@ impl ConcurrentSensorObserver {
     pub async fn register_new_sensor(
         &self,
         name: &Option<String>,
-        configs: &Vec<AgentRegisterConfig>,
+        configs: &Vec<AgentRegisterDto>,
     ) -> Result<i32, ObserverError> {
-        // Build agents - and generate their configs
-        let agents: Vec<Agent> = self.build_agents(configs)?;
-        let agent_config: Vec<NewAgentConfig> = agents.iter().map(|x| x.deserialize()).collect();
-
-        // Persist agent configs
+        // Create sensor
         let conn = self.db_conn.lock().unwrap();
-        let (sensor_dao, agent_daos) = models::create_new_sensor(&conn, name, agent_config)?;
-        let dao_id = sensor_dao.id;
-        match self.register_sensor_dao(sensor_dao, &agent_daos).await {
-            Ok(id) => Ok(id),
+        let sensor_dao = models::create_new_sensor(&conn, name)?;
+        let dao_id = sensor_dao.id();
+
+        // Create agents and persist
+        let agents: Vec<Agent> = self.build_agents(dao_id, configs)?;
+        let agent_config: Vec<AgentConfigDao> = agents.iter().map(|x| x.deserialize()).collect();
+        match models::create_sensor_agents(&conn, agent_config) {
+            Ok(agent_config) => {
+                match self.register_sensor_dao(sensor_dao, &agent_config).await {
+                    Ok(id) => Ok(id),
+                    Err(err) => {
+                        models::delete_sensor(&conn, dao_id)?; // Fallback delete
+                        Err(ObserverError::from(err))
+                    }
+                }
+            }
             Err(err) => {
                 models::delete_sensor(&conn, dao_id)?; // Fallback delete
                 Err(ObserverError::from(err))
@@ -110,12 +127,13 @@ impl ConcurrentSensorObserver {
 
     fn build_agents(
         &self,
-        configs: &Vec<AgentRegisterConfig>,
+        sensor_id: i32,
+        configs: &Vec<AgentRegisterDto>,
     ) -> Result<Vec<Agent>, ObserverError> {
         let agent_factory = self.agent_factory.lock().unwrap();
         let agents_result: Result<Vec<Agent>, _> = configs
             .into_iter()
-            .map(|config| agent_factory.new_agent(&config.agent_name))
+            .map(|config| agent_factory.new_agent(sensor_id, &config.agent_name, &config.domain))
             .collect();
         Ok(agents_result?)
     }
@@ -126,7 +144,7 @@ impl ConcurrentSensorObserver {
         configs: &Vec<AgentConfigDao>,
     ) -> Result<i32, ObserverError> {
         let agent_factory = self.agent_factory.lock().unwrap();
-        let sensor_id = sensor_dao.id;
+        let sensor_id = sensor_dao.id();
         let sensor: SensorHandle = SensorHandle::from(sensor_dao, configs, &agent_factory)?;
 
         self.container_ref.write().unwrap().insert_sensor(sensor);
@@ -161,7 +179,7 @@ impl ConcurrentSensorObserver {
             while let Some(item) = stream.next().await {
                 match item {
                     rumq_client::Notification::Publish(msg) => {
-                        info!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic_name);
+                        debug!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic_name);
                         self.on_message(msg).await;
                     }
                     rumq_client::Notification::Suback(_) => (),

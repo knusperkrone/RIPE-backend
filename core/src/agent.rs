@@ -4,7 +4,6 @@ use super::*;
 
 #[derive(Debug, PartialEq)]
 pub struct AgentConfig {
-    pub domain: String,
     pub name: String,
     pub state_json: String,
 }

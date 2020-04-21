@@ -1,6 +1,5 @@
 use crate::logging::APP_LOGGING;
-use crate::models::AgentConfigDao;
-use crate::models::NewAgentConfig;
+use crate::models::dao::AgentConfigDao;
 use dotenv::dotenv;
 use libloading::Library;
 use plugins_core::{error::AgentError, AgentTrait, Payload, PluginDeclaration, SensorData};
@@ -8,20 +7,42 @@ use std::env;
 use std::{collections::HashMap, ffi::OsStr, io, string::String};
 
 pub struct Agent {
+    sensor_id: i32,
+    domain: String,
     proxy: Box<dyn AgentTrait>,
 }
 
+impl std::fmt::Debug for Agent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(f, "{:?}", self.proxy)
+    }
+}
+
 impl Agent {
-    pub fn new(proxy: Box<dyn AgentTrait>) -> Self {
-        Agent { proxy: proxy }
+    pub fn new(sensor_id: i32, domain: String, proxy: Box<dyn AgentTrait>) -> Self {
+        Agent {
+            sensor_id: sensor_id,
+            proxy: proxy,
+            domain: domain,
+        }
     }
 
     pub fn on_data(&mut self, data: &SensorData) -> Option<Payload> {
         self.proxy.on_data(data)
     }
 
-    pub fn deserialize(&self) -> NewAgentConfig {
-        self.proxy.deserialize().into()
+    pub fn deserialize(&self) -> AgentConfigDao {
+        let config = self.proxy.deserialize();
+        AgentConfigDao::new(
+            self.sensor_id,
+            self.domain.clone(),
+            config.name,
+            config.state_json,
+        )
+    }
+
+    pub fn domain(&self) -> &String {
+        &self.domain
     }
 }
 
@@ -45,12 +66,28 @@ impl AgentFactory {
         self.libraries.keys().map(|name| name.clone()).collect()
     }
 
-    pub fn new_agent(&self, agent_name: &String) -> Result<Agent, AgentError> {
-        unsafe { Ok(self.build_agent(agent_name, None)?) }
+    pub fn new_agent(
+        &self,
+        sensor_id: i32,
+        agent_name: &String,
+        domain: &String,
+    ) -> Result<Agent, AgentError> {
+        unsafe { Ok(self.build_agent(sensor_id, agent_name, domain, None)?) }
     }
 
-    pub fn restore_agent(&self, config: &AgentConfigDao) -> Result<Agent, AgentError> {
-        unsafe { Ok(self.build_agent(&config.agent_impl, Some(&config.state_json))?) }
+    pub fn restore_agent(
+        &self,
+        sensor_id: i32,
+        config: &AgentConfigDao,
+    ) -> Result<Agent, AgentError> {
+        unsafe {
+            Ok(self.build_agent(
+                sensor_id,
+                config.agent_impl(),
+                config.domain(),
+                Some(config.state_json()),
+            )?)
+        }
     }
 
     unsafe fn load_plugins(&mut self) {
@@ -108,7 +145,9 @@ impl AgentFactory {
 
     unsafe fn build_agent(
         &self,
+        sensor_id: i32,
         agent_name: &String,
+        domain: &String,
         state_json: Option<&String>,
     ) -> Result<Agent, AgentError> {
         if let Some(library) = self.libraries.get(agent_name) {
@@ -120,7 +159,7 @@ impl AgentFactory {
             // Init logger and pass it to plugin
             let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
             let plugin_agent = (decl.agent_builder)(state_json, logger.clone());
-            Ok(Agent::new(plugin_agent))
+            Ok(Agent::new(sensor_id, domain.clone(), plugin_agent))
         } else {
             Err(AgentError::InvalidIdentifier(agent_name.clone()))
         }

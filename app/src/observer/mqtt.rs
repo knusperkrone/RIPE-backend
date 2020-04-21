@@ -67,7 +67,7 @@ impl MqttSensorClient {
         );
     }
 
-    pub async fn on_message(
+    pub async fn on_sensor_message(
         &mut self,
         container_lock: Arc<RwLock<SensorContainer>>,
         msg: Publish,
@@ -110,7 +110,7 @@ impl MqttSensorClient {
                 let container = container_lock.read().unwrap();
                 let mut sensor = container.sensors(sensor_id).ok_or(MQTTError::NoSensor())?;
                 let messages = sensor.on_data(&sensor_data);
-                self.send(sensor_id, messages).await?;
+                self.send_cmd(sensor_id, messages).await?;
                 Ok(Some(SensorHandleData::new(sensor_id, sensor_data)))
             }
             MqttSensorClient::LOG_TOPIC => {
@@ -129,7 +129,7 @@ impl MqttSensorClient {
         }
     }
 
-    async fn send(
+    async fn send_cmd(
         &mut self,
         sensor_id: i32,
         sensor_commands: Vec<SensorMessage>,
@@ -143,7 +143,7 @@ impl MqttSensorClient {
 
         for command in sensor_commands {
             let payload = serde_json::to_string(&command).unwrap();
-            info!(APP_LOGGING, "Sending message: {}", payload);
+            info!(APP_LOGGING, "Sending message {} - {}", cmd_topic, payload);
             let tmp = Publish::new(&cmd_topic, QoS::ExactlyOnce, payload);
             let publish = Request::Publish(tmp);
             self.requests_tx.send(publish).await?;
@@ -173,7 +173,7 @@ impl MqttSensorClient {
 mod test {
     use super::*;
     use crate::agent::{mock::MockAgent, Agent};
-    use crate::models::SensorDao;
+    use crate::models::dao::SensorDao;
     use crate::sensor::SensorHandle;
 
     #[actix_rt::test]
@@ -200,7 +200,9 @@ mod test {
         };
 
         // validate
-        let result = client.on_message(mocked_container, mocked_message).await;
+        let result = client
+            .on_sensor_message(mocked_container, mocked_message)
+            .await;
         assert_ne!(result.is_ok(), true);
     }
 
@@ -211,11 +213,12 @@ mod test {
         let mut container = SensorContainer::new();
         let (mut client, _) = MqttSensorClient::new();
         let mock_sensor = SensorHandle {
-            dao: SensorDao {
-                id: sensor_id,
-                name: "mock".to_string(),
-            },
-            agents: vec![Agent::new(Box::new(MockAgent::new()))],
+            dao: SensorDao::new(sensor_id, "mock".to_owned()),
+            agents: vec![Agent::new(
+                sensor_id,
+                "MockDomain".to_owned(),
+                Box::new(MockAgent::new()),
+            )],
         };
         container.insert_sensor(mock_sensor);
         let mocked_container = Arc::new(RwLock::new(container));
@@ -231,7 +234,7 @@ mod test {
         };
 
         let result = client
-            .on_message(mocked_container.clone(), mocked_message)
+            .on_sensor_message(mocked_container.clone(), mocked_message)
             .await;
 
         // validate

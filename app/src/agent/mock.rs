@@ -25,7 +25,6 @@ impl AgentTrait for MockAgent {
 
     fn deserialize(&self) -> AgentConfig {
         AgentConfig {
-            domain: "Mock".to_owned(),
             name: "MockAgent".to_string(),
             state_json: "{}".to_string(),
         }

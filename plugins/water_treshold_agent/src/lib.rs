@@ -1,21 +1,43 @@
+#[macro_use]
+extern crate slog;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
+use once_cell::sync::OnceCell;
 use plugins_core::*;
 use serde::{Deserialize, Serialize};
 
-const DOMAIN: &str = "Water";
 const NAME: &str = "ThresholdWaterAgent";
 
 export_plugin!(NAME, build_agent);
 
-extern "C" fn build_agent(config: Option<&std::string::String>) -> Box<dyn AgentTrait> {
+static LOGGER: OnceCell<slog::Logger> = OnceCell::new();
+
+fn log() -> &'static slog::Logger {
+    LOGGER.get().unwrap()
+}
+
+extern "C" fn build_agent(
+    config: Option<&std::string::String>,
+    logger: slog::Logger,
+) -> Box<dyn AgentTrait> {
+    if let Err(_) = LOGGER.set(logger) {
+        error!(log(), "{} AND PLUGIN WAS ALREADY INITED?", NAME);
+        panic!();
+    }
+    
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdWaterAgent>(&config_json) {
+            error!(log(), "Restored {} from config", NAME);
             return Box::new(deserialized);
         } else {
-            // LOG!
+            error!(
+                log(),
+                "{} coulnd't get restored from config {}", NAME, config_json
+            );
         }
     }
 
+    info!(log(), "Created new {}", NAME);
     Box::new(ThresholdWaterAgent {
         state: AgentState::Active.into(),
         min_threshold: 20,
@@ -65,29 +87,18 @@ impl AgentTrait for ThresholdWaterAgent {
             - data.timestamp;
 
         if data.moisture.is_none() {
-            //warn!(APP_LOGGING, "No moisture provided!");
+            warn!(log(), "{} no moisture provided", NAME);
             return None;
         }
 
-        if data.moisture.unwrap_or(std::u32::MAX) < self.min_threshold {
-            //
+        let moisture = data.moisture.unwrap_or(std::u32::MAX);
+        if moisture < self.min_threshold {
+            info!(log(), "{} moisture below threshold", NAME);
             Some(Payload::Bool(true))
         } else {
+            info!(log(), "{} moisture was fine {}%", NAME, moisture);
             None
         }
-        /*
-        moisture = sensor_data.moisture
-
-        if moisture is None or not self.global_settings.is_in_quiet_range(now):
-            logger.debug(f"Not watering as no data or in quiet range!")
-        elif now - self.last_watering < timedelta(minutes=_LAST_WATERING_MIN_TIMEOUT):
-            logger.debug(f"Not watering as last watering is only {_LAST_WATERING_MIN_TIMEOUT} mins passed")
-        elif moisture < self.config_min_threshold and self.last_moisture < self.config_min_threshold:
-            logger.debug(f"Watering with: {moisture}% and {self.last_moisture}%")
-            self._water()
-
-        self.last_moisture = moisture
-            */
     }
 
     fn do_force(&mut self, until: DateTime<Utc>) {
@@ -95,12 +106,11 @@ impl AgentTrait for ThresholdWaterAgent {
     }
 
     fn state(&self) -> AgentState {
-        self.state.into_agent() 
+        self.state.into_agent()
     }
 
     fn deserialize(&self) -> AgentConfig {
         AgentConfig {
-            domain: DOMAIN.to_owned(),
             name: NAME.to_owned(),
             state_json: serde_json::to_string(self).unwrap(),
         }

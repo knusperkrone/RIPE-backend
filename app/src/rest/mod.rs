@@ -1,43 +1,10 @@
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
 use crate::observer::ConcurrentSensorObserver;
+use crate::models::dto;
 use actix_web::http::StatusCode;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use std::sync::Arc;
-
-pub mod dto {
-    use std::string::String;
-
-    use serde::{Deserialize, Serialize};
-
-    use crate::agent::AgentRegisterConfig;
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct RegisterRequestDto {
-        pub agents: Vec<AgentRegisterConfig>,
-        pub name: Option<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct RegisterResponseDto {
-        pub id: i32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct UnregisterRequestDto {
-        pub id: i32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct UnregisterResponseDto {
-        pub id: i32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct ErrorResponseDto {
-        pub error: String,
-    }
-}
 
 async fn sensor_register(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,

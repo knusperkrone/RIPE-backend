@@ -26,11 +26,12 @@ pub struct ConcurrentSensorObserver {
 
 impl ConcurrentSensorObserver {
     pub fn new() -> (Arc<Self>, impl futures::Future) {
+        let db_conn = establish_db_connection();
+        let agent_factory = AgentFactory::new();
         let container = RwLock::new(SensorContainer::new());
         let (client, eventloop) = MqttSensorClient::new();
-        let db_conn = establish_db_connection();
         let observer = ConcurrentSensorObserver {
-            agent_factory: Mutex::new(AgentFactory::new()),
+            agent_factory: Mutex::new(agent_factory),
             container_ref: Arc::new(container),
             mqtt_client: RwLock::new(client),
             db_conn: Mutex::new(db_conn),

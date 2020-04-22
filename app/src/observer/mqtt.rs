@@ -1,7 +1,7 @@
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
+use crate::models::dto::{SensorDataDto, SensorMessageDto};
 use crate::observer::SensorContainer;
-use crate::sensor::{SensorDataDto, SensorHandleData, SensorMessage};
 use dotenv::dotenv;
 use plugins_core::SensorData;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
@@ -71,7 +71,7 @@ impl MqttSensorClient {
         &mut self,
         container_lock: Arc<RwLock<SensorContainer>>,
         msg: Publish,
-    ) -> Result<Option<SensorHandleData>, MQTTError> {
+    ) -> Result<Option<()>, MQTTError> {
         // parse message
         let path: Vec<&str> = msg.topic_name.splitn(3, '/').collect();
         if path.len() != 3 {
@@ -111,7 +111,7 @@ impl MqttSensorClient {
                 let mut sensor = container.sensors(sensor_id).ok_or(MQTTError::NoSensor())?;
                 let messages = sensor.on_data(&sensor_data);
                 self.send_cmd(sensor_id, messages).await?;
-                Ok(Some(SensorHandleData::new(sensor_id, sensor_data)))
+                Ok(None)
             }
             MqttSensorClient::LOG_TOPIC => {
                 info!(
@@ -132,7 +132,7 @@ impl MqttSensorClient {
     async fn send_cmd(
         &mut self,
         sensor_id: i32,
-        sensor_commands: Vec<SensorMessage>,
+        sensor_commands: Vec<SensorMessageDto>,
     ) -> Result<(), MQTTError> {
         let cmd_topic = format!(
             "{}/{}/{}",

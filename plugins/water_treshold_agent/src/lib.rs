@@ -20,10 +20,7 @@ extern "C" fn build_agent(
     config: Option<&std::string::String>,
     logger: slog::Logger,
 ) -> Box<dyn AgentTrait> {
-    if let Err(_) = LOGGER.set(logger) {
-        error!(log(), "{} AND PLUGIN WAS ALREADY INITED?", NAME);
-        panic!();
-    }
+    let _ = LOGGER.set(logger);
     
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdWaterAgent>(&config_json) {

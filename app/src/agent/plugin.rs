@@ -1,8 +1,8 @@
 use crate::logging::APP_LOGGING;
-use crate::models::dao::AgentConfigDao;
+use crate::models::{dao::AgentConfigDao, dto::SensorMessageDto};
 use dotenv::dotenv;
 use libloading::Library;
-use plugins_core::{error::AgentError, AgentTrait, Payload, PluginDeclaration, SensorData};
+use plugins_core::{error::AgentError, AgentTrait, PluginDeclaration, SensorData};
 use std::env;
 use std::{collections::HashMap, ffi::OsStr, io, string::String};
 
@@ -27,8 +27,16 @@ impl Agent {
         }
     }
 
-    pub fn on_data(&mut self, data: &SensorData) -> Option<Payload> {
-        self.proxy.on_data(data)
+    pub fn on_data(&mut self, data: &SensorData) -> Option<SensorMessageDto> {
+        if let Some(payload) = self.proxy.on_data(data) {
+            Some(SensorMessageDto {
+                sensor_id: self.sensor_id,
+                domain: self.domain().clone(),
+                payload: payload.into(),
+            })
+        } else {
+            None
+        }
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {

@@ -72,6 +72,9 @@ pub mod dao {
 }
 
 pub mod dto {
+    use crate::agent::AgentPayload;
+    use chrono::{DateTime, Utc};
+    use plugins_core::SensorData;
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -104,6 +107,57 @@ pub mod dto {
     #[derive(Debug, Serialize, Deserialize)]
     pub struct ErrorResponseDto {
         pub error: String,
+    }
+
+    #[derive(Serialize)]
+    pub struct SensorMessageDto {
+        #[serde(skip_serializing)]
+        pub sensor_id: i32,
+        pub domain: String,
+        pub payload: AgentPayload,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+    pub struct SensorDataDto {
+        #[serde(default = "Utc::now", skip_deserializing)]
+        pub timestamp: DateTime<Utc>,
+        pub refresh: Option<bool>,
+        pub temperature: Option<f32>,
+        pub light: Option<u32>,
+        pub moisture: Option<u32>,
+        pub conductivity: Option<u32>,
+        pub battery: Option<u32>,
+        pub carbon: Option<u32>,
+    }
+
+    impl std::default::Default for SensorDataDto {
+        fn default() -> Self {
+            SensorDataDto {
+                timestamp: Utc::now(),
+                refresh: None,
+                temperature: None,
+                light: None,
+                moisture: None,
+                conductivity: None,
+                battery: None,
+                carbon: None,
+            }
+        }
+    }
+
+    impl From<SensorDataDto> for SensorData {
+        fn from(other: SensorDataDto) -> Self {
+            SensorData {
+                timestamp: other.timestamp,
+                refresh: other.refresh,
+                temperature: other.temperature,
+                light: other.light,
+                moisture: other.moisture,
+                conductivity: other.conductivity,
+                battery: other.battery,
+                carbon: other.carbon,
+            }
+        }
     }
 }
 

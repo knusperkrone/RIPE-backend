@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 chrono = { version = "0.4" }
+serde = { version = "1", features = ["derive"] }
 slog = "2.5"
 
 [build-dependencies]

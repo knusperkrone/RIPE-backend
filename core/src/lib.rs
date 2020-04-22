@@ -1,11 +1,9 @@
 mod agent;
-pub mod error;
 mod messaging;
-mod sensor;
+pub mod error;
 
 pub use agent::*;
 pub use messaging::*;
-pub use sensor::*;
 
 pub static CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static RUSTC_VERSION: &str = env!("RUSTC_VERSION");

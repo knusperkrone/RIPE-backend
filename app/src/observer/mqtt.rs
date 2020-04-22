@@ -1,9 +1,9 @@
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
-use crate::models::dto::{SensorDataDto, SensorMessageDto};
+use crate::models::dto::SensorMessageDto;
 use crate::observer::SensorContainer;
-use dotenv::dotenv;
-use plugins_core::SensorData;
+use dotenv::dotenv; 
+use plugins_core::SensorDataDto;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
 use std::env;
 use std::sync::{Arc, RwLock};
@@ -106,10 +106,9 @@ impl MqttSensorClient {
         match endpoint {
             MqttSensorClient::DATA_TOPIC => {
                 let sensor_dto = serde_json::from_str::<SensorDataDto>(&payload)?;
-                let sensor_data: SensorData = sensor_dto.into();
                 let container = container_lock.read().unwrap();
                 let mut sensor = container.sensors(sensor_id).ok_or(MQTTError::NoSensor())?;
-                let messages = sensor.on_data(&sensor_data);
+                let messages = sensor.on_data(&sensor_dto);
                 self.send_cmd(sensor_id, messages).await?;
                 Ok(None)
             }

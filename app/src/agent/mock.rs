@@ -9,12 +9,15 @@ pub struct MockAgent {
 
 impl MockAgent {
     pub fn new() -> Self {
-        MockAgent { last_action: None, last_forced: None }
+        MockAgent {
+            last_action: None,
+            last_forced: None,
+        }
     }
 }
 
 impl AgentTrait for MockAgent {
-    fn do_action(&mut self, _data: &SensorData) -> Option<Payload> {
+    fn do_action(&mut self, _data: &SensorDataDto) -> Option<AgentPayload> {
         self.last_action = Some(1);
         None
     }

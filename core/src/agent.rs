@@ -21,14 +21,14 @@ impl Default for AgentState {
 }
 
 pub trait AgentTrait: std::fmt::Debug + Send {
-    fn do_action(&mut self, data: &SensorData) -> Option<Payload>;
+    fn do_action(&mut self, data: &SensorDataDto) -> Option<AgentPayload>;
     fn do_force(&mut self, until: DateTime<Utc>);
 
     fn on_force(&mut self, duration: Duration) {
         let until = Utc::now() + duration;
         self.do_force(until);
     }
-    fn on_data(&mut self, data: &SensorData) -> Option<Payload> {
+    fn on_data(&mut self, data: &SensorDataDto) -> Option<AgentPayload> {
         match self.state() {
             AgentState::Active => self.do_action(data),
             AgentState::Forced(_) => None,

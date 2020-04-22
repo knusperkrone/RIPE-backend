@@ -2,7 +2,7 @@ use crate::agent::{plugin::AgentFactory, Agent};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
 use crate::models::dto::SensorMessageDto;
-use plugins_core::{error::AgentError, SensorData};
+use plugins_core::{error::AgentError, SensorDataDto};
 use std::vec::Vec;
 
 pub struct SensorHandle {
@@ -35,8 +35,7 @@ impl SensorHandle {
         })
     }
 
-    pub fn on_data(&mut self, data: &SensorData) -> Vec<SensorMessageDto> {
-        let id = self.id();
+    pub fn on_data(&mut self, data: &SensorDataDto) -> Vec<SensorMessageDto> {
         self.agents
             .iter_mut()
             .filter_map(|agent| agent.on_data(data))

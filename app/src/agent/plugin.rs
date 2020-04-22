@@ -2,7 +2,7 @@ use crate::logging::APP_LOGGING;
 use crate::models::{dao::AgentConfigDao, dto::SensorMessageDto};
 use dotenv::dotenv;
 use libloading::Library;
-use plugins_core::{error::AgentError, AgentTrait, PluginDeclaration, SensorData};
+use plugins_core::{error::AgentError, AgentTrait, PluginDeclaration, SensorDataDto};
 use std::env;
 use std::{collections::HashMap, ffi::OsStr, io, string::String};
 
@@ -27,7 +27,7 @@ impl Agent {
         }
     }
 
-    pub fn on_data(&mut self, data: &SensorData) -> Option<SensorMessageDto> {
+    pub fn on_data(&mut self, data: &SensorDataDto) -> Option<SensorMessageDto> {
         if let Some(payload) = self.proxy.on_data(data) {
             Some(SensorMessageDto {
                 sensor_id: self.sensor_id,

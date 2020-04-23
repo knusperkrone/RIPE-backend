@@ -1,6 +1,9 @@
+#[macro_use]
+extern crate slog;
+
 mod agent;
-mod messaging;
 pub mod error;
+mod messaging;
 
 pub use agent::*;
 pub use messaging::*;
@@ -15,6 +18,7 @@ pub struct PluginDeclaration {
     pub agent_builder: unsafe extern "C" fn(
         config: Option<&std::string::String>,
         logger: slog::Logger,
+        sender: tokio::sync::mpsc::Sender<AgentPayload>,
     ) -> Box<dyn AgentTrait>,
 }
 
@@ -30,4 +34,18 @@ macro_rules! export_plugin {
             agent_builder: $agent_builder,
         };
     };
+}
+
+/*
+ * Serde Workaround
+ */
+
+pub fn logger_sentinel() -> slog::Logger {
+    let sentinel = slog::Logger::root(slog::Discard, o!("" => ""));
+    sentinel
+}
+
+pub fn sender_sentinel() -> tokio::sync::mpsc::Sender<AgentPayload> {
+    let (sentinel, _) = tokio::sync::mpsc::channel(0);
+    sentinel
 }

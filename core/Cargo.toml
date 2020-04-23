@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 chrono = { version = "0.4" }
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "0.2", features = [ "rt-core", "sync", "time"] }
 slog = "2.5"
 
 [build-dependencies]

@@ -2,12 +2,15 @@ use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::models::dto::SensorMessageDto;
 use crate::observer::SensorContainer;
-use dotenv::dotenv; 
+use dotenv::dotenv;
 use plugins_core::SensorDataDto;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
 use std::env;
-use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc::{channel, Sender};
+use std::sync::Arc;
+use tokio::sync::{
+    mpsc::{channel, Sender},
+    RwLock,
+};
 
 pub struct MqttSensorClient {
     requests_tx: Sender<Request>,
@@ -44,18 +47,12 @@ impl MqttSensorClient {
             sub.add(topic, QoS::AtLeastOnce);
         }
 
-        if cfg!(test) {
-            // WORKAROUND: Test instances are sometimes not attached to eventloop
-            let result = self.requests_tx.send(Request::Subscribe(sub)).await;
-            info!(APP_LOGGING, "[TEST] subscribe result: {:?}", result);
-        } else {
-            self.requests_tx.send(Request::Subscribe(sub)).await?;
-            info!(
-                APP_LOGGING,
-                "Subscribed topics: {:?}",
-                self.build_topics(sensor_id)
-            );
-        }
+        self.requests_tx.send(Request::Subscribe(sub)).await?;
+        info!(
+            APP_LOGGING,
+            "Subscribed topics: {:?}",
+            self.build_topics(sensor_id)
+        );
         Ok(())
     }
 
@@ -106,11 +103,13 @@ impl MqttSensorClient {
         match endpoint {
             MqttSensorClient::DATA_TOPIC => {
                 let sensor_dto = serde_json::from_str::<SensorDataDto>(&payload)?;
-                let container = container_lock.read().unwrap();
-                let mut sensor = container.sensors(sensor_id).ok_or(MQTTError::NoSensor())?;
-                let messages = sensor.on_data(&sensor_dto);
-                self.send_cmd(sensor_id, messages).await?;
-                Ok(None)
+                let container = container_lock.read().await;
+                let mut sensor = container
+                    .sensors(sensor_id)
+                    .await
+                    .ok_or(MQTTError::NoSensor())?;
+                sensor.on_data(&sensor_dto);
+                Ok(None) // TODO: Return data
             }
             MqttSensorClient::LOG_TOPIC => {
                 info!(
@@ -128,25 +127,22 @@ impl MqttSensorClient {
         }
     }
 
-    async fn send_cmd(
-        &mut self,
-        sensor_id: i32,
-        sensor_commands: Vec<SensorMessageDto>,
-    ) -> Result<(), MQTTError> {
+    pub async fn send_cmd(&mut self, sensor_command: &SensorMessageDto) -> Result<(), MQTTError> {
         let cmd_topic = format!(
             "{}/{}/{}",
             MqttSensorClient::SENSOR_TOPIC,
             MqttSensorClient::CMD_TOPIC,
-            sensor_id
+            sensor_command.sensor_id,
         );
 
-        for command in sensor_commands {
-            let payload = serde_json::to_string(&command).unwrap();
-            info!(APP_LOGGING, "Sending message {} - {}", cmd_topic, payload);
-            let tmp = Publish::new(&cmd_topic, QoS::ExactlyOnce, payload);
-            let publish = Request::Publish(tmp);
-            self.requests_tx.send(publish).await?;
-        }
+        let payload = serde_json::to_string(&sensor_command).unwrap();
+        let tmp = Publish::new(&cmd_topic, QoS::ExactlyOnce, payload);
+        let publish = Request::Publish(tmp);
+        self.requests_tx.send(publish).await?;
+        info!(
+            APP_LOGGING,
+            "Send command {} - {:?}", cmd_topic, sensor_command
+        );
         Ok(())
     }
 
@@ -170,10 +166,11 @@ impl MqttSensorClient {
 
 #[cfg(test)]
 mod test {
+    use super::super::sensor::SensorHandle;
     use super::*;
     use crate::agent::{mock::MockAgent, Agent};
     use crate::models::dao::SensorDao;
-    use crate::sensor::SensorHandle;
+    use plugins_core::AgentPayload;
 
     #[actix_rt::test]
     async fn test_mqtt_connection() {
@@ -209,11 +206,15 @@ mod test {
     async fn test_valid_mqtt_path() {
         // prepare
         let sensor_id = 0;
+        let (sender, _) = tokio::sync::mpsc::channel::<SensorMessageDto>(2);
+        let (_, receiver) = tokio::sync::mpsc::channel::<AgentPayload>(2);
         let mut container = SensorContainer::new();
         let (mut client, _) = MqttSensorClient::new();
         let mock_sensor = SensorHandle {
             dao: SensorDao::new(sensor_id, "mock".to_owned()),
             agents: vec![Agent::new(
+                sender,
+                receiver,
                 sensor_id,
                 "MockDomain".to_owned(),
                 Box::new(MockAgent::new()),
@@ -238,8 +239,8 @@ mod test {
 
         // validate
         assert_eq!(result.is_ok(), true);
-        let container = mocked_container.read().unwrap();
-        let _sensor = container.sensors(sensor_id).unwrap();
+        let container = mocked_container.read().await;
+        let _sensor = container.sensors(sensor_id).await;
         // TODO: check agent
     }
 }

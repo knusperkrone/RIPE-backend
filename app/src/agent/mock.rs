@@ -17,12 +17,11 @@ impl MockAgent {
 }
 
 impl AgentTrait for MockAgent {
-    fn do_action(&mut self, _data: &SensorDataDto) -> Option<AgentPayload> {
+    fn do_action(&mut self, _data: &SensorDataDto) {
         self.last_action = Some(1);
-        None
     }
 
-    fn do_force(&mut self, _until: DateTime<Utc>) {
+    fn do_force(&mut self, _active: bool, _until: DateTime<Utc>) {
         // no-op
     }
 
@@ -32,7 +31,7 @@ impl AgentTrait for MockAgent {
             state_json: "{}".to_string(),
         }
     }
-    fn state(&self) -> AgentState {
-        AgentState::Active
+    fn state(&self) -> &AgentState {
+        &AgentState::Active
     }
 }

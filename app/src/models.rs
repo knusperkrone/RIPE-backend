@@ -107,7 +107,7 @@ pub mod dto {
         pub error: String,
     }
 
-    #[derive(Serialize)]
+    #[derive(Debug, Serialize)]
     pub struct SensorMessageDto {
         #[serde(skip_serializing)]
         pub sensor_id: i32,

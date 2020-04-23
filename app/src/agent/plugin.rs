@@ -1,14 +1,18 @@
 use crate::logging::APP_LOGGING;
 use crate::models::{dao::AgentConfigDao, dto::SensorMessageDto};
 use dotenv::dotenv;
+use futures::future::{AbortHandle, Abortable};
 use libloading::Library;
-use plugins_core::{error::AgentError, AgentTrait, PluginDeclaration, SensorDataDto};
+use plugins_core::{error::AgentError, AgentPayload, AgentTrait, PluginDeclaration, SensorDataDto};
 use std::env;
 use std::{collections::HashMap, ffi::OsStr, io, string::String};
+use tokio::stream::StreamExt;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Agent {
     sensor_id: i32,
     domain: String,
+    task_handle: AbortHandle,
     proxy: Box<dyn AgentTrait>,
 }
 
@@ -18,25 +22,37 @@ impl std::fmt::Debug for Agent {
     }
 }
 
+impl Drop for Agent {
+    fn drop(&mut self) {
+        self.task_handle.abort();
+        debug!(APP_LOGGING, "Stopped Agent task");
+    }
+}
+
 impl Agent {
-    pub fn new(sensor_id: i32, domain: String, proxy: Box<dyn AgentTrait>) -> Self {
+    pub fn new(
+        agent_sender: Sender<SensorMessageDto>,
+        plugin_receiver: Receiver<AgentPayload>,
+        sensor_id: i32,
+        domain: String,
+        proxy: Box<dyn AgentTrait>,
+    ) -> Self {
+        let domain2 = domain.clone();
+        let ipc_fut = Agent::disptach_plugin_ipc(sensor_id, domain2, agent_sender, plugin_receiver);
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        let future = Abortable::new(ipc_fut, abort_registration);
+        tokio::spawn(async move { future.await });
+
         Agent {
             sensor_id: sensor_id,
-            proxy: proxy,
             domain: domain,
+            task_handle: abort_handle,
+            proxy: proxy,
         }
     }
 
-    pub fn on_data(&mut self, data: &SensorDataDto) -> Option<SensorMessageDto> {
-        if let Some(payload) = self.proxy.on_data(data) {
-            Some(SensorMessageDto {
-                sensor_id: self.sensor_id,
-                domain: self.domain().clone(),
-                payload: payload.into(),
-            })
-        } else {
-            None
-        }
+    pub fn on_data(&mut self, data: &SensorDataDto) {
+        self.proxy.on_data(data);
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {
@@ -49,19 +65,35 @@ impl Agent {
         )
     }
 
-    pub fn domain(&self) -> &String {
-        &self.domain
+    async fn disptach_plugin_ipc(
+        sensor_id: i32,
+        domain: String,
+        agent_sender: Sender<SensorMessageDto>,
+        mut plugin_receiver: Receiver<AgentPayload>,
+    ) {
+        while let Some(payload) = plugin_receiver.next().await {
+            let msg = SensorMessageDto {
+                sensor_id: sensor_id,
+                domain: domain.clone(),
+                payload: payload,
+            };
+            if let Err(e) = agent_sender.clone().send(msg).await {
+                warn!(APP_LOGGING, "Error sending payload {}", e);
+            }
+        }
     }
 }
 
-#[derive(Default)]
+#[derive(Debug)]
 pub struct AgentFactory {
+    agent_sender: Sender<SensorMessageDto>,
     libraries: HashMap<String, Library>,
 }
 
 impl AgentFactory {
-    pub fn new() -> Self {
+    pub fn new(sender: Sender<SensorMessageDto>) -> Self {
         let mut factory = AgentFactory {
+            agent_sender: sender,
             libraries: HashMap::new(),
         };
         unsafe {
@@ -164,10 +196,17 @@ impl AgentFactory {
                 .unwrap() // Panic should be impossible
                 .read();
 
-            // Init logger and pass it to plugin
+            let agent_sender = self.agent_sender.clone();
+            let (plugin_sender, plugin_receiver) = channel::<AgentPayload>(32);
             let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
-            let plugin_agent = (decl.agent_builder)(state_json, logger.clone());
-            Ok(Agent::new(sensor_id, domain.clone(), plugin_agent))
+            let plugin_agent = (decl.agent_builder)(state_json, logger.clone(), plugin_sender);
+            Ok(Agent::new(
+                agent_sender,
+                plugin_receiver,
+                sensor_id,
+                domain.clone(),
+                plugin_agent,
+            ))
         } else {
             Err(AgentError::InvalidIdentifier(agent_name.clone()))
         }

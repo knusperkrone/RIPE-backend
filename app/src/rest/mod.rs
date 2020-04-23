@@ -1,7 +1,7 @@
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
-use crate::observer::ConcurrentSensorObserver;
 use crate::models::dto;
+use crate::observer::ConcurrentSensorObserver;
 use actix_web::http::StatusCode;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use std::sync::Arc;
@@ -49,7 +49,7 @@ async fn sensor_unregister(
 }
 
 async fn agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
-    let agents = observer.agents();
+    let agents = observer.agents().await;
     HttpResponse::Ok().json(agents)
 }
 
@@ -88,7 +88,7 @@ mod test {
     #[actix_rt::test]
     async fn test_insert_sensor() {
         // prepare
-        let (observer, _) = ConcurrentSensorObserver::new();
+        let observer = ConcurrentSensorObserver::new();
         let mut app = test::init_service(
             App::new()
                 .app_data(web::Data::new(observer))
@@ -123,7 +123,7 @@ mod test {
     #[actix_rt::test]
     async fn test_remove_sensor() {
         // prepare
-        let (observer, _) = ConcurrentSensorObserver::new();
+        let observer = ConcurrentSensorObserver::new();
         let mut app = test::init_service(
             App::new().app_data(web::Data::new(observer)).service(
                 web::resource("api/sensor")
@@ -177,7 +177,7 @@ mod test {
     async fn test_invalid_remove_sensor() {
         // prepare
         let preferred_id = std::i32::MAX;
-        let (observer, _) = ConcurrentSensorObserver::new();
+        let observer = ConcurrentSensorObserver::new();
         let mut app = test::init_service(
             App::new()
                 .app_data(web::Data::new(observer))

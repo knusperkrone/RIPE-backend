@@ -1,7 +1,10 @@
+use crate::agent::AgentState;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
 
+#[derive(Debug, Copy, Clone)]
 pub enum AgentPayload {
+    State(AgentState),
     Bool(bool),
     Int(i32),
 }
@@ -14,13 +17,14 @@ impl Serialize for AgentPayload {
         match self {
             AgentPayload::Bool(b) => serializer.serialize_bool(*b),
             AgentPayload::Int(i) => serializer.serialize_i32(*i),
+            AgentPayload::State(_) => serializer.serialize_none(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SensorDataDto {
-    #[serde(default="Utc::now")]
+    #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
     pub refresh: Option<bool>,
     pub temperature: Option<f32>,

@@ -21,27 +21,16 @@ impl Default for AgentState {
     }
 }
 
-pub fn send_payload<'a>(
-    logger: &'a slog::Logger,
-    sender: &'a tokio::sync::mpsc::Sender<AgentPayload>,
-    payload: AgentPayload,
+pub fn send_payload(
+    logger: &slog::Logger,
+    sender: &tokio::sync::mpsc::Sender<AgentMessage>,
+    payload: AgentMessage,
 ) {
     let task_logger = logger.clone();
     let mut task_sender = sender.clone();
-
-    tokio::spawn(async move {
-        let mut trie: i32 = 0;
-        while let Err(e) = task_sender.send(payload).await {
-            if trie >= 3 {
-                error!(task_logger, "Failed sending {:?}", payload);
-                return;
-            }
-
-            warn!(task_logger, "Retrying send {:?}, due: {}", payload, e);
-            tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
-            trie += 1;
-        }
-    });
+    if let Err(e) = task_sender.try_send(payload) {
+        error!(task_logger, "Failed sending {}", e);
+    }
 }
 
 pub trait AgentTrait: std::fmt::Debug + Send {

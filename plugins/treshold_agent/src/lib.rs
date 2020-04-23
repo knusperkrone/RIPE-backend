@@ -10,7 +10,6 @@ use std::sync::{
     Arc,
 };
 use tokio::sync::mpsc::Sender;
-use tokio::task::JoinHandle;
 
 const NAME: &str = "ThresholdAgent";
 
@@ -19,7 +18,7 @@ export_plugin!(NAME, build_agent);
 extern "C" fn build_agent(
     config: Option<&std::string::String>,
     logger: slog::Logger,
-    sender: Sender<AgentPayload>,
+    sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {
     let mut agent: ThresholdAgent = ThresholdAgent::default();
     if let Some(config_json) = config {
@@ -46,12 +45,13 @@ pub struct ThresholdAgent {
     #[serde(skip, default = "plugins_core::logger_sentinel")]
     logger: slog::Logger,
     #[serde(skip, default = "plugins_core::sender_sentinel")]
-    sender: Sender<AgentPayload>,
+    sender: Sender<AgentMessage>,
     #[serde(skip)]
     task_cell: RefCell<ThresholdTask>,
     state: AgentState,
     min_threshold: u32,
     action_duration_sec: i64,
+    action_cooldown_sec: i64,
     action_start: Option<DateTime<Utc>>,
     last_action: Option<DateTime<Utc>>,
 }
@@ -60,6 +60,8 @@ impl PartialEq for ThresholdAgent {
     fn eq(&self, other: &Self) -> bool {
         self.state == other.state
             && self.min_threshold == other.min_threshold
+            && self.action_duration_sec == other.action_duration_sec
+            && self.action_cooldown_sec == other.action_cooldown_sec
             && self.action_start == other.action_start
             && self.last_action == other.last_action
     }
@@ -74,6 +76,7 @@ impl Default for ThresholdAgent {
             state: AgentState::Active.into(),
             min_threshold: 20,
             action_duration_sec: 60,
+            action_cooldown_sec: 30,
             action_start: None,
             last_action: None,
         }
@@ -92,11 +95,19 @@ impl ThresholdAgent {
 
 impl AgentTrait for ThresholdAgent {
     fn do_action(&mut self, data: &SensorDataDto) {
-        let _now = Utc::now();
-        let _watering_diff = self
-            .last_action
-            .unwrap_or(DateTime::from_utc(NaiveDateTime::from_timestamp(0, 0), Utc))
-            - data.timestamp;
+        if self.task_cell.borrow().is_active() {
+            info!(self.logger, "{} Already active action", NAME);
+            return;
+        }
+
+        let watering_delta = Utc::now()
+            - self
+                .last_action
+                .unwrap_or(DateTime::from_utc(NaiveDateTime::from_timestamp(0, 0), Utc));
+        if watering_delta.num_seconds() < self.action_cooldown_sec {
+            info!(self.logger, "{} still in cooldown", NAME);
+            return;
+        }
 
         // TODO: Configure getter
         if data.moisture.is_none() {
@@ -137,27 +148,25 @@ impl AgentTrait for ThresholdAgent {
 
 #[derive(Debug)]
 struct ThresholdTaskConfig {
+    active: Arc<AtomicBool>,
+    aborted: Arc<AtomicBool>,
     forced: bool,
     until: DateTime<Utc>,
     logger: slog::Logger,
-    sender: Sender<AgentPayload>,
+    sender: Sender<AgentMessage>,
 }
 
 #[derive(Debug)]
 struct ThresholdTask {
-    active: Arc<AtomicBool>,
-    aborted: Arc<AtomicBool>,
-    task_handle: Option<JoinHandle<()>>,
     task_config: Arc<ThresholdTaskConfig>,
 }
 
 impl Default for ThresholdTask {
     fn default() -> Self {
         ThresholdTask {
-            active: Arc::new(AtomicBool::from(false)),
-            aborted: Arc::new(AtomicBool::from(false)),
-            task_handle: None,
             task_config: Arc::new(ThresholdTaskConfig {
+                active: Arc::new(AtomicBool::from(false)),
+                aborted: Arc::new(AtomicBool::from(false)),
                 forced: false,
                 until: Utc::now(),
                 logger: plugins_core::logger_sentinel(),
@@ -167,20 +176,17 @@ impl Default for ThresholdTask {
     }
 }
 
-unsafe impl Send for ThresholdTask {}
-
 impl ThresholdTask {
     pub fn kickoff(
         forced: bool,
         until: DateTime<Utc>,
         logger: slog::Logger,
-        sender: Sender<AgentPayload>,
+        sender: Sender<AgentMessage>,
     ) -> Self {
         ThresholdTask {
-            active: Arc::new(AtomicBool::new(true)),
-            aborted: Arc::new(AtomicBool::new(false)),
-            task_handle: None,
             task_config: Arc::new(ThresholdTaskConfig {
+                active: Arc::new(AtomicBool::new(true)),
+                aborted: Arc::new(AtomicBool::new(false)),
                 forced: forced,
                 logger: logger,
                 sender: sender,
@@ -190,50 +196,71 @@ impl ThresholdTask {
     }
 
     pub fn abort(&mut self) {
-        self.aborted.store(true, Ordering::Relaxed);
+        self.task_config.aborted.store(true, Ordering::Relaxed);
     }
 
     fn run(&mut self) {
-        let task_aborted = self.aborted.clone();
-        let task_active = self.active.clone();
-
         let config = self.task_config.clone();
-        self.task_handle = Some(tokio::spawn(async move {
-            let start = Utc::now();
 
-            let mut state = AgentState::Active;
-            if config.forced {
-                state = AgentState::Forced(config.until.clone());
-            }
-            plugins_core::send_payload(&config.logger, &config.sender, AgentPayload::State(state));
-            plugins_core::send_payload(&config.logger, &config.sender, AgentPayload::Bool(true));
-            info!(config.logger, "{} started Task", NAME);
+        send_payload(
+            &self.task_config.logger,
+            &self.task_config.sender,
+            AgentMessage::Task(Box::pin(async move {
+                let start = Utc::now();
 
-            while Utc::now() > config.until && !task_aborted.load(Ordering::Relaxed) {
-                tokio::time::delay_for(std::time::Duration::from_millis(250)).await;
-            }
-
-            task_active.store(false, Ordering::Relaxed);
-            state = AgentState::Default;
-            plugins_core::send_payload(&config.logger, &config.sender, AgentPayload::State(state));
-            plugins_core::send_payload(&config.logger, &config.sender, AgentPayload::Bool(false));
-
-            let delta_secs = (start - Utc::now()).num_seconds();
-            if task_aborted.load(Ordering::Relaxed) {
+                let mut state = AgentState::Active;
+                if config.forced {
+                    state = AgentState::Forced(config.until.clone());
+                }
+                plugins_core::send_payload(
+                    &config.logger,
+                    &config.sender,
+                    AgentMessage::State(state),
+                );
+                plugins_core::send_payload(
+                    &config.logger,
+                    &config.sender,
+                    AgentMessage::Bool(true),
+                );
                 info!(
                     config.logger,
-                    "{} aborted Task after {} secs", NAME, delta_secs
+                    "{} started Task until {}", NAME, config.until
                 );
-            } else {
-                debug!(
-                    config.logger,
-                    "{} ended Task after {} secs", NAME, delta_secs
+
+                while Utc::now() < config.until && !config.aborted.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+
+                config.active.store(false, Ordering::Relaxed);
+                state = AgentState::Default;
+                plugins_core::send_payload(
+                    &config.logger,
+                    &config.sender,
+                    AgentMessage::State(state),
                 );
-            }
-        }));
+                plugins_core::send_payload(
+                    &config.logger,
+                    &config.sender,
+                    AgentMessage::Bool(false),
+                );
+
+                let delta_secs = (start - Utc::now()).num_seconds();
+                if config.aborted.load(Ordering::Relaxed) {
+                    info!(
+                        config.logger,
+                        "{} aborted Task after {} secs", NAME, delta_secs
+                    );
+                } else {
+                    debug!(
+                        config.logger,
+                        "{} ended Task after {} secs", NAME, delta_secs
+                    );
+                }
+            })),
+        );
     }
 
     fn is_active(&self) -> bool {
-        self.active.load(Ordering::Relaxed)
+        self.task_config.active.load(Ordering::Relaxed)
     }
 }

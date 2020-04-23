@@ -1,25 +1,13 @@
 use crate::agent::AgentState;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 
-#[derive(Debug, Copy, Clone)]
-pub enum AgentPayload {
+pub enum AgentMessage {
     State(AgentState),
     Bool(bool),
     Int(i32),
-}
-
-impl Serialize for AgentPayload {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            AgentPayload::Bool(b) => serializer.serialize_bool(*b),
-            AgentPayload::Int(i) => serializer.serialize_i32(*i),
-            AgentPayload::State(_) => serializer.serialize_none(),
-        }
-    }
+    Task(Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync + 'static>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

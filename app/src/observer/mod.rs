@@ -4,12 +4,11 @@ use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
     dao::{AgentConfigDao, SensorDao},
-    dto::{AgentRegisterDto, SensorMessageDto},
+    dto::{AgentPayload, AgentRegisterDto, SensorMessageDto},
     establish_db_connection,
 };
 use diesel::pg::PgConnection;
 use mqtt::MqttSensorClient;
-use plugins_core::AgentPayload;
 use rumq_client::{MqttEventLoop, Publish};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -102,7 +101,7 @@ impl ConcurrentSensorObserver {
         let mut receiver = receiver_res.unwrap();
         while let Some(item) = receiver.next().await {
             let mut mqtt_client = self.mqtt_client.write().await;
-            if let AgentPayload::State(agent_state) = item.payload {
+            if let AgentPayload::State(_agent_state) = item.payload {
                 // TODO: REFRESH STATE
                 info!(APP_LOGGING, "TODO refresh agent state");
             } else {

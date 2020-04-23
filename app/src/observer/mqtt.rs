@@ -170,7 +170,7 @@ mod test {
     use super::*;
     use crate::agent::{mock::MockAgent, Agent};
     use crate::models::dao::SensorDao;
-    use plugins_core::AgentPayload;
+    use plugins_core::AgentMessage;
 
     #[actix_rt::test]
     async fn test_mqtt_connection() {
@@ -207,7 +207,7 @@ mod test {
         // prepare
         let sensor_id = 0;
         let (sender, _) = tokio::sync::mpsc::channel::<SensorMessageDto>(2);
-        let (_, receiver) = tokio::sync::mpsc::channel::<AgentPayload>(2);
+        let (_, receiver) = tokio::sync::mpsc::channel::<AgentMessage>(2);
         let mut container = SensorContainer::new();
         let (mut client, _) = MqttSensorClient::new();
         let mock_sensor = SensorHandle {

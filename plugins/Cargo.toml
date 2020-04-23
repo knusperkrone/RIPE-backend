@@ -1,5 +1,5 @@
 [workspace]
-members = ["water_treshold_agent"]
+members = ["treshold_agent"]
 
 [profile.release]
 opt-level = 'z'  # Optimize for size.

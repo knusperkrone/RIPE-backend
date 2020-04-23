@@ -72,8 +72,39 @@ pub mod dao {
 }
 
 pub mod dto {
-    use plugins_core::AgentPayload;
-    use serde::{Deserialize, Serialize};
+    use plugins_core::{AgentMessage, AgentState};
+    use serde::{Deserialize, Serialize, Serializer};
+
+    #[derive(Debug, Copy, Clone)]
+    pub enum AgentPayload {
+        State(AgentState),
+        Bool(bool),
+        Int(i32),
+    }
+
+    impl AgentPayload {
+        pub fn from(message: AgentMessage) -> Result<Self, ()> {
+            match message {
+                AgentMessage::State(s) => Ok(AgentPayload::State(s)),
+                AgentMessage::Bool(b) => Ok(AgentPayload::Bool(b)),
+                AgentMessage::Int(i) => Ok(AgentPayload::Int(i)),
+                AgentMessage::Task(_) => Err(()),
+            }
+        }
+    }
+
+    impl Serialize for AgentPayload {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match self {
+                AgentPayload::Bool(b) => serializer.serialize_bool(*b),
+                AgentPayload::Int(i) => serializer.serialize_i32(*i),
+                AgentPayload::State(_) => serializer.serialize_none(),
+            }
+        }
+    }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct AgentRegisterDto {

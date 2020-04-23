@@ -1,9 +1,9 @@
 use crate::logging::APP_LOGGING;
-use crate::models::{dao::AgentConfigDao, dto::SensorMessageDto};
+use crate::models::{dao::AgentConfigDao, dto::AgentPayload, dto::SensorMessageDto};
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
 use libloading::Library;
-use plugins_core::{error::AgentError, AgentPayload, AgentTrait, PluginDeclaration, SensorDataDto};
+use plugins_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration, SensorDataDto};
 use std::env;
 use std::{collections::HashMap, ffi::OsStr, io, string::String};
 use tokio::stream::StreamExt;
@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 pub struct Agent {
     sensor_id: i32,
     domain: String,
-    task_handle: AbortHandle,
+    ipc_handle: AbortHandle,
     proxy: Box<dyn AgentTrait>,
 }
 
@@ -24,21 +24,20 @@ impl std::fmt::Debug for Agent {
 
 impl Drop for Agent {
     fn drop(&mut self) {
-        self.task_handle.abort();
-        debug!(APP_LOGGING, "Stopped Agent task");
+        self.ipc_handle.abort();
     }
 }
 
 impl Agent {
     pub fn new(
         agent_sender: Sender<SensorMessageDto>,
-        plugin_receiver: Receiver<AgentPayload>,
+        plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
         domain: String,
         proxy: Box<dyn AgentTrait>,
     ) -> Self {
         let domain2 = domain.clone();
-        let ipc_fut = Agent::disptach_plugin_ipc(sensor_id, domain2, agent_sender, plugin_receiver);
+        let ipc_fut = Agent::dispatch_plugin_ipc(sensor_id, domain2, agent_sender, plugin_receiver);
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
         let future = Abortable::new(ipc_fut, abort_registration);
         tokio::spawn(async move { future.await });
@@ -46,7 +45,7 @@ impl Agent {
         Agent {
             sensor_id: sensor_id,
             domain: domain,
-            task_handle: abort_handle,
+            ipc_handle: abort_handle,
             proxy: proxy,
         }
     }
@@ -65,20 +64,27 @@ impl Agent {
         )
     }
 
-    async fn disptach_plugin_ipc(
+    async fn dispatch_plugin_ipc(
         sensor_id: i32,
         domain: String,
         agent_sender: Sender<SensorMessageDto>,
-        mut plugin_receiver: Receiver<AgentPayload>,
+        mut plugin_receiver: Receiver<AgentMessage>,
     ) {
         while let Some(payload) = plugin_receiver.next().await {
-            let msg = SensorMessageDto {
-                sensor_id: sensor_id,
-                domain: domain.clone(),
-                payload: payload,
-            };
-            if let Err(e) = agent_sender.clone().send(msg).await {
-                warn!(APP_LOGGING, "Error sending payload {}", e);
+            if let AgentMessage::Task(task) = payload {
+                debug!(APP_LOGGING, "Spanwing new task");
+                tokio::spawn(task);
+            } else if let Ok(message) = AgentPayload::from(payload) {
+                let msg = SensorMessageDto {
+                    sensor_id: sensor_id,
+                    domain: domain.clone(),
+                    payload: message,
+                };
+                if let Err(e) = agent_sender.clone().send(msg).await {
+                    warn!(APP_LOGGING, "Error sending payload {}", e);
+                }
+            } else {
+                error!(APP_LOGGING, "Unhandeld payload");
             }
         }
     }
@@ -197,7 +203,7 @@ impl AgentFactory {
                 .read();
 
             let agent_sender = self.agent_sender.clone();
-            let (plugin_sender, plugin_receiver) = channel::<AgentPayload>(32);
+            let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(32);
             let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
             let plugin_agent = (decl.agent_builder)(state_json, logger.clone(), plugin_sender);
             Ok(Agent::new(

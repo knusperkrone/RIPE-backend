@@ -18,7 +18,7 @@ pub struct PluginDeclaration {
     pub agent_builder: unsafe extern "C" fn(
         config: Option<&std::string::String>,
         logger: slog::Logger,
-        sender: tokio::sync::mpsc::Sender<AgentPayload>,
+        sender: tokio::sync::mpsc::Sender<AgentMessage>,
     ) -> Box<dyn AgentTrait>,
 }
 
@@ -45,7 +45,7 @@ pub fn logger_sentinel() -> slog::Logger {
     sentinel
 }
 
-pub fn sender_sentinel() -> tokio::sync::mpsc::Sender<AgentPayload> {
-    let (sentinel, _) = tokio::sync::mpsc::channel(0);
+pub fn sender_sentinel() -> tokio::sync::mpsc::Sender<AgentMessage> {
+    let (sentinel, _) = tokio::sync::mpsc::channel(1);
     sentinel
 }

@@ -1,5 +1,5 @@
 [package]
-name = "water_treshold_agent"
+name = "treshold_agent"
 version = "0.1.0"
 authors = ["Aron Metzig <aron.metzig@fau.de>"]
 edition = "2018"

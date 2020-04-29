@@ -81,6 +81,8 @@ impl ConcurrentSensorObserver {
                         self.on_message(msg).await;
                     }
                     rumq_client::Notification::Suback(_) => (),
+                    rumq_client::Notification::Pubrec(_) => (),
+                    rumq_client::Notification::Pubcomp(_) => (),
                     _ => warn!(APP_LOGGING, "Received unexpected = {:?}", item),
                 };
             }
@@ -101,13 +103,8 @@ impl ConcurrentSensorObserver {
         let mut receiver = receiver_res.unwrap();
         while let Some(item) = receiver.next().await {
             let mut mqtt_client = self.mqtt_client.write().await;
-            if let AgentPayload::State(_agent_state) = item.payload {
-                // TODO: REFRESH STATE
-                info!(APP_LOGGING, "TODO refresh agent state");
-            } else {
-                if let Err(e) = mqtt_client.send_cmd(&item).await {
-                    error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
-                }
+            if let Err(e) = mqtt_client.send_cmd(&item).await {
+                error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
             }
         }
     }

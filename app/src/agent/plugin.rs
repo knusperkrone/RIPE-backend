@@ -3,16 +3,21 @@ use crate::models::{dao::AgentConfigDao, dto::AgentPayload, dto::SensorMessageDt
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
 use libloading::Library;
-use plugins_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration, SensorDataDto};
-use std::env;
-use std::{collections::HashMap, ffi::OsStr, io, string::String};
+use plugins_core::{
+    error::AgentError, AgentMessage, AgentState, AgentTrait, PluginDeclaration, SensorDataDto,
+};
+use std::{collections::HashMap, env, ffi::OsStr, io, string::String, sync::Arc};
 use tokio::stream::StreamExt;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    RwLock,
+};
 
 pub struct Agent {
     sensor_id: i32,
     domain: String,
-    ipc_handle: AbortHandle,
+    state: Arc<RwLock<AgentState>>,
+    abort_handle: AbortHandle,
     proxy: Box<dyn AgentTrait>,
 }
 
@@ -24,7 +29,7 @@ impl std::fmt::Debug for Agent {
 
 impl Drop for Agent {
     fn drop(&mut self) {
-        self.ipc_handle.abort();
+        self.abort_handle.abort();
     }
 }
 
@@ -36,17 +41,25 @@ impl Agent {
         domain: String,
         proxy: Box<dyn AgentTrait>,
     ) -> Self {
-        let domain2 = domain.clone();
-        let ipc_fut = Agent::dispatch_plugin_ipc(sensor_id, domain2, agent_sender, plugin_receiver);
+        let domain_ipc = domain.clone();
+        let state = Arc::new(RwLock::new(AgentState::Default));
+        let ipc_fut = Agent::dispatch_plugin_ipc(
+            sensor_id,
+            domain_ipc,
+            state.clone(),
+            agent_sender,
+            plugin_receiver,
+        );
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
         let future = Abortable::new(ipc_fut, abort_registration);
         tokio::spawn(async move { future.await });
 
         Agent {
-            sensor_id: sensor_id,
-            domain: domain,
-            ipc_handle: abort_handle,
-            proxy: proxy,
+            sensor_id,
+            domain,
+            state,
+            abort_handle,
+            proxy,
         }
     }
 
@@ -67,13 +80,17 @@ impl Agent {
     async fn dispatch_plugin_ipc(
         sensor_id: i32,
         domain: String,
+        state_lock: Arc<RwLock<AgentState>>,
         agent_sender: Sender<SensorMessageDto>,
         mut plugin_receiver: Receiver<AgentMessage>,
     ) {
         while let Some(payload) = plugin_receiver.next().await {
             if let AgentMessage::Task(task) = payload {
-                debug!(APP_LOGGING, "Spanwing new task");
+                debug!(APP_LOGGING, "Spawning new task");
                 tokio::spawn(task);
+            } else if let AgentMessage::State(state) = payload {
+                let mut self_state = state_lock.write().await;
+                *self_state = state;
             } else if let Ok(message) = AgentPayload::from(payload) {
                 let msg = SensorMessageDto {
                     sensor_id: sensor_id,
@@ -84,7 +101,7 @@ impl Agent {
                     warn!(APP_LOGGING, "Error sending payload {}", e);
                 }
             } else {
-                error!(APP_LOGGING, "Unhandeld payload");
+                error!(APP_LOGGING, "Unhandled payload");
             }
         }
     }

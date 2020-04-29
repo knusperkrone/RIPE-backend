@@ -71,7 +71,7 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
                     .route(web::delete().to(sensor_unregister)),
             )
     })
-    .bind("127.0.0.1:8000")
+    .bind("0.0.0.0:8000")
     .unwrap()
     .disable_signals()
     .run()

@@ -228,7 +228,8 @@ impl ThresholdTask {
                 );
 
                 while Utc::now() < config.until && !config.aborted.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    tokio::task::yield_now().await;
+                    std::thread::sleep(std::time::Duration::from_nanos(1));
                 }
 
                 config.active.store(false, Ordering::Relaxed);
@@ -244,7 +245,7 @@ impl ThresholdTask {
                     AgentMessage::Bool(false),
                 );
 
-                let delta_secs = (start - Utc::now()).num_seconds();
+                let delta_secs = (Utc::now() - start).num_seconds();q
                 if config.aborted.load(Ordering::Relaxed) {
                     info!(
                         config.logger,

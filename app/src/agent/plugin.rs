@@ -3,7 +3,7 @@ use crate::models::{dao::AgentConfigDao, dto::AgentPayload, dto::SensorMessageDt
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
 use libloading::Library;
-use plugins_core::{
+use iftem_core::{
     error::AgentError, AgentMessage, AgentState, AgentTrait, PluginDeclaration, SensorDataDto,
 };
 use std::{collections::HashMap, env, ffi::OsStr, io, string::String, sync::Arc};
@@ -193,8 +193,8 @@ impl AgentFactory {
             .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
             .read();
 
-        if decl.rustc_version != plugins_core::RUSTC_VERSION
-            || decl.core_version != plugins_core::CORE_VERSION
+        if decl.rustc_version != iftem_core::RUSTC_VERSION
+            || decl.core_version != iftem_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
             Err(io::Error::new(io::ErrorKind::Other, "Version mismatch"))

@@ -1,4 +1,4 @@
-use plugins_core::error::AgentError;
+use iftem_core::error::AgentError;
 use std::error;
 use std::fmt;
 

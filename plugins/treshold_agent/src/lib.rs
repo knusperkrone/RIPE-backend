@@ -2,7 +2,7 @@
 extern crate slog;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use plugins_core::*;
+use iftem_core::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::sync::{
@@ -42,9 +42,9 @@ extern "C" fn build_agent(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ThresholdAgent {
-    #[serde(skip, default = "plugins_core::logger_sentinel")]
+    #[serde(skip, default = "iftem_core::logger_sentinel")]
     logger: slog::Logger,
-    #[serde(skip, default = "plugins_core::sender_sentinel")]
+    #[serde(skip, default = "iftem_core::sender_sentinel")]
     sender: Sender<AgentMessage>,
     #[serde(skip)]
     task_cell: RefCell<ThresholdTask>,
@@ -70,8 +70,8 @@ impl PartialEq for ThresholdAgent {
 impl Default for ThresholdAgent {
     fn default() -> Self {
         ThresholdAgent {
-            logger: plugins_core::logger_sentinel(),
-            sender: plugins_core::sender_sentinel(),
+            logger: iftem_core::logger_sentinel(),
+            sender: iftem_core::sender_sentinel(),
             task_cell: RefCell::default(),
             state: AgentState::Active.into(),
             min_threshold: 20,
@@ -170,8 +170,8 @@ impl Default for ThresholdTask {
                 aborted: Arc::new(AtomicBool::from(false)),
                 forced: false,
                 until: Utc::now(),
-                logger: plugins_core::logger_sentinel(),
-                sender: plugins_core::sender_sentinel(),
+                logger: iftem_core::logger_sentinel(),
+                sender: iftem_core::sender_sentinel(),
             }),
         }
     }
@@ -213,12 +213,12 @@ impl ThresholdTask {
                 if config.forced {
                     state = AgentState::Forced(config.until.clone());
                 }
-                plugins_core::send_payload(
+                iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
                     AgentMessage::State(state),
                 );
-                plugins_core::send_payload(
+                iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
                     AgentMessage::Bool(true),
@@ -229,18 +229,17 @@ impl ThresholdTask {
                 );
 
                 while Utc::now() < config.until && !config.aborted.load(Ordering::Relaxed) {
-                    tokio::task::yield_now().await;
-                    std::thread::sleep(std::time::Duration::from_nanos(1));
+                    iftem_core::task_sleep(0).await;
                 }
 
                 config.active.store(false, Ordering::Relaxed);
                 state = AgentState::Default;
-                plugins_core::send_payload(
+                iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
                     AgentMessage::State(state),
                 );
-                plugins_core::send_payload(
+                iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
                     AgentMessage::Bool(false),

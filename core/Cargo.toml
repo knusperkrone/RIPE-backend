@@ -1,5 +1,5 @@
 [package]
-name = "plugins_core"
+name = "iftem_core"
 version = "0.1.0"
 authors = ["Aron Metzig <aron.metzig@interface-ag.de>"]
 edition = "2018"

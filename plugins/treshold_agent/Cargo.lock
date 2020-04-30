@@ -50,7 +50,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "plugins_core"
+name = "iftem_core"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -176,7 +176,7 @@ name = "water_treshold_agent"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "plugins_core",
+ "iftem_core",
  "serde",
  "serde_json",
 ]

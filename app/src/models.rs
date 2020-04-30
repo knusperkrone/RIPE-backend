@@ -72,7 +72,7 @@ pub mod dao {
 }
 
 pub mod dto {
-    use plugins_core::{AgentMessage, AgentState};
+    use iftem_core::{AgentMessage, AgentState};
     use serde::{Deserialize, Serialize, Serializer};
 
     #[derive(Debug, Copy, Clone)]

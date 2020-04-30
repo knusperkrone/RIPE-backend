@@ -3,7 +3,7 @@ use crate::logging::APP_LOGGING;
 use crate::models::dto::SensorMessageDto;
 use crate::observer::SensorContainer;
 use dotenv::dotenv;
-use plugins_core::SensorDataDto;
+use iftem_core::SensorDataDto;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
 use std::env;
 use std::sync::Arc;
@@ -170,7 +170,7 @@ mod test {
     use super::*;
     use crate::agent::{mock::MockAgent, Agent};
     use crate::models::dao::SensorDao;
-    use plugins_core::AgentMessage;
+    use iftem_core::AgentMessage;
 
     #[actix_rt::test]
     async fn test_mqtt_connection() {

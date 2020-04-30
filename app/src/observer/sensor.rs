@@ -1,7 +1,7 @@
 use crate::agent::{plugin::AgentFactory, Agent};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
-use plugins_core::{error::AgentError, SensorDataDto};
+use iftem_core::{error::AgentError, SensorDataDto};
 use std::vec::Vec;
 
 pub struct SensorHandle {

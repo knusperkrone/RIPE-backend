@@ -21,18 +21,6 @@ impl Default for AgentState {
     }
 }
 
-pub fn send_payload(
-    logger: &slog::Logger,
-    sender: &tokio::sync::mpsc::Sender<AgentMessage>,
-    payload: AgentMessage,
-) {
-    let task_logger = logger.clone();
-    let mut task_sender = sender.clone();
-    if let Err(e) = task_sender.try_send(payload) {
-        error!(task_logger, "Failed sending {}", e);
-    }
-}
-
 pub trait AgentTrait: std::fmt::Debug + Send {
     fn do_action(&mut self, data: &SensorDataDto);
     fn do_force(&mut self, active: bool, until: DateTime<Utc>);

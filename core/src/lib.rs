@@ -4,9 +4,11 @@ extern crate slog;
 mod agent;
 pub mod error;
 mod messaging;
+mod stubs;
 
 pub use agent::*;
 pub use messaging::*;
+pub use stubs::*;
 
 pub static CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static RUSTC_VERSION: &str = env!("RUSTC_VERSION");
@@ -34,18 +36,4 @@ macro_rules! export_plugin {
             agent_builder: $agent_builder,
         };
     };
-}
-
-/*
- * Serde Workaround
- */
-
-pub fn logger_sentinel() -> slog::Logger {
-    let sentinel = slog::Logger::root(slog::Discard, o!("" => ""));
-    sentinel
-}
-
-pub fn sender_sentinel() -> tokio::sync::mpsc::Sender<AgentMessage> {
-    let (sentinel, _) = tokio::sync::mpsc::channel(1);
-    sentinel
 }

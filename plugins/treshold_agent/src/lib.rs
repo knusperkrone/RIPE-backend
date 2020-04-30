@@ -119,6 +119,7 @@ impl AgentTrait for ThresholdAgent {
         if moisture < self.min_threshold {
             info!(self.logger, "{} moisture below threshold", NAME);
             let until = Utc::now() + Duration::seconds(self.action_duration_sec);
+            self.last_action = Some(until);
             self.start_task(false, until);
         } else {
             info!(self.logger, "{} moisture was fine {}%", NAME, moisture);
@@ -245,7 +246,7 @@ impl ThresholdTask {
                     AgentMessage::Bool(false),
                 );
 
-                let delta_secs = (Utc::now() - start).num_seconds();q
+                let delta_secs = (Utc::now() - start).num_seconds();
                 if config.aborted.load(Ordering::Relaxed) {
                     info!(
                         config.logger,

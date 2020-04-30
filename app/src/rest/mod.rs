@@ -4,7 +4,8 @@ use crate::models::dto;
 use crate::observer::ConcurrentSensorObserver;
 use actix_web::http::StatusCode;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
-use std::sync::Arc;
+use dotenv::dotenv;
+use std::{env, sync::Arc};
 
 async fn sensor_register(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
@@ -55,11 +56,14 @@ async fn agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpRespo
 
 pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
     // Set up logging
-    info!(APP_LOGGING, "Start listening to REST endpoints");
+    dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
+    let bind_addr = env::var("BIND_ADDR").expect("BIND_ADDR must be set");
+    let print_addr = bind_addr.clone();
 
     HttpServer::new(move || {
+        info!(APP_LOGGING, "Starting webserver at: {}", print_addr);
         App::new()
             .app_data(web::Data::new(observer.clone()))
             .data(web::JsonConfig::default().limit(4096))
@@ -71,7 +75,7 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
                     .route(web::delete().to(sensor_unregister)),
             )
     })
-    .bind("0.0.0.0:8000")
+    .bind(bind_addr)
     .unwrap()
     .disable_signals()
     .run()

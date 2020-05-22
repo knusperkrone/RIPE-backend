@@ -7,12 +7,15 @@ use iftem_core::{
     error::AgentError, AgentMessage, AgentState, AgentTrait, PluginDeclaration, SensorDataDto,
 };
 use libloading::Library;
-use std::{collections::HashMap, env, ffi::OsStr, string::String, sync::Arc};
-use tokio::stream::StreamExt;
-use tokio::sync::{
-    mpsc::{channel, Receiver, Sender},
-    RwLock,
+use std::{
+    collections::HashMap,
+    env,
+    ffi::OsStr,
+    string::String,
+    sync::{Arc, RwLock},
 };
+use tokio::stream::StreamExt;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Agent {
     sensor_id: i32,
@@ -98,6 +101,18 @@ impl Agent {
         )
     }
 
+    pub fn agent_name(&self) -> &String {
+        &self.agent_name
+    }
+
+    pub fn domain(&self) -> &String {
+        &self.domain
+    }
+
+    pub fn state(&self) -> AgentState {
+        self.state.read().unwrap().clone()
+    }
+
     async fn dispatch_plugin_ipc(
         sensor_id: i32,
         domain: String,
@@ -110,7 +125,7 @@ impl Agent {
                 debug!(APP_LOGGING, "Spawning new task");
                 tokio::spawn(task);
             } else if let AgentMessage::State(state) = payload {
-                let mut self_state = state_lock.write().await;
+                let mut self_state = state_lock.write().unwrap();
                 *self_state = state;
             } else if let Ok(message) = AgentPayload::from(payload) {
                 let msg = SensorMessageDto {
@@ -258,6 +273,19 @@ impl AgentFactory {
         state_json: Option<&String>,
     ) -> Result<Agent, AgentError> {
         let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(32);
+        if cfg!(test) && agent_name == "MockAgent" {
+            info!(APP_LOGGING, "Creating mock agent!");
+            return Ok(Agent::new(
+                self.agent_sender.clone(),
+                plugin_sender,
+                plugin_receiver,
+                sensor_id,
+                domain.clone(),
+                agent_name.clone(),
+                Box::new(crate::agent::test::MockAgent::new()),
+            ));
+        }
+
         if let Some(plugin_agent) = self.build_proxy_agent(agent_name, state_json, &plugin_sender) {
             Ok(Agent::new(
                 self.agent_sender.clone(),

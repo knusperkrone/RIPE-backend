@@ -44,7 +44,15 @@ impl SensorHandle {
         Ok(())
     }
 
+    pub fn agents(&self) -> &Vec<Agent> {
+        &self.agents
+    }
+
     pub fn id(&self) -> i32 {
         self.dao.id()
+    }
+
+    pub fn name(&self) -> &String {
+        &self.dao.name()
     }
 }

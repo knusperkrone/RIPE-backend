@@ -14,20 +14,18 @@ pub enum AgentMessage {
 pub struct SensorDataDto {
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
-    pub refresh: Option<bool>,
-    pub temperature: Option<f32>,
-    pub light: Option<u32>,
-    pub moisture: Option<u32>,
-    pub conductivity: Option<u32>,
-    pub battery: Option<u32>,
-    pub carbon: Option<u32>,
+    pub battery: Option<f64>,
+    pub moisture: Option<f64>,
+    pub temperature: Option<f64>,
+    pub carbon: Option<i32>,
+    pub conductivity: Option<i32>,
+    pub light: Option<i32>,
 }
 
 impl std::default::Default for SensorDataDto {
     fn default() -> Self {
         SensorDataDto {
             timestamp: Utc::now(),
-            refresh: None,
             temperature: None,
             light: None,
             moisture: None,

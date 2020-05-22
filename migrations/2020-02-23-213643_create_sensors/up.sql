@@ -12,3 +12,19 @@ CREATE TABLE agent_configs
     state_json TEXT NOT NULL,
     PRIMARY KEY(sensor_id, domain)
 );
+
+CREATE TABLE sensor_data
+(
+    id SERIAL PRIMARY KEY,
+    sensor_id INTEGER REFERENCES sensors NOT NULL,
+    timestamp TIMESTAMP NOT NULL,
+    battery FLOAT,
+    moisture FLOAT,
+    temperature FLOAT,
+    carbon INT,
+    conductivity INT,
+    light INT
+);
+/*
+
+*/

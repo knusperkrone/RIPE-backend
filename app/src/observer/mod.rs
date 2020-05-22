@@ -1,13 +1,15 @@
 use crate::agent::{plugin::AgentFactory, Agent};
 use crate::error::{DBError, ObserverError};
+
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
     dao::{AgentConfigDao, SensorDao},
-    dto::{AgentRegisterDto, SensorMessageDto},
+    dto::{AgentRegisterDto, AgentStatusDto, RegisterResponseDto, SensorStatusDto, SensorMessageDto},
     establish_db_connection,
 };
 use diesel::pg::PgConnection;
+use iftem_core::SensorDataDto;
 use mqtt::MqttSensorClient;
 use rumq_client::{MqttEventLoop, Publish};
 use std::{collections::HashMap, sync::Arc};
@@ -19,8 +21,10 @@ use tokio::{
 
 mod mqtt;
 mod sensor;
-
 use sensor::SensorHandle;
+
+#[cfg(test)]
+mod test;
 
 pub struct ConcurrentSensorObserver {
     container_ref: Arc<RwLock<SensorContainer>>,
@@ -108,22 +112,54 @@ impl ConcurrentSensorObserver {
         }
     }
 
+    pub async fn sensor_status(&self, sensor_id: i32) -> Result<SensorStatusDto, ObserverError> {
+        // let conn = self.db_conn.lock().await;
+        let container = self.container_ref.read().await;
+        let sensor = container
+            .sensors(sensor_id)
+            .await
+            .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
+
+        let agents: Vec<AgentStatusDto> = sensor
+            .agents()
+            .iter()
+            .map(|a| AgentStatusDto {
+                domain: a.domain().clone(),
+                agent_name: a.agent_name().clone(),
+                state: a.state(),
+            })
+            .collect();
+
+        Ok(SensorStatusDto {
+            name: sensor.name().clone(),
+            agents: agents,
+        })
+    }
+
+    pub async fn sensor_data(&self, sensor_id: i32) -> Result<SensorDataDto, ObserverError> {
+        let conn = self.db_conn.lock().await;
+        let data = models::get_latest_sensor_data(&conn, sensor_id)?;
+        Ok(data)
+    }
+
     pub async fn agents(&self) -> Vec<String> {
         let container_factory = self.agent_factory.lock().await;
         container_factory.agents()
     }
 
     pub async fn on_message(&self, msg: Publish) {
-        // TODO: Check for api call or sensor data
         let mut client = self.mqtt_client.write().await;
         match client
             .on_sensor_message(self.container_ref.clone(), msg)
             .await
         {
-            Ok(Some(_data)) => {
-                // TODO: Persist data
-            }
             Ok(None) => (),
+            Ok(Some(tuple)) => {
+                let conn = self.db_conn.lock().await;
+                if let Err(e) = models::insert_sensor_data(&conn, tuple.0, tuple.1) {
+                    error!(APP_LOGGING, "Failed persisting data: {}", e);
+                }
+            }
             Err(e) => warn!(APP_LOGGING, "On message error: {}", e),
         }
     }
@@ -132,7 +168,7 @@ impl ConcurrentSensorObserver {
         &self,
         name: &Option<String>,
         configs: &Vec<AgentRegisterDto>,
-    ) -> Result<i32, ObserverError> {
+    ) -> Result<RegisterResponseDto, ObserverError> {
         // Create sensor
         let conn = self.db_conn.lock().await;
         let sensor_dao = models::create_new_sensor(&conn, name)?;
@@ -144,7 +180,7 @@ impl ConcurrentSensorObserver {
         match models::create_sensor_agents(&conn, agent_config) {
             Ok(agent_config) => {
                 match self.register_sensor_dao(sensor_dao, &agent_config).await {
-                    Ok(id) => Ok(id),
+                    Ok(id) => Ok(RegisterResponseDto { id }),
                     Err(err) => {
                         models::delete_sensor(&conn, dao_id)?; // Fallback delete
                         Err(ObserverError::from(err))
@@ -158,7 +194,10 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    pub async fn remove_sensor(&self, sensor_id: i32) -> Result<i32, ObserverError> {
+    pub async fn remove_sensor(
+        &self,
+        sensor_id: i32,
+    ) -> Result<RegisterResponseDto, ObserverError> {
         let conn = self.db_conn.lock().await;
         models::delete_sensor(&conn, sensor_id)?;
 
@@ -168,7 +207,7 @@ impl ConcurrentSensorObserver {
             .await
             .unsubscribe_sensor(sensor_id)
             .await;
-        Ok(sensor_id)
+        Ok(RegisterResponseDto { id: sensor_id })
     }
 
     pub async fn reload_sensor(&self, sensor_id: i32) -> Result<(), ObserverError> {

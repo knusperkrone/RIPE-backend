@@ -1,5 +1,4 @@
-#[cfg(test)]
-pub mod mock;
+pub mod test;
 pub mod plugin;
 
 pub use plugin::Agent;

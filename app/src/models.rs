@@ -1,15 +1,17 @@
 use crate::error::DBError;
 use crate::logging::APP_LOGGING;
-use crate::schema::{agent_configs, sensors};
+use crate::schema::*;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenv::dotenv;
+use iftem_core::SensorDataDto;
 use std::env;
 use std::fmt::Debug;
 use std::string::String;
 
 pub mod dao {
     use super::*;
+    use chrono::{DateTime, NaiveDateTime, Utc};
 
     #[derive(Insertable)]
     #[table_name = "sensors"]
@@ -69,6 +71,62 @@ pub mod dao {
             &self.state_json
         }
     }
+
+    #[derive(Insertable)]
+    #[table_name = "sensor_data"]
+    pub struct NewSensorData {
+        sensor_id: i32,
+        timestamp: NaiveDateTime,
+        battery: Option<f64>,
+        moisture: Option<f64>,
+        temperature: Option<f64>,
+        carbon: Option<i32>,
+        conductivity: Option<i32>,
+        light: Option<i32>,
+    }
+
+    impl NewSensorData {
+        pub fn new(sensor_id: i32, other: iftem_core::SensorDataDto) -> Self {
+            NewSensorData {
+                sensor_id: sensor_id,
+                timestamp: other.timestamp.naive_utc(),
+                battery: other.battery,
+                moisture: other.moisture,
+                temperature: other.temperature,
+                carbon: other.carbon,
+                conductivity: other.conductivity,
+                light: other.light,
+            }
+        }
+    }
+
+    #[derive(Identifiable, Queryable, PartialEq, Debug)]
+    #[table_name = "sensor_data"]
+    pub struct SensorDataDao {
+        id: i32,
+        sensor_id: i32,
+        timestamp: NaiveDateTime,
+        battery: Option<f64>,
+        moisture: Option<f64>,
+        temperature: Option<f64>,
+        carbon: Option<i32>,
+        conductivity: Option<i32>,
+        light: Option<i32>,
+    }
+
+    impl Into<SensorDataDto> for SensorDataDao {
+        fn into(self) -> SensorDataDto {
+            SensorDataDto {
+                timestamp: DateTime::<Utc>::from_utc(self.timestamp, Utc),
+                battery: self.battery,
+                moisture: self.moisture,
+                temperature: self.temperature,
+                carbon: self.carbon,
+                conductivity: self.conductivity,
+                light: self.light,
+            }
+        }
+    }
 }
 
 pub mod dto {
@@ -112,6 +170,13 @@ pub mod dto {
         pub agent_name: String,
     }
 
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct AgentStatusDto {
+        pub domain: String,
+        pub agent_name: String,
+        pub state: AgentState,
+    }
+
     #[derive(Debug, Serialize, Deserialize)]
     pub struct RegisterRequestDto {
         pub agents: Vec<AgentRegisterDto>,
@@ -144,6 +209,13 @@ pub mod dto {
         pub sensor_id: i32,
         pub domain: String,
         pub payload: AgentPayload,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct SensorDto {
+        pub id: i32,
+        pub name: String,
+        pub agents: Vec<AgentStatusDto>,
     }
 }
 
@@ -224,6 +296,36 @@ pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError>
     } else {
         info!(APP_LOGGING, "Unpersisted sensor: {}", remove_id);
         Ok(())
+    }
+}
+
+pub fn insert_sensor_data(
+    conn: &PgConnection,
+    sensor_id: i32,
+    dto: iftem_core::SensorDataDto,
+) -> Result<(), DBError> {
+    let insert = NewSensorData::new(sensor_id, dto);
+    diesel::insert_into(sensor_data::table)
+        .values(insert)
+        .execute(conn)?;
+    Ok(())
+}
+
+pub fn get_latest_sensor_data(
+    conn: &PgConnection,
+    search_id: i32,
+) -> Result<SensorDataDto, DBError> {
+    use crate::schema::sensor_data::dsl::*;
+    let mut result = sensor_data
+        .filter(sensor_id.eq(search_id))
+        .order(timestamp.desc())
+        .limit(1)
+        .load::<SensorDataDao>(conn)?;
+
+    if let Some(dao) = result.pop() {
+        Ok(dao.into())
+    } else {
+        Ok(SensorDataDto::default())
     }
 }
 

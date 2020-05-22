@@ -207,16 +207,18 @@ mod test {
         // prepare
         let sensor_id = 0;
         let (sender, _) = tokio::sync::mpsc::channel::<SensorMessageDto>(2);
-        let (_, receiver) = tokio::sync::mpsc::channel::<AgentMessage>(2);
+        let (plugin_sender, plugin_receiver) = tokio::sync::mpsc::channel::<AgentMessage>(2);
         let mut container = SensorContainer::new();
         let (mut client, _) = MqttSensorClient::new();
         let mock_sensor = SensorHandle {
             dao: SensorDao::new(sensor_id, "mock".to_owned()),
             agents: vec![Agent::new(
                 sender,
-                receiver,
+                plugin_sender,
+                plugin_receiver,
                 sensor_id,
                 "MockDomain".to_owned(),
+                "AgentName".to_owned(),
                 Box::new(MockAgent::new()),
             )],
         };

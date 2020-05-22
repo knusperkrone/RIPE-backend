@@ -49,6 +49,22 @@ async fn sensor_unregister(
     }
 }
 
+async fn sensor_reload(
+    observer: web::Data<Arc<ConcurrentSensorObserver>>,
+    unregister_request: web::Path<i32>,
+) -> HttpResponse {
+    let sensor_id = unregister_request.into_inner();
+    match observer.reload_sensor(sensor_id).await {
+        Ok(_) => HttpResponse::new(StatusCode::OK),
+        Err(err_msg) => {
+            warn!(APP_LOGGING, "{}", err_msg);
+            HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR).json(dto::ErrorResponseDto {
+                error: format!("{}", err_msg),
+            })
+        }
+    }
+}
+
 async fn agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
     let agents = observer.agents().await;
     HttpResponse::Ok().json(agents)
@@ -74,6 +90,7 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
                     .route(web::post().to(sensor_register))
                     .route(web::delete().to(sensor_unregister)),
             )
+            .service(web::resource("api/sensor/{id}/reload").route(web::post().to(sensor_reload)))
     })
     .bind(bind_addr)
     .unwrap()

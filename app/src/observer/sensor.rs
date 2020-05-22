@@ -1,5 +1,6 @@
 use crate::agent::{plugin::AgentFactory, Agent};
 use crate::logging::APP_LOGGING;
+use crate::error::PluginError;
 use crate::models::dao::{AgentConfigDao, SensorDao};
 use iftem_core::{error::AgentError, SensorDataDto};
 use std::vec::Vec;
@@ -36,6 +37,11 @@ impl SensorHandle {
 
     pub fn on_data(&mut self, data: &SensorDataDto) {
         self.agents.iter_mut().for_each(|a| a.on_data(data))
+    }
+
+    pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
+        self.agents.iter_mut().for_each(|a| a.reload(factory).unwrap());
+        Ok(())
     }
 
     pub fn id(&self) -> i32 {

@@ -1,6 +1,5 @@
 use iftem_core::error::AgentError;
-use std::error;
-use std::fmt;
+use std::{error, fmt, io};
 
 #[derive(Debug)]
 pub enum DBError {
@@ -61,6 +60,35 @@ impl From<serde_json::error::Error> for MQTTError {
 }
 
 #[derive(Debug)]
+pub enum PluginError {
+    CompilerMismatch(std::string::String, std::string::String),
+    Duplicate(std::string::String),
+    LibNotFound(io::Error),
+    AgentStateError(iftem_core::AgentState),
+}
+
+impl fmt::Display for PluginError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PluginError::CompilerMismatch(expected, actual) => {
+                write!(f, "Compiler needed {}, was {}", expected, actual)
+            }
+            PluginError::Duplicate(uuid) => write!(f, "Duplicate {}", uuid),
+            PluginError::LibNotFound(e) => e.fmt(f),
+            PluginError::AgentStateError(state) => write!(f, "Invalid agent state: {:?}", state),
+        }
+    }
+}
+
+impl error::Error for PluginError {}
+
+impl From<io::Error> for PluginError {
+    fn from(err: io::Error) -> Self {
+        PluginError::LibNotFound(err)
+    }
+}
+
+#[derive(Debug)]
 pub enum ObserverError {
     User(Box<dyn error::Error>),
     Internal(Box<dyn error::Error>),
@@ -95,5 +123,11 @@ impl From<AgentError> for ObserverError {
 impl From<MQTTError> for ObserverError {
     fn from(err: MQTTError) -> Self {
         ObserverError::Internal(Box::from(err))
+    }
+}
+
+impl From<PluginError> for ObserverError {
+    fn from(err: PluginError) -> Self {
+        ObserverError::User(Box::from(err))
     }
 }

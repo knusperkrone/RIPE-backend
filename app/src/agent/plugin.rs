@@ -1,12 +1,13 @@
+use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
 use crate::models::{dao::AgentConfigDao, dto::AgentPayload, dto::SensorMessageDto};
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
-use libloading::Library;
 use iftem_core::{
     error::AgentError, AgentMessage, AgentState, AgentTrait, PluginDeclaration, SensorDataDto,
 };
-use std::{collections::HashMap, env, ffi::OsStr, io, string::String, sync::Arc};
+use libloading::Library;
+use std::{collections::HashMap, env, ffi::OsStr, string::String, sync::Arc};
 use tokio::stream::StreamExt;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
@@ -16,6 +17,8 @@ use tokio::sync::{
 pub struct Agent {
     sensor_id: i32,
     domain: String,
+    plugin_sender: Sender<AgentMessage>,
+    agent_name: String,
     state: Arc<RwLock<AgentState>>,
     abort_handle: AbortHandle,
     proxy: Box<dyn AgentTrait>,
@@ -36,16 +39,17 @@ impl Drop for Agent {
 impl Agent {
     pub fn new(
         agent_sender: Sender<SensorMessageDto>,
+        plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
         domain: String,
+        agent_name: String,
         proxy: Box<dyn AgentTrait>,
     ) -> Self {
-        let domain_ipc = domain.clone();
         let state = Arc::new(RwLock::new(AgentState::Default));
         let ipc_fut = Agent::dispatch_plugin_ipc(
             sensor_id,
-            domain_ipc,
+            domain.clone(),
             state.clone(),
             agent_sender,
             plugin_receiver,
@@ -57,9 +61,26 @@ impl Agent {
         Agent {
             sensor_id,
             domain,
+            plugin_sender,
+            agent_name,
             state,
             abort_handle,
             proxy,
+        }
+    }
+
+    pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
+        if self.proxy.state() == &AgentState::Active {
+            return Err(PluginError::AgentStateError(AgentState::Active));
+        }
+
+        let state_json = self.proxy.deserialize().state_json;
+        unsafe {
+            let proxy = factory
+                .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
+                .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone()))?;
+            self.proxy = proxy;
+            Ok(())
         }
     }
 
@@ -184,7 +205,7 @@ impl AgentFactory {
         }
     }
 
-    unsafe fn load_library<P: AsRef<OsStr>>(&mut self, library_path: P) -> io::Result<()> {
+    unsafe fn load_library<P: AsRef<OsStr>>(&mut self, library_path: P) -> Result<(), PluginError> {
         // load the library into memory
         let library = Library::new(library_path)?;
 
@@ -197,12 +218,35 @@ impl AgentFactory {
             || decl.core_version != iftem_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
-            Err(io::Error::new(io::ErrorKind::Other, "Version mismatch"))
+            Err(PluginError::CompilerMismatch(
+                decl.rustc_version.to_owned(),
+                iftem_core::RUSTC_VERSION.to_owned(),
+            ))
         } else if self.libraries.contains_key(decl.agent_name) {
-            Err(io::Error::new(io::ErrorKind::Other, "Duplicate library"))
+            Err(PluginError::Duplicate(decl.agent_name.to_owned()))
         } else {
             self.libraries.insert(decl.agent_name.to_owned(), library);
             Ok(())
+        }
+    }
+
+    unsafe fn build_proxy_agent(
+        &self,
+        agent_name: &String,
+        state_json: Option<&String>,
+        plugin_sender: &Sender<AgentMessage>,
+    ) -> Option<Box<dyn AgentTrait>> {
+        if let Some(library) = self.libraries.get(agent_name) {
+            let decl = library
+                .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
+                .unwrap() // Panic should be impossible
+                .read();
+
+            let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
+            let proxy = (decl.agent_builder)(state_json, logger.clone(), plugin_sender.clone());
+            Some(proxy)
+        } else {
+            None
         }
     }
 
@@ -213,21 +257,15 @@ impl AgentFactory {
         domain: &String,
         state_json: Option<&String>,
     ) -> Result<Agent, AgentError> {
-        if let Some(library) = self.libraries.get(agent_name) {
-            let decl = library
-                .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
-                .unwrap() // Panic should be impossible
-                .read();
-
-            let agent_sender = self.agent_sender.clone();
-            let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(32);
-            let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
-            let plugin_agent = (decl.agent_builder)(state_json, logger.clone(), plugin_sender);
+        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(32);
+        if let Some(plugin_agent) = self.build_proxy_agent(agent_name, state_json, &plugin_sender) {
             Ok(Agent::new(
-                agent_sender,
+                self.agent_sender.clone(),
+                plugin_sender,
                 plugin_receiver,
                 sensor_id,
                 domain.clone(),
+                agent_name.clone(),
                 plugin_agent,
             ))
         } else {

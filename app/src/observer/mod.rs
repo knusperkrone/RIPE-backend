@@ -1,17 +1,16 @@
 use crate::agent::{plugin::AgentFactory, Agent};
-use crate::error::ObserverError;
+use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
     dao::{AgentConfigDao, SensorDao},
-    dto::{AgentPayload, AgentRegisterDto, SensorMessageDto},
+    dto::{AgentRegisterDto, SensorMessageDto},
     establish_db_connection,
 };
 use diesel::pg::PgConnection;
 use mqtt::MqttSensorClient;
 use rumq_client::{MqttEventLoop, Publish};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     stream::StreamExt,
     sync::mpsc::Receiver,
@@ -170,6 +169,18 @@ impl ConcurrentSensorObserver {
             .unsubscribe_sensor(sensor_id)
             .await;
         Ok(sensor_id)
+    }
+
+    pub async fn reload_sensor(&self, sensor_id: i32) -> Result<(), ObserverError> {
+        let factory = self.agent_factory.lock().await;
+        let container = self.container_ref.read().await;
+        let mut sensor = container
+            .sensors(sensor_id)
+            .await
+            .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
+
+        sensor.reload(&factory)?;
+        Ok(())
     }
 
     async fn populate(&self) {

@@ -212,8 +212,7 @@ pub mod dto {
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct SensorDto {
-        pub id: i32,
+    pub struct SensorStatusDto {
         pub name: String,
         pub agents: Vec<AgentStatusDto>,
     }

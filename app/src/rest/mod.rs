@@ -94,8 +94,8 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {
     let bind_addr = env::var("BIND_ADDR").expect("BIND_ADDR must be set");
     let print_addr = bind_addr.clone();
 
+    info!(APP_LOGGING, "Starting webserver at: {}", print_addr);
     HttpServer::new(move || {
-        info!(APP_LOGGING, "Starting webserver at: {}", print_addr);
         App::new()
             .app_data(web::Data::new(observer.clone()))
             .data(web::JsonConfig::default().limit(4096))

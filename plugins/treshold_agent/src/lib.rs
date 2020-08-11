@@ -12,15 +12,16 @@ use std::sync::{
 use tokio::sync::mpsc::Sender;
 
 const NAME: &str = "ThresholdAgent";
+const VERSION_CODE: u32 = 1;
 
-export_plugin!(NAME, build_agent);
+export_plugin!(NAME, VERSION_CODE, build_agent);
 
 extern "C" fn build_agent(
     config: Option<&std::string::String>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {
-    let mut agent: ThresholdAgent;
+    let mut agent: ThresholdAgent = ThresholdAgent::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdAgent>(&config_json) {
             info!(logger, "Restored {} from config", NAME);
@@ -32,7 +33,6 @@ extern "C" fn build_agent(
             );
         }
     } else {
-        agent = ThresholdAgent::default();
         info!(logger, "Created new {}", NAME);
     }
 
@@ -50,7 +50,7 @@ pub struct ThresholdAgent {
     #[serde(skip)]
     task_cell: RefCell<ThresholdTask>,
     state: AgentState,
-    min_threshold: u32,
+    min_threshold: f64,
     action_duration_sec: i64,
     action_cooldown_sec: i64,
     action_start: Option<DateTime<Utc>>,
@@ -75,7 +75,7 @@ impl Default for ThresholdAgent {
             sender: iftem_core::sender_sentinel(),
             task_cell: RefCell::default(),
             state: AgentState::Active.into(),
-            min_threshold: 20,
+            min_threshold: 20.0,
             action_duration_sec: 60,
             action_cooldown_sec: 30,
             action_start: None,
@@ -116,7 +116,7 @@ impl AgentTrait for ThresholdAgent {
             return;
         }
 
-        let moisture = data.moisture.unwrap_or(std::u32::MAX);
+        let moisture = data.moisture.unwrap_or(std::f64::MAX);
         if moisture < self.min_threshold {
             info!(self.logger, "{} moisture below threshold", NAME);
             let until = Utc::now() + Duration::seconds(self.action_duration_sec);
@@ -219,11 +219,7 @@ impl ThresholdTask {
                     &config.sender,
                     AgentMessage::State(state),
                 );
-                iftem_core::send_payload(
-                    &config.logger,
-                    &config.sender,
-                    AgentMessage::Bool(true),
-                );
+                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Bool(true));
                 info!(
                     config.logger,
                     "{} started Task until {}", NAME, config.until
@@ -240,11 +236,7 @@ impl ThresholdTask {
                     &config.sender,
                     AgentMessage::State(state),
                 );
-                iftem_core::send_payload(
-                    &config.logger,
-                    &config.sender,
-                    AgentMessage::Bool(false),
-                );
+                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Bool(false));
 
                 let delta_secs = (Utc::now() - start).num_seconds();
                 if config.aborted.load(Ordering::Relaxed) {

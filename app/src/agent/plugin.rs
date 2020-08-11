@@ -75,7 +75,7 @@ impl Agent {
     }
 
     pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        if !self.needs_update && self.agent_proxy.state() == &AgentState::Active {
+        if self.agent_proxy.state() == &AgentState::Active {
             return Err(PluginError::AgentStateError(AgentState::Active));
         }
 
@@ -85,8 +85,9 @@ impl Agent {
                 .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
                 .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone()))?;
             self.agent_proxy = proxy;
-            Ok(())
         }
+        self.needs_update = false;
+        Ok(())
     }
 
     pub fn on_data(&mut self, data: &SensorDataDto) {

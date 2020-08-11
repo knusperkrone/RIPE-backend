@@ -14,7 +14,7 @@ async fn sensor_register(
     let resp = observer
         .register_new_sensor(&register_request.name, &register_request.agents)
         .await;
-    handle_response(resp)
+    build_response(resp)
 }
 
 async fn sensor_unregister(
@@ -23,7 +23,7 @@ async fn sensor_unregister(
 ) -> HttpResponse {
     let remove_id = unregister_request.id;
     let resp = observer.remove_sensor(remove_id).await;
-    handle_response(resp)
+    build_response(resp)
 }
 
 async fn sensor_reload(
@@ -32,7 +32,7 @@ async fn sensor_reload(
 ) -> HttpResponse {
     let sensor_id = unregister_request.into_inner();
     let resp = observer.reload_sensor(sensor_id).await;
-    handle_response(resp)
+    build_response(resp)
 }
 
 async fn agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
@@ -46,7 +46,7 @@ async fn agent_status(
 ) -> HttpResponse {
     let sensor_id = path.into_inner();
     let resp = observer.sensor_status(sensor_id).await;
-    handle_response(resp)
+    build_response(resp)
 }
 
 async fn agent_data(
@@ -55,10 +55,10 @@ async fn agent_data(
 ) -> HttpResponse {
     let sensor_id = path.into_inner();
     let resp = observer.sensor_data(sensor_id).await;
-    handle_response(resp)
+    build_response(resp)
 }
 
-fn handle_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> HttpResponse {
+fn build_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> HttpResponse {
     match resp {
         Ok(data) => HttpResponse::Ok().json(data),
         Err(ObserverError::User(err)) => {
@@ -74,7 +74,7 @@ fn handle_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> HttpR
     }
 }
 
-pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
+fn config_endpoints(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("api/sensor")
             .route(web::get().to(agents))

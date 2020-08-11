@@ -1,5 +1,5 @@
 use iftem_core::error::AgentError;
-use std::{error, fmt, io};
+use std::{error, fmt};
 
 #[derive(Debug)]
 pub enum DBError {
@@ -63,7 +63,7 @@ impl From<serde_json::error::Error> for MQTTError {
 pub enum PluginError {
     CompilerMismatch(std::string::String, std::string::String),
     Duplicate(std::string::String),
-    LibNotFound(io::Error),
+    LibError(libloading::Error),
     AgentStateError(iftem_core::AgentState),
 }
 
@@ -74,7 +74,7 @@ impl fmt::Display for PluginError {
                 write!(f, "Compiler needed {}, was {}", expected, actual)
             }
             PluginError::Duplicate(uuid) => write!(f, "Duplicate {}", uuid),
-            PluginError::LibNotFound(e) => e.fmt(f),
+            PluginError::LibError(e) => e.fmt(f),
             PluginError::AgentStateError(state) => write!(f, "Invalid agent state: {:?}", state),
         }
     }
@@ -82,9 +82,9 @@ impl fmt::Display for PluginError {
 
 impl error::Error for PluginError {}
 
-impl From<io::Error> for PluginError {
-    fn from(err: io::Error) -> Self {
-        PluginError::LibNotFound(err)
+impl From<libloading::Error> for PluginError {
+    fn from(err: libloading::Error) -> Self {
+        PluginError::LibError(err)
     }
 }
 

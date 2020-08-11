@@ -40,7 +40,7 @@ impl SensorHandle {
     }
 
     pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        self.agents.iter_mut().for_each(|a| a.reload(factory).unwrap());
+        self.agents.iter_mut().for_each(|a| a.reload_agent(factory).unwrap());
         Ok(())
     }
 

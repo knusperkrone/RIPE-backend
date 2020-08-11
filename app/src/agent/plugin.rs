@@ -24,12 +24,13 @@ pub struct Agent {
     agent_name: String,
     state: Arc<RwLock<AgentState>>,
     abort_handle: AbortHandle,
-    proxy: Box<dyn AgentTrait>,
+    agent_proxy: Box<dyn AgentTrait>,
+    needs_update: bool,
 }
 
 impl std::fmt::Debug for Agent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        write!(f, "{:?}", self.proxy)
+        write!(f, "{:?}", self.agent_proxy)
     }
 }
 
@@ -47,7 +48,7 @@ impl Agent {
         sensor_id: i32,
         domain: String,
         agent_name: String,
-        proxy: Box<dyn AgentTrait>,
+        agent_proxy: Box<dyn AgentTrait>,
     ) -> Self {
         let state = Arc::new(RwLock::new(AgentState::Default));
         let ipc_fut = Agent::dispatch_plugin_ipc(
@@ -68,31 +69,32 @@ impl Agent {
             agent_name,
             state,
             abort_handle,
-            proxy,
+            agent_proxy,
+            needs_update: false,
         }
     }
 
-    pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        if self.proxy.state() == &AgentState::Active {
+    pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
+        if !self.needs_update && self.agent_proxy.state() == &AgentState::Active {
             return Err(PluginError::AgentStateError(AgentState::Active));
         }
 
-        let state_json = self.proxy.deserialize().state_json;
+        let state_json = self.agent_proxy.deserialize().state_json;
         unsafe {
             let proxy = factory
                 .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
                 .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone()))?;
-            self.proxy = proxy;
+            self.agent_proxy = proxy;
             Ok(())
         }
     }
 
     pub fn on_data(&mut self, data: &SensorDataDto) {
-        self.proxy.on_data(data);
+        self.agent_proxy.on_data(data);
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {
-        let config = self.proxy.deserialize();
+        let config = self.agent_proxy.deserialize();
         AgentConfigDao::new(
             self.sensor_id,
             self.domain.clone(),
@@ -113,6 +115,10 @@ impl Agent {
         self.state.read().unwrap().clone()
     }
 
+    pub fn needs_update(&self) -> bool {
+        self.needs_update
+    }
+
     async fn dispatch_plugin_ipc(
         sensor_id: i32,
         domain: String,
@@ -128,13 +134,22 @@ impl Agent {
                 let mut self_state = state_lock.write().unwrap();
                 *self_state = state;
             } else if let Ok(message) = AgentPayload::from(payload) {
-                let msg = SensorMessageDto {
+                let mut msg = SensorMessageDto {
                     sensor_id: sensor_id,
                     domain: domain.clone(),
                     payload: message,
                 };
-                if let Err(e) = agent_sender.clone().send(msg).await {
-                    warn!(APP_LOGGING, "Error sending payload {}", e);
+
+                let mut tries = 3;
+                let mut sender = agent_sender.clone();
+                while tries != 0 {
+                    if let Err(e) = sender.send(msg).await {
+                        error!(APP_LOGGING, "[{}/3] Error sending payload: {}", tries, e);
+                        tries -= 1;
+                        msg = e.0;
+                    } else {
+                        break;
+                    }
                 }
             } else {
                 error!(APP_LOGGING, "Unhandled payload");
@@ -220,7 +235,7 @@ impl AgentFactory {
         }
     }
 
-    unsafe fn load_library<P: AsRef<OsStr>>(&mut self, library_path: P) -> Result<(), PluginError> {
+    unsafe fn load_library<P: AsRef<OsStr>>(&mut self, library_path: P) -> Result<&str, PluginError> {
         // load the library into memory
         let library = Library::new(library_path)?;
 
@@ -233,16 +248,21 @@ impl AgentFactory {
             || decl.core_version != iftem_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
-            Err(PluginError::CompilerMismatch(
+            return Err(PluginError::CompilerMismatch(
                 decl.rustc_version.to_owned(),
                 iftem_core::RUSTC_VERSION.to_owned(),
-            ))
-        } else if self.libraries.contains_key(decl.agent_name) {
-            Err(PluginError::Duplicate(decl.agent_name.to_owned()))
-        } else {
-            self.libraries.insert(decl.agent_name.to_owned(), library);
-            Ok(())
+            ));
+        } else if let Some(loaded_lib) = self.libraries.get(decl.agent_name) {
+            // Check duplicated or outdated library
+            let loaded_decl = loaded_lib
+                .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
+                .read();
+            if loaded_decl.agent_version < decl.agent_version {
+                return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
+            }
         }
+        self.libraries.insert(decl.agent_name.to_owned(), library);
+        return Ok(decl.agent_name);
     }
 
     unsafe fn build_proxy_agent(

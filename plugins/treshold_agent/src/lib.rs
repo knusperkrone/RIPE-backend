@@ -20,7 +20,7 @@ extern "C" fn build_agent(
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {
-    let mut agent: ThresholdAgent = ThresholdAgent::default();
+    let mut agent: ThresholdAgent;
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdAgent>(&config_json) {
             info!(logger, "Restored {} from config", NAME);
@@ -32,6 +32,7 @@ extern "C" fn build_agent(
             );
         }
     } else {
+        agent = ThresholdAgent::default();
         info!(logger, "Created new {}", NAME);
     }
 

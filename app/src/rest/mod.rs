@@ -28,33 +28,33 @@ async fn sensor_unregister(
 
 async fn sensor_reload(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
-    unregister_request: web::Path<i32>,
+    path: web::Path<(i32, String)>,
 ) -> HttpResponse {
-    let sensor_id = unregister_request.into_inner();
-    let resp = observer.reload_sensor(sensor_id).await;
+    let (sensor_id, key_b64) = path.into_inner();
+    let resp = observer.reload_sensor(sensor_id, key_b64).await;
     build_response(resp)
 }
 
-async fn agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
+async fn get_agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
     let agents = observer.agents().await;
     HttpResponse::Ok().json(agents)
 }
 
 async fn agent_status(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
-    path: web::Path<i32>,
+    path: web::Path<(i32, String)>,
 ) -> HttpResponse {
-    let sensor_id = path.into_inner();
-    let resp = observer.sensor_status(sensor_id).await;
+    let (sensor_id, key_b64) = path.into_inner();
+    let resp = observer.sensor_status(sensor_id, key_b64).await;
     build_response(resp)
 }
 
 async fn agent_data(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
-    path: web::Path<i32>,
+    path: web::Path<(i32, String)>,
 ) -> HttpResponse {
-    let sensor_id = path.into_inner();
-    let resp = observer.sensor_data(sensor_id).await;
+    let (sensor_id, key_b64) = path.into_inner();
+    let resp = observer.sensor_data(sensor_id, key_b64).await;
     build_response(resp)
 }
 
@@ -77,13 +77,13 @@ fn build_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> HttpRe
 fn config_endpoints(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("api/sensor")
-            .route(web::get().to(agents))
+            .route(web::get().to(get_agents))
             .route(web::post().to(sensor_register))
             .route(web::delete().to(sensor_unregister)),
     )
-    .service(web::resource("api/sensor/{id}/reload").route(web::post().to(sensor_reload)))
-    .service(web::resource("api/sensor/{id}/status").route(web::get().to(agent_status)))
-    .service(web::resource("api/sensor/{id}/data").route(web::get().to(agent_data)));
+    .service(web::resource("api/sensor/{id}/{key}/reload").route(web::post().to(sensor_reload)))
+    .service(web::resource("api/sensor/{id}/{key}/status").route(web::get().to(agent_status)))
+    .service(web::resource("api/sensor/{id}/{key}/data").route(web::get().to(agent_data)));
 }
 
 pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) {

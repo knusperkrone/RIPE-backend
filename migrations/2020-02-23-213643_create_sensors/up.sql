@@ -1,6 +1,7 @@
 CREATE TABLE sensors
 (
     id SERIAL PRIMARY KEY,
+    key_b64 VARCHAR (6) NOT NULL,
     name VARCHAR (255) NOT NULL
 );
 

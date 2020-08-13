@@ -1,16 +1,17 @@
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::models::dto::SensorMessageDto;
-use crate::observer::SensorContainer;
+use crate::observer::SensorCache;
 use dotenv::dotenv;
 use iftem_core::SensorDataDto;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc};
 use tokio::sync::{
     mpsc::{channel, Sender},
     RwLock,
 };
+use super::sensor::SensorHandle;
 
 pub struct MqttSensorClient {
     requests_tx: Sender<Request>,
@@ -40,8 +41,8 @@ impl MqttSensorClient {
         (client, eventloop)
     }
 
-    pub async fn subscribe_sensor(&mut self, sensor_id: i32) -> Result<(), MQTTError> {
-        let mut topics = self.build_topics(sensor_id);
+    pub async fn subscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        let mut topics = self.build_topics(sensor);
         let mut sub = Subscribe::new(topics.pop().unwrap(), QoS::AtLeastOnce);
         for topic in topics {
             sub.add(topic, QoS::AtLeastOnce);
@@ -51,13 +52,13 @@ impl MqttSensorClient {
         info!(
             APP_LOGGING,
             "Subscribed topics: {:?}",
-            self.build_topics(sensor_id)
+            self.build_topics(sensor)
         );
         Ok(())
     }
 
-    pub async fn unsubscribe_sensor(&mut self, sensor_id: i32) {
-        let mut _topics = self.build_topics(sensor_id);
+    pub async fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) {
+        let mut _topics = self.build_topics(sensor);
         warn!(
             APP_LOGGING,
             "Cannot unsubscribe yet, due rumq-clients alpha state!"
@@ -66,12 +67,12 @@ impl MqttSensorClient {
 
     pub async fn on_sensor_message(
         &mut self,
-        container_lock: Arc<RwLock<SensorContainer>>,
+        container_lock: &Arc<RwLock<SensorCache>>,
         msg: Publish,
     ) -> Result<Option<(i32, SensorDataDto)>, MQTTError> {
         // parse message
-        let path: Vec<&str> = msg.topic_name.splitn(3, '/').collect();
-        if path.len() != 3 {
+        let path: Vec<&str> = msg.topic_name.splitn(4, '/').collect();
+        if path.len() != 4 {
             return Err(MQTTError::PathError(format!(
                 "Couldn't split topic: {}",
                 msg.topic_name
@@ -82,6 +83,7 @@ impl MqttSensorClient {
 
         let sensor_id: i32;
         let endpoint = path[1];
+        let key = path[3];
         if let Ok(parsed_id) = path[2].parse() {
             sensor_id = parsed_id;
         } else {
@@ -105,7 +107,7 @@ impl MqttSensorClient {
                 let sensor_dto = serde_json::from_str::<SensorDataDto>(&payload)?;
                 let container = container_lock.read().await;
                 let mut sensor = container
-                    .sensors(sensor_id)
+                    .sensors(sensor_id, key)
                     .await
                     .ok_or(MQTTError::NoSensor())?;
                 sensor.on_data(&sensor_dto);
@@ -146,19 +148,21 @@ impl MqttSensorClient {
         Ok(())
     }
 
-    fn build_topics(&self, sensor_id: i32) -> Vec<String> {
+    fn build_topics(&self, sensor: &SensorHandle) -> Vec<String> {
         vec![
             format!(
-                "{}/{}/{}",
+                "{}/{}/{}/{}",
                 MqttSensorClient::SENSOR_TOPIC,
                 MqttSensorClient::DATA_TOPIC,
-                sensor_id
+                sensor.id(),
+                sensor.key_b64(),
             ),
             format!(
-                "{}/{}/{}",
+                "{}/{}/{}/{}",
                 MqttSensorClient::SENSOR_TOPIC,
                 MqttSensorClient::LOG_TOPIC,
-                sensor_id
+                sensor.id(),
+                sensor.key_b64(),
             ),
         ]
     }

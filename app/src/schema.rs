@@ -24,6 +24,7 @@ table! {
 table! {
     sensors (id) {
         id -> Int4,
+        key_b64 -> Varchar,
         name -> Varchar,
     }
 }

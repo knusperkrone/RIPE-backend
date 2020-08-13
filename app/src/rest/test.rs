@@ -140,7 +140,7 @@ async fn test_sensor_status() {
 
     // Execute
     let req = test::TestRequest::get()
-        .uri(&format!("/api/sensor/{}/status", sensor_id))
+        .uri(&format!("/api/sensor/{}/123456/status", sensor_id))
         .to_request();
     let resp = app.call(req).await.unwrap();
 
@@ -186,7 +186,7 @@ async fn test_sensor_data() {
 
     // Execute
     let req = test::TestRequest::get()
-        .uri(&format!("/api/sensor/{}/data", sensor_id))
+        .uri(&format!("/api/sensor/{}/123456/data", sensor_id))
         .to_request();
     let resp = app.call(req).await.unwrap();
 

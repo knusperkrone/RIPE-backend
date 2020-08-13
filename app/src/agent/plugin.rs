@@ -116,10 +116,6 @@ impl Agent {
         self.state.read().unwrap().clone()
     }
 
-    pub fn needs_update(&self) -> bool {
-        self.needs_update
-    }
-
     async fn dispatch_plugin_ipc(
         sensor_id: i32,
         domain: String,

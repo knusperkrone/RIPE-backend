@@ -14,7 +14,7 @@ async fn test_mqtt_connection() {
 #[actix_rt::test]
 async fn test_invalid_mqtt_path() {
     // prepare
-    let container = SensorContainer::new();
+    let container = SensorCache::new();
     let mocked_container = Arc::new(RwLock::new(container));
     let (mut client, _) = MqttSensorClient::new();
 
@@ -30,7 +30,7 @@ async fn test_invalid_mqtt_path() {
 
     // validate
     let result = client
-        .on_sensor_message(mocked_container, mocked_message)
+        .on_sensor_message(&mocked_container, mocked_message)
         .await;
     assert_ne!(result.is_ok(), true);
 }
@@ -39,12 +39,13 @@ async fn test_invalid_mqtt_path() {
 async fn test_valid_mqtt_path() {
     // prepare
     let sensor_id = 0;
+    let key_b64 = "123456";
     let (sender, _) = tokio::sync::mpsc::channel::<SensorMessageDto>(2);
     let (plugin_sender, plugin_receiver) = tokio::sync::mpsc::channel::<AgentMessage>(2);
-    let mut container = SensorContainer::new();
+    let mut container = SensorCache::new();
     let (mut client, _) = MqttSensorClient::new();
     let mock_sensor = SensorHandle {
-        dao: SensorDao::new(sensor_id, "mock".to_owned()),
+        dao: SensorDao::new(sensor_id, key_b64.to_owned(), "mock".to_owned()),
         agents: vec![Agent::new(
             sender,
             plugin_sender,
@@ -64,17 +65,17 @@ async fn test_valid_mqtt_path() {
         retain: false,
         qos: QoS::ExactlyOnce,
         pkid: None,
-        topic_name: format!("sensor/data/{}", sensor_id),
+        topic_name: format!("sensor/data/{}/{}", sensor_id, key_b64),
         payload: serde_json::to_vec(&SensorDataDto::default()).unwrap(),
     };
 
     let result = client
-        .on_sensor_message(mocked_container.clone(), mocked_message)
+        .on_sensor_message(&mocked_container, mocked_message)
         .await;
 
     // validate
     assert_eq!(result.is_ok(), true);
     let container = mocked_container.read().await;
-    let _sensor = container.sensors(sensor_id).await;
+    let _sensor = container.sensors(sensor_id, &key_b64.to_owned()).await;
     // TODO: check agent
 }

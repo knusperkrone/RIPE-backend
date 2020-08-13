@@ -5,7 +5,9 @@ use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
     dao::{AgentConfigDao, SensorDao},
-    dto::{AgentRegisterDto, AgentStatusDto, RegisterResponseDto, SensorStatusDto, SensorMessageDto},
+    dto::{
+        AgentRegisterDto, AgentStatusDto, RegisterResponseDto, SensorMessageDto, SensorStatusDto,
+    },
     establish_db_connection,
 };
 use diesel::pg::PgConnection;
@@ -27,7 +29,7 @@ use sensor::SensorHandle;
 mod test;
 
 pub struct ConcurrentSensorObserver {
-    container_ref: Arc<RwLock<SensorContainer>>,
+    container_ref: Arc<RwLock<SensorCache>>,
     agent_factory: Mutex<AgentFactory>,
     mqtt_client: RwLock<MqttSensorClient>,
     eventloop: Mutex<MqttEventLoop>,
@@ -35,12 +37,13 @@ pub struct ConcurrentSensorObserver {
     db_conn: Mutex<PgConnection>,
 }
 
+// Init
 impl ConcurrentSensorObserver {
     pub fn new() -> Arc<Self> {
         let db_conn = establish_db_connection();
         let (sender, receiver) = tokio::sync::mpsc::channel::<SensorMessageDto>(128);
         let agent_factory = AgentFactory::new(sender);
-        let container = RwLock::new(SensorContainer::new());
+        let container = RwLock::new(SensorCache::new());
         let (client, eventloop) = MqttSensorClient::new();
         let observer = ConcurrentSensorObserver {
             agent_factory: Mutex::new(agent_factory),
@@ -54,6 +57,25 @@ impl ConcurrentSensorObserver {
         Arc::new(observer)
     }
 
+    pub async fn dispatch_ipc(self: Arc<ConcurrentSensorObserver>) -> () {
+        let receiver_res = self.receiver.try_lock();
+        if receiver_res.is_err() {
+            error!(APP_LOGGING, "dispatch_ipc() already called!");
+            return;
+        }
+
+        let mut receiver = receiver_res.unwrap();
+        while let Some(item) = receiver.next().await {
+            let mut mqtt_client = self.mqtt_client.write().await;
+            if let Err(e) = mqtt_client.send_cmd(&item).await {
+                error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+            }
+        }
+    }
+}
+
+// MQTT
+impl ConcurrentSensorObserver {
     pub async fn dispatch_mqtt(self: Arc<ConcurrentSensorObserver>) -> () {
         let mut reconnects: i32 = 0;
         let eventloop_res = self.eventloop.try_lock();
@@ -81,7 +103,7 @@ impl ConcurrentSensorObserver {
                 match item {
                     rumq_client::Notification::Publish(msg) => {
                         debug!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic_name);
-                        self.on_message(msg).await;
+                        self.on_mqtt_message(msg).await;
                     }
                     rumq_client::Notification::Suback(_) => (),
                     rumq_client::Notification::Pubrec(_) => (),
@@ -96,27 +118,51 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    pub async fn dispatch_ipc(self: Arc<ConcurrentSensorObserver>) -> () {
-        let receiver_res = self.receiver.try_lock();
-        if receiver_res.is_err() {
-            error!(APP_LOGGING, "dispatch_ipc() already called!");
-            return;
-        }
+    async fn populate(&self) {
+        let db_conn = self.db_conn.lock().await;
+        let mut persisted_sensors = models::get_sensors(&db_conn);
+        let mut sensor_configs: Vec<Vec<AgentConfigDao>> = persisted_sensors
+            .iter()
+            .map(|dao| models::get_agent_config(&db_conn, &dao)) // retrieve agent config
+            .collect();
 
-        let mut receiver = receiver_res.unwrap();
-        while let Some(item) = receiver.next().await {
-            let mut mqtt_client = self.mqtt_client.write().await;
-            if let Err(e) = mqtt_client.send_cmd(&item).await {
-                error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+        while !persisted_sensors.is_empty() {
+            let sensor_dao = persisted_sensors.pop().unwrap();
+            let agent_configs = sensor_configs.pop().unwrap();
+            let restore_result = self.register_sensor_dao(sensor_dao, &agent_configs).await;
+            match restore_result {
+                Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
+                Err(msg) => error!(APP_LOGGING, "{}", msg),
             }
         }
     }
 
-    pub async fn sensor_status(&self, sensor_id: i32) -> Result<SensorStatusDto, ObserverError> {
+    pub async fn on_mqtt_message(&self, msg: Publish) {
+        let mut client = self.mqtt_client.write().await;
+        match client.on_sensor_message(&self.container_ref, msg).await {
+            Ok(None) => (),
+            Ok(Some(tuple)) => {
+                let conn = self.db_conn.lock().await;
+                if let Err(e) = models::insert_sensor_data(&conn, tuple.0, tuple.1) {
+                    error!(APP_LOGGING, "Failed persisting data: {}", e);
+                }
+            }
+            Err(e) => warn!(APP_LOGGING, "On message error: {}", e),
+        }
+    }
+}
+
+// REST
+impl ConcurrentSensorObserver {
+    pub async fn sensor_status(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+    ) -> Result<SensorStatusDto, ObserverError> {
         // let conn = self.db_conn.lock().await;
         let container = self.container_ref.read().await;
         let sensor = container
-            .sensors(sensor_id)
+            .sensors(sensor_id, key_b64.as_str())
             .await
             .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
 
@@ -136,32 +182,19 @@ impl ConcurrentSensorObserver {
         })
     }
 
-    pub async fn sensor_data(&self, sensor_id: i32) -> Result<SensorDataDto, ObserverError> {
+    pub async fn sensor_data(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+    ) -> Result<SensorDataDto, ObserverError> {
         let conn = self.db_conn.lock().await;
-        let data = models::get_latest_sensor_data(&conn, sensor_id)?;
-        Ok(data)
+        let data = models::get_latest_sensor_data(&conn, sensor_id, key_b64)?;
+        Ok(data.into())
     }
 
     pub async fn agents(&self) -> Vec<String> {
         let container_factory = self.agent_factory.lock().await;
         container_factory.agents()
-    }
-
-    pub async fn on_message(&self, msg: Publish) {
-        let mut client = self.mqtt_client.write().await;
-        match client
-            .on_sensor_message(self.container_ref.clone(), msg)
-            .await
-        {
-            Ok(None) => (),
-            Ok(Some(tuple)) => {
-                let conn = self.db_conn.lock().await;
-                if let Err(e) = models::insert_sensor_data(&conn, tuple.0, tuple.1) {
-                    error!(APP_LOGGING, "Failed persisting data: {}", e);
-                }
-            }
-            Err(e) => warn!(APP_LOGGING, "On message error: {}", e),
-        }
     }
 
     pub async fn register_new_sensor(
@@ -170,8 +203,9 @@ impl ConcurrentSensorObserver {
         configs: &Vec<AgentRegisterDto>,
     ) -> Result<RegisterResponseDto, ObserverError> {
         // Create sensor
+        let key_b64 = self.generate_sensor_key();
         let conn = self.db_conn.lock().await;
-        let sensor_dao = models::create_new_sensor(&conn, name)?;
+        let sensor_dao = models::create_new_sensor(&conn, key_b64, name)?;
         let dao_id = sensor_dao.id();
 
         // Create agents and persist
@@ -201,44 +235,31 @@ impl ConcurrentSensorObserver {
         let conn = self.db_conn.lock().await;
         models::delete_sensor(&conn, sensor_id)?;
 
-        self.container_ref.write().await.remove_sensor(sensor_id);
+        let sensor_mtx = self.container_ref.write().await.remove_sensor(sensor_id)?;
+        let sensor = sensor_mtx.lock().await;
         self.mqtt_client
             .write()
             .await
-            .unsubscribe_sensor(sensor_id)
+            .unsubscribe_sensor(&sensor)
             .await;
+
         Ok(RegisterResponseDto { id: sensor_id })
     }
 
-    pub async fn reload_sensor(&self, sensor_id: i32) -> Result<(), ObserverError> {
+    pub async fn reload_sensor(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+    ) -> Result<(), ObserverError> {
         let factory = self.agent_factory.lock().await;
         let container = self.container_ref.read().await;
         let mut sensor = container
-            .sensors(sensor_id)
+            .sensors(sensor_id, &key_b64)
             .await
             .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
 
         sensor.reload(&factory)?;
         Ok(())
-    }
-
-    async fn populate(&self) {
-        let db_conn = self.db_conn.lock().await;
-        let mut persisted_sensors = models::get_sensors(&db_conn);
-        let mut sensor_configs: Vec<Vec<AgentConfigDao>> = persisted_sensors
-            .iter()
-            .map(|dao| models::get_agent_config(&db_conn, &dao)) // retrieve agent config
-            .collect();
-
-        while !persisted_sensors.is_empty() {
-            let sensor_dao = persisted_sensors.pop().unwrap();
-            let agent_configs = sensor_configs.pop().unwrap();
-            let restore_result = self.register_sensor_dao(sensor_dao, &agent_configs).await;
-            match restore_result {
-                Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
-                Err(msg) => error!(APP_LOGGING, "{}", msg),
-            }
-        }
     }
 
     async fn build_agents(
@@ -261,44 +282,65 @@ impl ConcurrentSensorObserver {
     ) -> Result<i32, ObserverError> {
         let agent_factory = self.agent_factory.lock().await;
         let sensor_id = sensor_dao.id();
-        let sensor: SensorHandle = SensorHandle::from(sensor_dao, configs, &agent_factory)?;
+        let sensor = SensorHandle::from(sensor_dao, configs, &agent_factory)?;
 
-        self.container_ref.write().await.insert_sensor(sensor);
         self.mqtt_client
             .write()
             .await
-            .subscribe_sensor(sensor_id)
+            .subscribe_sensor(&sensor)
             .await?;
+        self.container_ref.write().await.insert_sensor(sensor);
+
         Ok(sensor_id)
+    }
+
+    fn generate_sensor_key(&self) -> String {
+        if cfg!(test) {
+            return "123456".to_owned();
+        }
+
+        let mut buffer = Vec::with_capacity(6);
+        for i in 0..6 {
+            buffer[i] = rand::random::<u8>();
+        }
+        base64::encode(buffer)
     }
 }
 
-pub struct SensorContainer {
+pub struct SensorCache {
     sensors: HashMap<i32, Mutex<SensorHandle>>,
 }
 
-impl SensorContainer {
+impl SensorCache {
     fn new() -> Self {
-        SensorContainer {
+        SensorCache {
             sensors: HashMap::new(),
         }
     }
 
-    pub async fn sensors(&self, sensor_id: i32) -> Option<MutexGuard<'_, SensorHandle>> {
+    pub async fn sensors(
+        &self,
+        sensor_id: i32,
+        key_b64: &str,
+    ) -> Option<MutexGuard<'_, SensorHandle>> {
         let sensor_mutex = self.sensors.get(&sensor_id)?;
-        Some(sensor_mutex.lock().await)
+        let sensor = sensor_mutex.lock().await;
+        if sensor.key_b64() == key_b64 {
+            Some(sensor)
+        } else {
+            None
+        }
     }
 
     fn insert_sensor(&mut self, sensor: SensorHandle) {
-        //info!(APP_LOGGING, "Inserted new sensor: {}", sensor.id);
         self.sensors.insert(sensor.id(), Mutex::new(sensor));
     }
 
-    fn remove_sensor(&mut self, sensor_id: i32) -> () {
-        if let None = self.sensors.remove(&sensor_id) {
-            warn!(APP_LOGGING, "Coulnd't remove sensor: {}", sensor_id);
+    fn remove_sensor(&mut self, sensor_id: i32) -> Result<Mutex<SensorHandle>, DBError> {
+        if let Some(sensor_mtx) = self.sensors.remove(&sensor_id) {
+            Ok(sensor_mtx)
         } else {
-            info!(APP_LOGGING, "Removed new sensor: {}", sensor_id);
+            Err(DBError::SensorNotFound(sensor_id))
         }
     }
 }

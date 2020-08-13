@@ -17,22 +17,28 @@ pub mod dao {
     #[table_name = "sensors"]
     pub(super) struct NewSensor {
         pub name: String,
+        pub key_b64: String,
     }
 
     #[derive(Identifiable, Queryable, PartialEq, Debug)]
     #[table_name = "sensors"]
     pub struct SensorDao {
         id: i32,
+        key_b64: String,
         name: String,
     }
 
     impl SensorDao {
-        pub fn new(id: i32, name: String) -> Self {
-            SensorDao { id: id, name: name }
+        pub fn new(id: i32, key_b64: String, name: String) -> Self {
+            SensorDao { id, key_b64, name }
         }
 
         pub fn id(&self) -> i32 {
             self.id
+        }
+
+        pub fn key_b64(&self) -> &String {
+            &self.key_b64
         }
 
         pub fn name(&self) -> &String {
@@ -253,6 +259,7 @@ pub fn get_agent_config(conn: &PgConnection, sensor_dao: &SensorDao) -> Vec<Agen
 
 pub fn create_new_sensor(
     conn: &PgConnection,
+    key_b64: String,
     name_opt: &Option<String>,
 ) -> Result<SensorDao, DBError> {
     let name = name_opt.clone().unwrap_or_else(|| {
@@ -262,7 +269,7 @@ pub fn create_new_sensor(
         format!("Sensor {}", count)
     });
 
-    let new_sensor = NewSensor { name };
+    let new_sensor = NewSensor { name, key_b64 };
     let sensor_dao: SensorDao = diesel::insert_into(sensors::table)
         .values(&new_sensor)
         .get_result(conn)?;
@@ -312,17 +319,21 @@ pub fn insert_sensor_data(
 
 pub fn get_latest_sensor_data(
     conn: &PgConnection,
-    search_id: i32,
+    search_sensor_id: i32,
+    search_key_b64: String,
 ) -> Result<SensorDataDto, DBError> {
     use crate::schema::sensor_data::dsl::*;
-    let mut result = sensor_data
-        .filter(sensor_id.eq(search_id))
+    use crate::schema::sensors::dsl::key_b64 as dsl_key_b64;
+    let mut result: Vec<(SensorDataDao, SensorDao)> = sensor_data
+        .inner_join(sensors::table)
+        .filter(sensor_id.eq(search_sensor_id))
+        .filter(dsl_key_b64.eq(search_key_b64))
         .order(timestamp.desc())
         .limit(1)
-        .load::<SensorDataDao>(conn)?;
+        .load(conn)?;
 
-    if let Some(dao) = result.pop() {
-        Ok(dao.into())
+    if let Some((data, _)) = result.pop() {
+        Ok(data.into())
     } else {
         Ok(SensorDataDto::default())
     }
@@ -340,7 +351,7 @@ mod test {
     #[test]
     fn test_insert_remove_sensor() {
         let conn = establish_db_connection();
-        let sensor = create_new_sensor(&conn, &None);
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
         assert!(sensor.is_ok(), true);
 
         let deleted = delete_sensor(&conn, sensor.unwrap().id());
@@ -350,7 +361,7 @@ mod test {
     #[test]
     fn test_insert_get_delete_sensor() {
         let conn = establish_db_connection();
-        let sensor = create_new_sensor(&conn, &None);
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
         assert!(sensor.is_ok(), true);
 
         assert_ne!(get_sensors(&conn).is_empty(), true);

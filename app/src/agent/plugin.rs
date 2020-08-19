@@ -4,7 +4,8 @@ use crate::models::{dao::AgentConfigDao, dto::AgentPayload, dto::SensorMessageDt
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
 use iftem_core::{
-    error::AgentError, AgentMessage, AgentState, AgentTrait, PluginDeclaration, SensorDataDto,
+    error::AgentError, AgentMessage, AgentState, AgentTrait, AgentUI, PluginDeclaration,
+    SensorDataMessage,
 };
 use libloading::Library;
 use std::{
@@ -22,7 +23,6 @@ pub struct Agent {
     domain: String,
     plugin_sender: Sender<AgentMessage>,
     agent_name: String,
-    state: Arc<RwLock<AgentState>>,
     abort_handle: AbortHandle,
     agent_proxy: Box<dyn AgentTrait>,
     needs_update: bool,
@@ -67,7 +67,6 @@ impl Agent {
             domain,
             plugin_sender,
             agent_name,
-            state,
             abort_handle,
             agent_proxy,
             needs_update: false,
@@ -90,8 +89,12 @@ impl Agent {
         Ok(())
     }
 
-    pub fn on_data(&mut self, data: &SensorDataDto) {
+    pub fn on_data(&mut self, data: &SensorDataMessage) {
         self.agent_proxy.on_data(data);
+    }
+
+    pub fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
+        self.agent_proxy.render_ui(data)
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {
@@ -112,9 +115,6 @@ impl Agent {
         &self.domain
     }
 
-    pub fn state(&self) -> AgentState {
-        self.state.read().unwrap().clone()
-    }
 
     async fn dispatch_plugin_ipc(
         sensor_id: i32,
@@ -232,7 +232,10 @@ impl AgentFactory {
         }
     }
 
-    unsafe fn load_library<P: AsRef<OsStr>>(&mut self, library_path: P) -> Result<&str, PluginError> {
+    unsafe fn load_library<P: AsRef<OsStr>>(
+        &mut self,
+        library_path: P,
+    ) -> Result<&str, PluginError> {
         // load the library into memory
         let library = Library::new(library_path)?;
 

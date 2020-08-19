@@ -140,7 +140,7 @@ async fn test_sensor_status() {
 
     // Execute
     let req = test::TestRequest::get()
-        .uri(&format!("/api/sensor/{}/123456/status", sensor_id))
+        .uri(&format!("/api/sensor/{}/123456", sensor_id))
         .to_request();
     let resp = app.call(req).await.unwrap();
 
@@ -157,45 +157,4 @@ async fn test_sensor_status() {
     let agent = &status.agents[0];
     assert_eq!(mock_agent, agent.agent_name);
     assert_eq!(agent_domain, agent.domain);
-}
-
-#[actix_rt::test]
-async fn test_sensor_data() {
-    // Prepare
-    let sensor_name = "Status_Sensor";
-    let agent_domain = "Water";
-    let mock_agent = "MockAgent";
-    let observer = ConcurrentSensorObserver::new();
-    let sensor_id = observer
-        .register_new_sensor(
-            &Some(sensor_name.to_owned()),
-            &vec![dto::AgentRegisterDto {
-                agent_name: mock_agent.to_owned(),
-                domain: agent_domain.to_owned(),
-            }],
-        )
-        .await
-        .unwrap()
-        .id;
-    let mut app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(observer))
-            .configure(super::config_endpoints),
-    )
-    .await;
-
-    // Execute
-    let req = test::TestRequest::get()
-        .uri(&format!("/api/sensor/{}/123456/data", sensor_id))
-        .to_request();
-    let resp = app.call(req).await.unwrap();
-
-    // Validate
-    assert_eq!(200, resp.status());
-    let body = match resp.response().body().as_ref() {
-        Some(actix_web::body::Body::Bytes(bytes)) => bytes,
-        _ => panic!("Response error"),
-    };
-
-    let _: iftem_core::SensorDataDto = serde_json::from_slice(&body).unwrap();
 }

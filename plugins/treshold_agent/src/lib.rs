@@ -146,6 +146,30 @@ impl AgentTrait for ThresholdAgent {
             state_json: serde_json::to_string(self).unwrap(),
         }
     }
+
+    fn render_ui(&self) -> AgentUI {
+        let rendered: String;
+        if let Some(last_action) = self.last_action {
+            let delta: Duration = Utc::now() - last_action;
+            if delta.num_hours() != 0 {
+                rendered = format!("Letzte Wässerung vor {} Minuten.", delta.num_minutes());
+            } else {
+                rendered = format!(
+                    "Letzte Wässerung vor {}:{} Stunden.",
+                    delta.num_hours(),
+                    delta.num_hours()
+                );
+            }
+        } else {
+            rendered = "Noch nicht gewässert.".to_owned();
+        }
+
+        AgentUI {
+            decorator: AgentUIDecorator::TimedButton(30),
+            rendered: rendered,
+            state: self.state,
+        }
+    }
 }
 
 #[derive(Debug)]

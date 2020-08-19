@@ -1,8 +1,8 @@
 use crate::agent::{plugin::AgentFactory, Agent};
-use crate::logging::APP_LOGGING;
 use crate::error::PluginError;
+use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
-use iftem_core::{error::AgentError, SensorDataDto};
+use iftem_core::{error::AgentError, SensorDataMessage};
 use std::vec::Vec;
 
 pub struct SensorHandle {
@@ -35,12 +35,14 @@ impl SensorHandle {
         })
     }
 
-    pub fn on_data(&mut self, data: &SensorDataDto) {
+    pub fn on_data(&mut self, data: &SensorDataMessage) {
         self.agents.iter_mut().for_each(|a| a.on_data(data))
     }
 
     pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        self.agents.iter_mut().for_each(|a| a.reload_agent(factory).unwrap());
+        self.agents
+            .iter_mut()
+            .for_each(|a| a.reload_agent(factory).unwrap());
         Ok(())
     }
 

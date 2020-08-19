@@ -17,7 +17,7 @@ impl MockAgent {
 }
 
 impl AgentTrait for MockAgent {
-    fn do_action(&mut self, _data: &SensorDataDto) {
+    fn do_action(&mut self, _data: &SensorDataMessage) {
         self.last_action = Some(1);
     }
 
@@ -31,7 +31,16 @@ impl AgentTrait for MockAgent {
             state_json: "{}".to_string(),
         }
     }
+
     fn state(&self) -> &AgentState {
         &AgentState::Active
+    }
+
+    fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
+        AgentUI {
+            decorator: AgentUIDecorator::Slide(0.0, 1.0),
+            rendered: format!("Last tested at {}", data.timestamp),
+            state: AgentState::default(),
+        }
     }
 }

@@ -3,7 +3,7 @@ use crate::logging::APP_LOGGING;
 use crate::models::dto::SensorMessageDto;
 use crate::observer::SensorCache;
 use dotenv::dotenv;
-use iftem_core::SensorDataDto;
+use iftem_core::SensorDataMessage;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
 use std::env;
 use std::sync::{Arc};
@@ -69,7 +69,7 @@ impl MqttSensorClient {
         &mut self,
         container_lock: &Arc<RwLock<SensorCache>>,
         msg: Publish,
-    ) -> Result<Option<(i32, SensorDataDto)>, MQTTError> {
+    ) -> Result<Option<(i32, SensorDataMessage)>, MQTTError> {
         // parse message
         let path: Vec<&str> = msg.topic_name.splitn(4, '/').collect();
         if path.len() != 4 {
@@ -104,7 +104,7 @@ impl MqttSensorClient {
 
         match endpoint {
             MqttSensorClient::DATA_TOPIC => {
-                let sensor_dto = serde_json::from_str::<SensorDataDto>(&payload)?;
+                let sensor_dto = serde_json::from_str::<SensorDataMessage>(&payload)?;
                 let container = container_lock.read().await;
                 let mut sensor = container
                     .sensors(sensor_id, key)

@@ -4,7 +4,7 @@ use crate::schema::*;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenv::dotenv;
-use iftem_core::SensorDataDto;
+use iftem_core::SensorDataMessage;
 use std::env;
 use std::fmt::Debug;
 use std::string::String;
@@ -92,7 +92,7 @@ pub mod dao {
     }
 
     impl NewSensorData {
-        pub fn new(sensor_id: i32, other: iftem_core::SensorDataDto) -> Self {
+        pub fn new(sensor_id: i32, other: iftem_core::SensorDataMessage) -> Self {
             NewSensorData {
                 sensor_id: sensor_id,
                 timestamp: other.timestamp.naive_utc(),
@@ -120,9 +120,9 @@ pub mod dao {
         light: Option<i32>,
     }
 
-    impl Into<SensorDataDto> for SensorDataDao {
-        fn into(self) -> SensorDataDto {
-            SensorDataDto {
+    impl Into<SensorDataMessage> for SensorDataDao {
+        fn into(self) -> SensorDataMessage {
+            SensorDataMessage {
                 timestamp: DateTime::<Utc>::from_utc(self.timestamp, Utc),
                 battery: self.battery,
                 moisture: self.moisture,
@@ -136,7 +136,7 @@ pub mod dao {
 }
 
 pub mod dto {
-    use iftem_core::{AgentMessage, AgentState};
+    use iftem_core::{AgentMessage, AgentState, AgentUI, SensorDataMessage};
     use serde::{Deserialize, Serialize, Serializer};
 
     #[derive(Debug, Copy, Clone)]
@@ -180,7 +180,7 @@ pub mod dto {
     pub struct AgentStatusDto {
         pub domain: String,
         pub agent_name: String,
-        pub state: AgentState,
+        pub ui: AgentUI,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -220,6 +220,7 @@ pub mod dto {
     #[derive(Debug, Serialize, Deserialize)]
     pub struct SensorStatusDto {
         pub name: String,
+        pub data: SensorDataMessage,
         pub agents: Vec<AgentStatusDto>,
     }
 }
@@ -308,7 +309,7 @@ pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError>
 pub fn insert_sensor_data(
     conn: &PgConnection,
     sensor_id: i32,
-    dto: iftem_core::SensorDataDto,
+    dto: iftem_core::SensorDataMessage,
 ) -> Result<(), DBError> {
     let insert = NewSensorData::new(sensor_id, dto);
     diesel::insert_into(sensor_data::table)
@@ -320,8 +321,8 @@ pub fn insert_sensor_data(
 pub fn get_latest_sensor_data(
     conn: &PgConnection,
     search_sensor_id: i32,
-    search_key_b64: String,
-) -> Result<SensorDataDto, DBError> {
+    search_key_b64: &String,
+) -> Result<Option<SensorDataDao>, DBError> {
     use crate::schema::sensor_data::dsl::*;
     use crate::schema::sensors::dsl::key_b64 as dsl_key_b64;
     let mut result: Vec<(SensorDataDao, SensorDao)> = sensor_data
@@ -333,9 +334,9 @@ pub fn get_latest_sensor_data(
         .load(conn)?;
 
     if let Some((data, _)) = result.pop() {
-        Ok(data.into())
+        Ok(Some(data.into()))
     } else {
-        Ok(SensorDataDto::default())
+        Ok(None)
     }
 }
 

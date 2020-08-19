@@ -2,7 +2,7 @@ use super::*;
 use crate::agent::{test::MockAgent, Agent};
 use crate::models::dao::SensorDao;
 use crate::observer::sensor::SensorHandle;
-use iftem_core::AgentMessage;
+use iftem_core::{SensorDataMessage, AgentMessage};
 use rumq_client::{self, Publish, QoS};
 
 #[actix_rt::test]
@@ -66,7 +66,7 @@ async fn test_valid_mqtt_path() {
         qos: QoS::ExactlyOnce,
         pkid: None,
         topic_name: format!("sensor/data/{}/{}", sensor_id, key_b64),
-        payload: serde_json::to_vec(&SensorDataDto::default()).unwrap(),
+        payload: serde_json::to_vec(&SensorDataMessage::default()).unwrap(),
     };
 
     let result = client

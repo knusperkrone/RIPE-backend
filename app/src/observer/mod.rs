@@ -11,7 +11,6 @@ use crate::models::{
     establish_db_connection,
 };
 use diesel::pg::PgConnection;
-use iftem_core::SensorDataDto;
 use mqtt::MqttSensorClient;
 use rumq_client::{MqttEventLoop, Publish};
 use std::{collections::HashMap, sync::Arc};
@@ -23,6 +22,7 @@ use tokio::{
 
 mod mqtt;
 mod sensor;
+use iftem_core::SensorDataMessage;
 use sensor::SensorHandle;
 
 #[cfg(test)]
@@ -159,7 +159,15 @@ impl ConcurrentSensorObserver {
         sensor_id: i32,
         key_b64: String,
     ) -> Result<SensorStatusDto, ObserverError> {
-        // let conn = self.db_conn.lock().await;
+        // Get sensor data
+        let conn = self.db_conn.lock().await;
+        let data = match models::get_latest_sensor_data(&conn, sensor_id, &key_b64)? {
+            Some(dao) => dao.into(),
+            None => SensorDataMessage::default(),
+        };
+        drop(conn);
+
+        // Cummulate and render sensors
         let container = self.container_ref.read().await;
         let sensor = container
             .sensors(sensor_id, key_b64.as_str())
@@ -172,24 +180,15 @@ impl ConcurrentSensorObserver {
             .map(|a| AgentStatusDto {
                 domain: a.domain().clone(),
                 agent_name: a.agent_name().clone(),
-                state: a.state(),
+                ui: a.render_ui(&data),
             })
             .collect();
 
         Ok(SensorStatusDto {
             name: sensor.name().clone(),
+            data: data,
             agents: agents,
         })
-    }
-
-    pub async fn sensor_data(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-    ) -> Result<SensorDataDto, ObserverError> {
-        let conn = self.db_conn.lock().await;
-        let data = models::get_latest_sensor_data(&conn, sensor_id, key_b64)?;
-        Ok(data.into())
     }
 
     pub async fn agents(&self) -> Vec<String> {

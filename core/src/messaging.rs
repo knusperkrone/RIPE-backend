@@ -11,7 +11,7 @@ pub enum AgentMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SensorDataDto {
+pub struct SensorDataMessage {
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
     pub battery: Option<f64>,
@@ -22,9 +22,9 @@ pub struct SensorDataDto {
     pub light: Option<i32>,
 }
 
-impl std::default::Default for SensorDataDto {
+impl std::default::Default for SensorDataMessage {
     fn default() -> Self {
-        SensorDataDto {
+        SensorDataMessage {
             timestamp: Utc::now(),
             temperature: None,
             light: None,

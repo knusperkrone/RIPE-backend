@@ -1,4 +1,4 @@
-use crate::agent::{plugin::AgentFactory, Agent};
+use crate::plugin::agent::{AgentFactory, Agent};
 use crate::error::{DBError, ObserverError};
 
 use crate::logging::APP_LOGGING;

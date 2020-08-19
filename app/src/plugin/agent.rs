@@ -302,7 +302,7 @@ impl AgentFactory {
                 sensor_id,
                 domain.clone(),
                 agent_name.clone(),
-                Box::new(crate::agent::test::MockAgent::new()),
+                Box::new(crate::plugin::test::MockAgent::new()),
             ));
         }
 

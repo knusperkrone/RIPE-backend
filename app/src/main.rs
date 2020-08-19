@@ -3,7 +3,7 @@ extern crate diesel;
 #[macro_use]
 extern crate slog;
 
-mod agent;
+mod plugin;
 mod error;
 mod logging;
 mod models;

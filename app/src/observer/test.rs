@@ -1,8 +1,8 @@
 use super::*;
-use crate::agent::{test::MockAgent, Agent};
 use crate::models::dao::SensorDao;
 use crate::observer::sensor::SensorHandle;
-use iftem_core::{SensorDataMessage, AgentMessage};
+use crate::plugin::{test::MockAgent, Agent};
+use iftem_core::{AgentMessage, SensorDataMessage};
 use rumq_client::{self, Publish, QoS};
 
 #[actix_rt::test]

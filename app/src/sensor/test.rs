@@ -1,9 +1,12 @@
-use super::*;
-use crate::models::dao::SensorDao;
-use crate::observer::sensor::SensorHandle;
+use super::mqtt::*;
+use super::observer::*;
+use crate::models::{dao::SensorDao, dto::SensorMessageDto};
 use crate::plugin::{test::MockAgent, Agent};
+use crate::sensor::handle::SensorHandle;
 use iftem_core::{AgentMessage, SensorDataMessage};
 use rumq_client::{self, Publish, QoS};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[actix_rt::test]
 async fn test_mqtt_connection() {

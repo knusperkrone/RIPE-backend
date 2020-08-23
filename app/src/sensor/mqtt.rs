@@ -1,17 +1,17 @@
+use super::handle::SensorHandle;
+use super::observer::SensorCache;
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::models::dto::SensorMessageDto;
-use crate::observer::SensorCache;
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
 use std::env;
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::sync::{
     mpsc::{channel, Sender},
     RwLock,
 };
-use super::sensor::SensorHandle;
 
 pub struct MqttSensorClient {
     requests_tx: Sender<Request>,

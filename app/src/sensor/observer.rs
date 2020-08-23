@@ -1,6 +1,8 @@
-use crate::plugin::agent::{AgentFactory, Agent};
 use crate::error::{DBError, ObserverError};
+use crate::plugin::agent::{Agent, AgentFactory};
 
+use super::handle::SensorHandle;
+use super::mqtt::MqttSensorClient;
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
@@ -11,7 +13,6 @@ use crate::models::{
     establish_db_connection,
 };
 use diesel::pg::PgConnection;
-use mqtt::MqttSensorClient;
 use rumq_client::{MqttEventLoop, Publish};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
@@ -20,13 +21,7 @@ use tokio::{
     sync::{Mutex, MutexGuard, RwLock},
 };
 
-mod mqtt;
-mod sensor;
 use iftem_core::SensorDataMessage;
-use sensor::SensorHandle;
-
-#[cfg(test)]
-mod test;
 
 pub struct ConcurrentSensorObserver {
     container_ref: Arc<RwLock<SensorCache>>,
@@ -311,7 +306,7 @@ pub struct SensorCache {
 }
 
 impl SensorCache {
-    fn new() -> Self {
+    pub fn new() -> Self {
         SensorCache {
             sensors: HashMap::new(),
         }
@@ -331,11 +326,11 @@ impl SensorCache {
         }
     }
 
-    fn insert_sensor(&mut self, sensor: SensorHandle) {
+    pub fn insert_sensor(&mut self, sensor: SensorHandle) {
         self.sensors.insert(sensor.id(), Mutex::new(sensor));
     }
 
-    fn remove_sensor(&mut self, sensor_id: i32) -> Result<Mutex<SensorHandle>, DBError> {
+    pub fn remove_sensor(&mut self, sensor_id: i32) -> Result<Mutex<SensorHandle>, DBError> {
         if let Some(sensor_mtx) = self.sensors.remove(&sensor_id) {
             Ok(sensor_mtx)
         } else {

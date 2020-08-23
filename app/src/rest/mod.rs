@@ -1,7 +1,7 @@
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
 use crate::models::dto;
-use crate::observer::ConcurrentSensorObserver;
+use crate::sensor::ConcurrentSensorObserver;
 use actix_web::http::StatusCode;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use dotenv::dotenv;

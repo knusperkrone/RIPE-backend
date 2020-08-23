@@ -2,7 +2,7 @@ use crate::error::{DBError, ObserverError};
 use crate::plugin::agent::{Agent, AgentFactory};
 
 use super::handle::SensorHandle;
-use super::mqtt::MqttSensorClient;
+use crate::mqtt::MqttSensorClient;
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,

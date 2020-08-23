@@ -1,8 +1,9 @@
-use super::handle::SensorHandle;
-use super::observer::SensorCache;
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
-use crate::models::dto::SensorMessageDto;
+use crate::{
+    models::dto::SensorMessageDto,
+    sensor::{handle::SensorHandle, observer::SensorCache},
+};
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
@@ -12,6 +13,9 @@ use tokio::sync::{
     mpsc::{channel, Sender},
     RwLock,
 };
+
+#[cfg(test)]
+mod test;
 
 pub struct MqttSensorClient {
     requests_tx: Sender<Request>,

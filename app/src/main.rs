@@ -6,6 +6,7 @@ extern crate slog;
 mod error;
 mod logging;
 mod models;
+mod mqtt;
 mod plugin;
 mod rest;
 mod schema;

@@ -46,6 +46,27 @@ impl SensorHandle {
         Ok(())
     }
 
+    pub fn add_agent(&mut self, agent: Agent) {
+        if 0 == self
+            .agents
+            .iter_mut()
+            .filter(|a| a.agent_name() == agent.agent_name() && a.domain() == agent.domain())
+            .count()
+        {
+            self.agents.push(agent);
+        }
+    }
+
+    pub fn remove_agent(&mut self, name: &String, domain: &String) -> Option<Agent> {
+        for i in 0..self.agents.len() {
+            let curr = &self.agents[i];
+            if curr.agent_name() == name && curr.domain() == domain {
+                return Some(self.agents.remove(i));
+            }
+        }
+        None
+    }
+
     pub fn agents(&self) -> &Vec<Agent> {
         &self.agents
     }

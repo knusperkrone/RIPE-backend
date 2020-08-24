@@ -1,6 +1,6 @@
-use crate::models::{dao::SensorDao, dto::SensorMessageDto};
+use crate::models::{dao::SensorDao};
 use crate::plugin::{test::MockAgent, Agent};
-use crate::{mqtt::MqttSensorClient, sensor::{observer::SensorCache, handle::SensorHandle}};
+use crate::{mqtt::MqttSensorClient, sensor::{observer::SensorCache, handle::SensorHandle}, rest::SensorMessageDto};
 use iftem_core::{AgentMessage, SensorDataMessage};
 use rumq_client::{self, Publish, QoS};
 use std::sync::Arc;

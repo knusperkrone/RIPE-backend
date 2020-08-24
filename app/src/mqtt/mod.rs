@@ -1,8 +1,7 @@
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::{
-    models::dto::SensorMessageDto,
-    sensor::{handle::SensorHandle, observer::SensorCache},
+    sensor::{handle::SensorHandle, observer::SensorCache}, rest::SensorMessageDto,
 };
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;

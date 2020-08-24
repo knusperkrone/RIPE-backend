@@ -1,16 +1,16 @@
 use crate::error::{DBError, ObserverError};
-use crate::plugin::agent::{Agent, AgentFactory};
+use crate::plugin::agent::AgentFactory;
 
 use super::handle::SensorHandle;
-use crate::mqtt::MqttSensorClient;
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
     dao::{AgentConfigDao, SensorDao},
-    dto::{
-        AgentRegisterDto, AgentStatusDto, RegisterResponseDto, SensorMessageDto, SensorStatusDto,
-    },
     establish_db_connection,
+};
+use crate::mqtt::MqttSensorClient;
+use crate::rest::{
+    AgentRegisterDto, AgentStatusDto, SensorMessageDto, SensorRegisterResponseDto, SensorStatusDto,
 };
 use diesel::pg::PgConnection;
 use rumq_client::{MqttEventLoop, Publish};
@@ -124,7 +124,9 @@ impl ConcurrentSensorObserver {
         while !persisted_sensors.is_empty() {
             let sensor_dao = persisted_sensors.pop().unwrap();
             let agent_configs = sensor_configs.pop().unwrap();
-            let restore_result = self.register_sensor_dao(sensor_dao, &agent_configs).await;
+            let restore_result = self
+                .register_sensor_dao(sensor_dao, Some(&agent_configs))
+                .await;
             match restore_result {
                 Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
                 Err(msg) => error!(APP_LOGGING, "{}", msg),
@@ -132,7 +134,7 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    pub async fn on_mqtt_message(&self, msg: Publish) {
+    async fn on_mqtt_message(&self, msg: Publish) {
         let mut client = self.mqtt_client.write().await;
         match client.on_sensor_message(&self.container_ref, msg).await {
             Ok(None) => (),
@@ -149,6 +151,52 @@ impl ConcurrentSensorObserver {
 
 // REST
 impl ConcurrentSensorObserver {
+    /*
+     * Sensor
+     */
+
+    pub async fn register_new_sensor(
+        &self,
+        name: &Option<String>,
+    ) -> Result<SensorRegisterResponseDto, ObserverError> {
+        // Create sensor
+        let key_b64 = self.generate_sensor_key();
+        let conn = self.db_conn.lock().await;
+        let sensor_dao = models::create_new_sensor(&conn, key_b64.clone(), name)?;
+        let dao_id = sensor_dao.id();
+
+        // Create agents and persist
+        match self.register_sensor_dao(sensor_dao, None).await {
+            Ok(_) => {
+                info!(APP_LOGGING, "Registered new sensor: {}", dao_id);
+                Ok(SensorRegisterResponseDto {
+                    id: dao_id,
+                    key: key_b64,
+                })
+            }
+            Err(err) => {
+                models::delete_sensor(&conn, dao_id)?; // Fallback delete
+                Err(ObserverError::from(err))
+            }
+        }
+    }
+
+    pub async fn remove_sensor(&self, sensor_id: i32) -> Result<(), ObserverError> {
+        let conn = self.db_conn.lock().await;
+        models::delete_sensor(&conn, sensor_id)?;
+
+        let sensor_mtx = self.container_ref.write().await.remove_sensor(sensor_id)?;
+        let sensor = sensor_mtx.lock().await;
+        self.mqtt_client
+            .write()
+            .await
+            .unsubscribe_sensor(&sensor)
+            .await;
+
+        info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
+        Ok(())
+    }
+
     pub async fn sensor_status(
         &self,
         sensor_id: i32,
@@ -186,97 +234,94 @@ impl ConcurrentSensorObserver {
         })
     }
 
-    pub async fn agents(&self) -> Vec<String> {
-        let container_factory = self.agent_factory.lock().await;
-        container_factory.agents()
-    }
-
-    pub async fn register_new_sensor(
-        &self,
-        name: &Option<String>,
-        configs: &Vec<AgentRegisterDto>,
-    ) -> Result<RegisterResponseDto, ObserverError> {
-        // Create sensor
-        let key_b64 = self.generate_sensor_key();
-        let conn = self.db_conn.lock().await;
-        let sensor_dao = models::create_new_sensor(&conn, key_b64, name)?;
-        let dao_id = sensor_dao.id();
-
-        // Create agents and persist
-        let agents: Vec<Agent> = self.build_agents(dao_id, configs).await?;
-        let agent_config: Vec<AgentConfigDao> = agents.iter().map(|x| x.deserialize()).collect();
-        match models::create_sensor_agents(&conn, agent_config) {
-            Ok(agent_config) => {
-                match self.register_sensor_dao(sensor_dao, &agent_config).await {
-                    Ok(id) => Ok(RegisterResponseDto { id }),
-                    Err(err) => {
-                        models::delete_sensor(&conn, dao_id)?; // Fallback delete
-                        Err(ObserverError::from(err))
-                    }
-                }
-            }
-            Err(err) => {
-                models::delete_sensor(&conn, dao_id)?; // Fallback delete
-                Err(ObserverError::from(err))
-            }
-        }
-    }
-
-    pub async fn remove_sensor(
-        &self,
-        sensor_id: i32,
-    ) -> Result<RegisterResponseDto, ObserverError> {
-        let conn = self.db_conn.lock().await;
-        models::delete_sensor(&conn, sensor_id)?;
-
-        let sensor_mtx = self.container_ref.write().await.remove_sensor(sensor_id)?;
-        let sensor = sensor_mtx.lock().await;
-        self.mqtt_client
-            .write()
-            .await
-            .unsubscribe_sensor(&sensor)
-            .await;
-
-        Ok(RegisterResponseDto { id: sensor_id })
-    }
-
     pub async fn reload_sensor(
         &self,
         sensor_id: i32,
         key_b64: String,
     ) -> Result<(), ObserverError> {
-        let factory = self.agent_factory.lock().await;
         let container = self.container_ref.read().await;
         let mut sensor = container
             .sensors(sensor_id, &key_b64)
             .await
-            .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
 
+        let factory = self.agent_factory.lock().await;
         sensor.reload(&factory)?;
+        info!(APP_LOGGING, "Reloaded sensor: {}", sensor_id);
         Ok(())
     }
 
-    async fn build_agents(
+    /*
+     * Agent
+     */
+
+    pub async fn agents(&self) -> Vec<String> {
+        let container_factory = self.agent_factory.lock().await;
+        container_factory.agents()
+    }
+
+    pub async fn register_agent(
         &self,
         sensor_id: i32,
-        configs: &Vec<AgentRegisterDto>,
-    ) -> Result<Vec<Agent>, ObserverError> {
-        let agent_factory = self.agent_factory.lock().await;
-        let agents_result: Result<Vec<Agent>, _> = configs
-            .into_iter()
-            .map(|config| agent_factory.new_agent(sensor_id, &config.agent_name, &config.domain))
-            .collect();
-        Ok(agents_result?)
+        key_b64: String,
+        request: AgentRegisterDto,
+    ) -> Result<(), ObserverError> {
+        let container = self.container_ref.read().await;
+        let mut sensor = container
+            .sensors(sensor_id, &key_b64)
+            .await
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        let factory = self.agent_factory.lock().await;
+        let conn = self.db_conn.lock().await;
+        let agent = factory.new_agent(sensor_id, &request.agent_name, &request.domain)?;
+        models::create_sensor_agent(&conn, agent.deserialize())?;
+        sensor.add_agent(agent);
+
+        info!(
+            APP_LOGGING,
+            "Added agent {}, {} to sensor {}", request.agent_name, request.domain, sensor_id
+        );
+        Ok(())
     }
+
+    pub async fn unregister_agent(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+        request: AgentRegisterDto,
+    ) -> Result<(), ObserverError> {
+        let container = self.container_ref.read().await;
+        let mut sensor = container
+            .sensors(sensor_id, &key_b64)
+            .await
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        let agent = sensor
+            .remove_agent(&request.agent_name, &request.domain)
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+        let conn = self.db_conn.lock().await;
+        models::delete_sensor_agent(&conn, sensor.id(), agent)?;
+
+        info!(
+            APP_LOGGING,
+            "Removed agent {}, {} from sensor {}", request.agent_name, request.domain, sensor_id
+        );
+        Ok(())
+    }
+
+    /*
+     * Helpers
+     */
 
     async fn register_sensor_dao(
         &self,
         sensor_dao: SensorDao,
-        configs: &Vec<AgentConfigDao>,
+        configs: Option<&Vec<AgentConfigDao>>,
     ) -> Result<i32, ObserverError> {
         let agent_factory = self.agent_factory.lock().await;
         let sensor_id = sensor_dao.id();
-        let sensor = SensorHandle::from(sensor_dao, configs, &agent_factory)?;
+        let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(&vec![]), &agent_factory)?;
 
         self.mqtt_client
             .write()
@@ -284,18 +329,13 @@ impl ConcurrentSensorObserver {
             .subscribe_sensor(&sensor)
             .await?;
         self.container_ref.write().await.insert_sensor(sensor);
-
         Ok(sensor_id)
     }
 
     fn generate_sensor_key(&self) -> String {
-        if cfg!(test) {
-            return "123456".to_owned();
-        }
-
         let mut buffer = Vec::with_capacity(6);
-        for i in 0..6 {
-            buffer[i] = rand::random::<u8>();
+        for _ in 0..6 {
+            buffer.push(rand::random::<u8>());
         }
         base64::encode(buffer)
     }

@@ -1,6 +1,6 @@
 use crate::error::DBError;
 use crate::logging::APP_LOGGING;
-use crate::schema::*;
+use crate::{plugin::Agent, schema::*};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use dotenv::dotenv;
@@ -135,96 +135,6 @@ pub mod dao {
     }
 }
 
-pub mod dto {
-    use iftem_core::{AgentMessage, AgentState, AgentUI, SensorDataMessage};
-    use serde::{Deserialize, Serialize, Serializer};
-
-    #[derive(Debug, Copy, Clone)]
-    pub enum AgentPayload {
-        State(AgentState),
-        Bool(bool),
-        Int(i32),
-    }
-
-    impl AgentPayload {
-        pub fn from(message: AgentMessage) -> Result<Self, ()> {
-            match message {
-                AgentMessage::State(s) => Ok(AgentPayload::State(s)),
-                AgentMessage::Bool(b) => Ok(AgentPayload::Bool(b)),
-                AgentMessage::Int(i) => Ok(AgentPayload::Int(i)),
-                AgentMessage::Task(_) => Err(()),
-            }
-        }
-    }
-
-    impl Serialize for AgentPayload {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            match self {
-                AgentPayload::Bool(b) => serializer.serialize_bool(*b),
-                AgentPayload::Int(i) => serializer.serialize_i32(*i),
-                AgentPayload::State(_) => serializer.serialize_none(),
-            }
-        }
-    }
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub struct AgentRegisterDto {
-        pub domain: String,
-        pub agent_name: String,
-    }
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub struct AgentStatusDto {
-        pub domain: String,
-        pub agent_name: String,
-        pub ui: AgentUI,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct RegisterRequestDto {
-        pub agents: Vec<AgentRegisterDto>,
-        pub name: Option<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct RegisterResponseDto {
-        pub id: i32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct UnregisterRequestDto {
-        pub id: i32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct UnregisterResponseDto {
-        pub id: i32,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct ErrorResponseDto {
-        pub error: String,
-    }
-
-    #[derive(Debug, Serialize)]
-    pub struct SensorMessageDto {
-        #[serde(skip_serializing)]
-        pub sensor_id: i32,
-        pub domain: String,
-        pub payload: AgentPayload,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct SensorStatusDto {
-        pub name: String,
-        pub data: SensorDataMessage,
-        pub agents: Vec<AgentStatusDto>,
-    }
-}
-
 use dao::*;
 
 pub fn establish_db_connection() -> PgConnection {
@@ -277,9 +187,9 @@ pub fn create_new_sensor(
     Ok(sensor_dao)
 }
 
-pub fn create_sensor_agents(
+pub fn create_sensor_agent(
     conn: &PgConnection,
-    configs: Vec<AgentConfigDao>,
+    configs: AgentConfigDao,
 ) -> Result<Vec<AgentConfigDao>, DBError> {
     let config_daos: Vec<AgentConfigDao> = diesel::insert_into(agent_configs::table)
         .values(configs)
@@ -287,21 +197,35 @@ pub fn create_sensor_agents(
     Ok(config_daos)
 }
 
-fn delete_sensor_config(conn: &PgConnection, remove_id: i32) -> Result<(), DBError> {
+pub fn delete_sensor_agent(
+    conn: &PgConnection,
+    remove_id: i32,
+    agent: Agent,
+) -> Result<(), DBError> {
     use crate::schema::agent_configs::dsl::*;
-    diesel::delete(agent_configs.filter(sensor_id.eq(sensor_id))).execute(conn)?;
-    info!(APP_LOGGING, "Unpersisted sensor config: {}", remove_id);
+    diesel::delete(
+        agent_configs
+            .filter(sensor_id.eq(remove_id))
+            .filter(agent_impl.eq(agent.agent_name()))
+            .filter(domain.eq(agent.domain())),
+    )
+    .execute(conn)?;
+
     Ok(())
 }
 
 pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError> {
+    // Delete config
+    {
+        use crate::schema::agent_configs::dsl::*;
+        diesel::delete(agent_configs.filter(sensor_id.eq(remove_id))).execute(conn)?;
+    }
+    // Delete sensor
     use crate::schema::sensors::dsl::*;
-    delete_sensor_config(conn, remove_id)?;
     let count = diesel::delete(sensors.filter(id.eq(remove_id))).execute(conn)?;
     if count == 0 {
         Err(DBError::SensorNotFound(remove_id))
     } else {
-        info!(APP_LOGGING, "Unpersisted sensor: {}", remove_id);
         Ok(())
     }
 }

@@ -1,6 +1,9 @@
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
-use crate::models::{dao::AgentConfigDao, dto::AgentPayload, dto::SensorMessageDto};
+use crate::{
+    models::dao::AgentConfigDao,
+    rest::{AgentPayload, SensorMessageDto},
+};
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
 use iftem_core::{
@@ -51,15 +54,18 @@ impl Agent {
         agent_proxy: Box<dyn AgentTrait>,
     ) -> Self {
         let state = Arc::new(RwLock::new(AgentState::Default));
-        let ipc_fut = Agent::dispatch_plugin_ipc(
-            sensor_id,
-            domain.clone(),
-            state.clone(),
-            agent_sender,
-            plugin_receiver,
-        );
+
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        let future = Abortable::new(ipc_fut, abort_registration);
+        let future = Abortable::new(
+            Agent::dispatch_plugin_ipc(
+                sensor_id,
+                domain.clone(),
+                state.clone(),
+                agent_sender,
+                plugin_receiver,
+            ),
+            abort_registration,
+        );
         tokio::spawn(async move { future.await });
 
         Agent {
@@ -115,7 +121,6 @@ impl Agent {
         &self.domain
     }
 
-
     async fn dispatch_plugin_ipc(
         sensor_id: i32,
         domain: String,
@@ -125,7 +130,7 @@ impl Agent {
     ) {
         while let Some(payload) = plugin_receiver.next().await {
             if let AgentMessage::Task(task) = payload {
-                debug!(APP_LOGGING, "Spawning new task");
+                info!(APP_LOGGING, "Spawning new task for sensor: {}", sensor_id);
                 tokio::spawn(task);
             } else if let AgentMessage::State(state) = payload {
                 let mut self_state = state_lock.write().unwrap();

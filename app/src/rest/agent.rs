@@ -3,6 +3,9 @@ use crate::sensor::ConcurrentSensorObserver;
 use actix_web::{web, HttpResponse};
 use std::sync::Arc;
 
+/// Registers an agent to a sensor
+///
+/// Returns 200 if the new agent was added
 async fn agent_register(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     register_request: web::Json<dto::AgentRegisterDto>,
@@ -14,6 +17,9 @@ async fn agent_register(
     build_response(resp)
 }
 
+/// Unregisters an agent to a sensor
+///
+/// Returns 200 if the new agent was removed
 async fn agent_unregister(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     register_request: web::Json<dto::AgentRegisterDto>,
@@ -25,6 +31,9 @@ async fn agent_unregister(
     build_response(resp)
 }
 
+/// Show all active agent plugins
+///
+/// Returns a string list of all names
 async fn get_active_agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -> HttpResponse {
     let agents = observer.agents().await;
     HttpResponse::Ok().json(agents)
@@ -39,6 +48,9 @@ pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
         );
 }
 
+///
+/// DTO
+///
 pub mod dto {
     use iftem_core::{AgentMessage, AgentState, AgentUI};
     use serde::{Deserialize, Serialize, Serializer};
@@ -88,6 +100,9 @@ pub mod dto {
     }
 }
 
+///
+/// TEST
+///
 #[cfg(test)]
 mod test {
     use super::*;

@@ -1,7 +1,8 @@
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::{
-    sensor::{handle::SensorHandle, observer::SensorCache}, rest::SensorMessageDto,
+    rest::SensorMessageDto,
+    sensor::{handle::SensorHandle, observer::SensorCache},
 };
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
@@ -68,6 +69,9 @@ impl MqttSensorClient {
         );
     }
 
+    /// Parses and dispatches a mqtt message
+    ///
+    /// Returns nothing on submitted command, or the submitted sensor data
     pub async fn on_sensor_message(
         &mut self,
         container_lock: &Arc<RwLock<SensorCache>>,

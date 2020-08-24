@@ -3,6 +3,10 @@ use crate::sensor::ConcurrentSensorObserver;
 use actix_web::{web, HttpResponse};
 use std::sync::Arc;
 
+/// Registers a new sensor
+///
+/// Returns a `SensorRegisterResponseDto` which contains the
+/// assigned sensor_id and it's api key, which should be stored safely
 async fn sensor_register(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     register_request: web::Json<dto::SensorRegisterRequestDto>,
@@ -11,6 +15,9 @@ async fn sensor_register(
     build_response(resp)
 }
 
+/// Unregisters a sensor
+///
+/// Returns 200 if the sensor got unregistered
 async fn sensor_unregister(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     unregister_request: web::Json<dto::SensorUnregisterRequestDto>,
@@ -20,6 +27,10 @@ async fn sensor_unregister(
     build_response(resp)
 }
 
+/// Reloads a sensor plugins
+/// Only possible, if all agents are inactive
+///
+/// Returns 200 if the sensor got reloaded
 async fn sensor_reload(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     path: web::Path<(i32, String)>,
@@ -29,6 +40,12 @@ async fn sensor_reload(
     build_response(resp)
 }
 
+/// Fetches the sensor status
+///
+/// Returns a `SensorStatusDto`, which holds the sensor
+/// - name
+/// - values
+/// - server rendered UI
 async fn sensor_status(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     path: web::Path<(i32, String)>,
@@ -48,6 +65,9 @@ pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
     .service(web::resource("api/sensor/{id}/{key}/reload").route(web::post().to(sensor_reload)));
 }
 
+///
+/// DTO
+///
 pub mod dto {
     use crate::rest::{AgentPayload, AgentStatusDto};
     use iftem_core::SensorDataMessage;
@@ -85,6 +105,9 @@ pub mod dto {
     }
 }
 
+///
+/// TEST
+///
 #[cfg(test)]
 mod test {
     use super::*;

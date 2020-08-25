@@ -17,10 +17,29 @@ use std::{
     ffi::OsStr,
     fmt::Debug,
     string::String,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        Arc, RwLock,
+    },
 };
 use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+static TERMINATED: AtomicBool = AtomicBool::new(false);
+static TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+pub fn register_sigint_handler() {
+    // Set termination handler
+    ctrlc::set_handler(|| {
+        TERMINATED.store(true, Ordering::Relaxed);
+        let task_count = TASK_COUNTER.load(Ordering::Relaxed);
+        if task_count == 0 {
+            std::process::exit(0);
+        }
+        info!(APP_LOGGING, "Waiting for {} tasks to finish", task_count);
+    })
+    .unwrap();
+}
 
 pub struct Agent {
     sensor_id: i32,
@@ -130,9 +149,33 @@ impl Agent {
         mut plugin_receiver: Receiver<AgentMessage>,
     ) {
         while let Some(payload) = plugin_receiver.next().await {
-            if let AgentMessage::Task(task) = payload {
-                info!(APP_LOGGING, "Spawning new task for sensor: {}", sensor_id);
-                tokio::spawn(task);
+            if let AgentMessage::Task(agent_task) = payload {
+                if TERMINATED.load(Ordering::Relaxed) {
+                    info!(APP_LOGGING, "Task wasn't started as app is cancelled");
+                } else {
+                    tokio::task::spawn(async move {
+                        let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+                        info!(
+                            APP_LOGGING,
+                            "Spawning new task for sensor: {} - active tasks: {}",
+                            sensor_id,
+                            task_count
+                        );
+
+                        agent_task.await;
+
+                        task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
+                        info!(
+                            APP_LOGGING,
+                            "Ended new task for sensor: {} - active tasks: {}",
+                            sensor_id,
+                            task_count
+                        );
+                        if TERMINATED.load(Ordering::Relaxed) && task_count == 0 {
+                            std::process::exit(0);
+                        }
+                    });
+                }
             } else if let AgentMessage::State(state) = payload {
                 let mut self_state = state_lock.write().unwrap();
                 *self_state = state;
@@ -198,12 +241,18 @@ impl AgentFactory {
         config: &AgentConfigDao,
     ) -> Result<Agent, AgentError> {
         unsafe {
-            Ok(self.build_agent(
+            match self.build_agent(
                 sensor_id,
                 config.agent_impl(),
                 config.domain(),
                 Some(config.state_json()),
-            )?)
+            ) {
+                Ok(agent) => Ok(agent),
+                Err(e) => {
+                    error!(APP_LOGGING, "Failed restoring agent: {}", e);
+                    Err(e)
+                }
+            }
         }
     }
 

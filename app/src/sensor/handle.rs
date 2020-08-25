@@ -24,9 +24,9 @@ impl SensorHandle {
             .collect();
         debug!(
             APP_LOGGING,
-            "Sensor \"{}\" with agents: {:?}",
+            "Sensor \"{}\" with {} agents",
             sensor.name(),
-            agents
+            agents.len()
         );
 
         Ok(SensorHandle {

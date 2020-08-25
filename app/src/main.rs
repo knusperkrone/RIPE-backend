@@ -19,6 +19,7 @@ async fn main() {
     let dispatch_ipc = sensor::ConcurrentSensorObserver::dispatch_ipc(sensor_arc.clone());
     let dispatch_plugin = sensor::ConcurrentSensorObserver::dispatch_plugin(sensor_arc.clone());
     let dispatch_rest = rest::dispatch_server(sensor_arc.clone());
+    plugin::agent::register_sigint_handler();
 
     tokio::join!(dispatch_mqtt, dispatch_ipc, dispatch_plugin, dispatch_rest);
 }

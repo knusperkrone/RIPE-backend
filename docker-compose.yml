@@ -1,0 +1,33 @@
+version: "2"
+services:
+  db:
+    restart: always
+    image: postgres:13
+    # volumes: ./data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: iftem
+      POSTGRES_USER: if_lab
+      POSTGRES_PASSWORD: Tischfussb@ll
+
+  db_schema:
+    restart: never
+    image: clux/diesel-cli
+    environment:
+      DATABASE_URL: postgres://iflab:Tischfussball@localhost:54321/iftem
+    workdir:
+      - /volume
+    depends_on:
+      - db
+    entrypoint:
+      - ["diesel", "migration", "run"]
+
+  backend:
+    restart: always
+    image: docker-registry.if-lab.de/arme/iftem_backend
+    volumes:
+      - ./env-docker:/.env
+      - ./plugins/target/debug/:/plugins
+    ports:
+      - 8000:8000
+    depends_on:
+      - db_schema

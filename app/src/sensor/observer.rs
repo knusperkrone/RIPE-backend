@@ -13,15 +13,15 @@ use crate::rest::{
     AgentRegisterDto, AgentStatusDto, SensorMessageDto, SensorRegisterResponseDto, SensorStatusDto,
 };
 use diesel::pg::PgConnection;
+use iftem_core::SensorDataMessage;
+use notify::{watcher, Watcher};
 use rumq_client::{MqttEventLoop, Publish};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     stream::StreamExt,
     sync::mpsc::Receiver,
     sync::{Mutex, MutexGuard, RwLock},
 };
-
-use iftem_core::SensorDataMessage;
 
 pub struct ConcurrentSensorObserver {
     container_ref: Arc<RwLock<SensorCache>>,
@@ -52,6 +52,27 @@ impl ConcurrentSensorObserver {
         Arc::new(observer)
     }
 
+    pub async fn dispatch_plugin(self: Arc<ConcurrentSensorObserver>) -> () {
+        let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = watcher(tx, Duration::from_secs(10)).unwrap();
+        watcher
+            .watch(&path, notify::RecursiveMode::NonRecursive)
+            .unwrap();
+
+        info!(APP_LOGGING, "Start watching plugin dir: {}", path);
+        loop {
+            if let Ok(_) = rx.try_recv() {
+                info!(APP_LOGGING, "Plugin changes registered - reloading");
+                let mut factory = self.agent_factory.lock().await;
+                unsafe {
+                    factory.load_plugins();
+                }
+            }
+            tokio::time::delay_for(Duration::from_secs(5)).await;
+        }
+    }
+
     pub async fn dispatch_ipc(self: Arc<ConcurrentSensorObserver>) -> () {
         let receiver_res = self.receiver.try_lock();
         if receiver_res.is_err() {
@@ -60,11 +81,13 @@ impl ConcurrentSensorObserver {
         }
 
         let mut receiver = receiver_res.unwrap();
-        info!(APP_LOGGING, "Start capturing ipc-plugin events");
-        while let Some(item) = receiver.next().await {
-            let mut mqtt_client = self.mqtt_client.write().await;
-            if let Err(e) = mqtt_client.send_cmd(&item).await {
-                error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+        loop {
+            info!(APP_LOGGING, "Start capturing ipc-plugin events");
+            while let Some(item) = receiver.next().await {
+                let mut mqtt_client = self.mqtt_client.write().await;
+                if let Err(e) = mqtt_client.send_cmd(&item).await {
+                    error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+                }
             }
         }
     }

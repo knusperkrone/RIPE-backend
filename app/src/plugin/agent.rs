@@ -15,6 +15,7 @@ use std::{
     collections::HashMap,
     env,
     ffi::OsStr,
+    fmt::Debug,
     string::String,
     sync::{Arc, RwLock},
 };
@@ -206,30 +207,26 @@ impl AgentFactory {
         }
     }
 
-    unsafe fn load_plugins(&mut self) {
+    pub unsafe fn load_plugins(&mut self) {
         dotenv().ok();
-        let plugin_dirs = env::var("PLUGIN_DIRS").expect("PLUGIN_DIRS must be set");
-        let dir_list: Vec<&str> = plugin_dirs.split(",").collect();
+        let path = env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
+        let plugins_dir = std::path::Path::new(&path);
+        let entries_res = std::fs::read_dir(plugins_dir);
+        if entries_res.is_err() {
+            error!(APP_LOGGING, "Invalid plugin dir: {}", path);
+            return;
+        }
 
-        for path in dir_list {
-            let plugins_dir = std::path::Path::new(path);
-            let entries_res = std::fs::read_dir(plugins_dir);
-            if entries_res.is_err() {
-                error!(APP_LOGGING, "Invalid plugin dir: {}", path);
-                continue;
-            }
-
-            for entry in entries_res.unwrap() {
-                let path: std::path::PathBuf = entry.unwrap().path();
-                if path.is_file() && path.extension().is_some() {
-                    // Extact file extension and load .so/.ddl
-                    let ext = path.extension().unwrap();
-                    if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
-                        match self.load_library(path.as_os_str()) {
-                            Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
-                            Err(err) => {
-                                error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
-                            }
+        for entry in entries_res.unwrap() {
+            let path: std::path::PathBuf = entry.unwrap().path();
+            if path.is_file() && path.extension().is_some() {
+                // Extact file extension and load .so/.ddl
+                let ext = path.extension().unwrap();
+                if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
+                    match self.load_library(path.as_os_str()) {
+                        Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
+                        Err(err) => {
+                            error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
                         }
                     }
                 }
@@ -262,7 +259,7 @@ impl AgentFactory {
             let loaded_decl = loaded_lib
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
                 .read();
-            if loaded_decl.agent_version < decl.agent_version {
+            if loaded_decl.agent_version <= decl.agent_version {
                 return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
             }
         }

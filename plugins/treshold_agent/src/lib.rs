@@ -95,7 +95,7 @@ impl ThresholdAgent {
 }
 
 impl AgentTrait for ThresholdAgent {
-    fn do_action(&mut self, data: &SensorDataDto) {
+    fn do_action(&mut self, data: &SensorDataMessage) {
         if self.task_cell.borrow().is_active() {
             info!(self.logger, "{} Already active action", NAME);
             return;
@@ -147,7 +147,7 @@ impl AgentTrait for ThresholdAgent {
         }
     }
 
-    fn render_ui(&self) -> AgentUI {
+    fn render_ui(&self, _data: &SensorDataMessage) -> AgentUI {
         let rendered: String;
         if let Some(last_action) = self.last_action {
             let delta: Duration = Utc::now() - last_action;

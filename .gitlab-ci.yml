@@ -1,0 +1,31 @@
+#Hier werden yml-Dateien, bspw. aus anderen Repositories importiert, um sie in der eigenen Pipeline zu nutzen.
+include:
+  - project: 'IF/pipeline-templates'
+    file: 'general/cache.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'general/stages.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'general/variables.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'job-templates/build-docker.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'job-templates/codequality.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'job-templates/compile-maven.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'job-templates/deploy.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'job-templates/test.yml'
+  - project: 'IF/pipeline-templates'
+    file: 'job-templates/trigger-other-pipelines.yml'
+
+build-branch-application:
+  # Erbt von .build-application, definiert in IF/pipeline-templates:job-templates/build-docker.yml
+  extends: .build-branch-application
+  variables:
+    DOCKERFILE_PATH: "Dockerfile"
+build-application:
+  # Erbt von .build-application, definiert in IF/pipeline-templates:job-templates/build-docker.yml
+  extends: .build-application
+  variables:
+    DOCKERFILE_PATH: "Dockerfile"%  

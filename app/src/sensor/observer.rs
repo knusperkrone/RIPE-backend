@@ -60,6 +60,7 @@ impl ConcurrentSensorObserver {
         }
 
         let mut receiver = receiver_res.unwrap();
+        info!(APP_LOGGING, "Start capturing ipc-plugin events");
         while let Some(item) = receiver.next().await {
             let mut mqtt_client = self.mqtt_client.write().await;
             if let Err(e) = mqtt_client.send_cmd(&item).await {
@@ -227,6 +228,7 @@ impl ConcurrentSensorObserver {
             })
             .collect();
 
+        info!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
         Ok(SensorStatusDto {
             name: sensor.name().clone(),
             data: data,
@@ -247,6 +249,7 @@ impl ConcurrentSensorObserver {
 
         let factory = self.agent_factory.lock().await;
         sensor.reload(&factory)?;
+
         info!(APP_LOGGING, "Reloaded sensor: {}", sensor_id);
         Ok(())
     }
@@ -257,6 +260,8 @@ impl ConcurrentSensorObserver {
 
     pub async fn agents(&self) -> Vec<String> {
         let container_factory = self.agent_factory.lock().await;
+
+        info!(APP_LOGGING, "fetched active agents");
         container_factory.agents()
     }
 
@@ -337,7 +342,7 @@ impl ConcurrentSensorObserver {
         for _ in 0..6 {
             buffer.push(rand::random::<u8>());
         }
-        base64::encode(buffer)
+        base64::encode(buffer).replace('/', &"-")
     }
 }
 

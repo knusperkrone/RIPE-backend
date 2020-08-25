@@ -431,6 +431,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "slab"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c111b5bd5695e56cffe5129854aa230b39c93a305372fdbb2668ca2394eea9f8"
+
+[[package]]
 name = "slog"
 version = "2.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -551,6 +557,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "env_logger",
+ "iftem_core",
+ "serde",
+ "serde_json",
+ "slog",
+ "sloggers",
+ "tokio",
+]
+
+[[package]]
 name = "thread_local"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -578,6 +598,7 @@ dependencies = [
  "bytes",
  "fnv",
  "pin-project-lite",
+ "slab",
 ]
 
 [[package]]

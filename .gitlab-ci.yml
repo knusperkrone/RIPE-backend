@@ -28,4 +28,4 @@ build-application:
   # Erbt von .build-application, definiert in IF/pipeline-templates:job-templates/build-docker.yml
   extends: .build-application
   variables:
-    DOCKERFILE_PATH: "Dockerfile"
+    DOCKERFILE_PATH: "Dockerfile  --cache=true"

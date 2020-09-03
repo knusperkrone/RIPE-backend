@@ -32,6 +32,10 @@ impl AgentTrait for MockAgent {
         }
     }
 
+    fn cmd(&self) -> i32 {
+        0
+    }
+
     fn state(&self) -> &AgentState {
         &AgentState::Active
     }

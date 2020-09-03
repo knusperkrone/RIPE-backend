@@ -1,7 +1,7 @@
 use crate::error::{DBError, ObserverError};
 use crate::plugin::agent::AgentFactory;
 
-use super::handle::SensorHandle;
+use super::handle::{SensorHandle, SensorHandleMessage};
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
@@ -9,9 +9,7 @@ use crate::models::{
     establish_db_connection,
 };
 use crate::mqtt::MqttSensorClient;
-use crate::rest::{
-    AgentRegisterDto, AgentStatusDto, SensorMessageDto, SensorRegisterResponseDto, SensorStatusDto,
-};
+use crate::rest::{AgentRegisterDto, AgentStatusDto, SensorRegisterResponseDto, SensorStatusDto};
 use diesel::pg::PgConnection;
 use iftem_core::SensorDataMessage;
 use notify::{watcher, Watcher};
@@ -28,7 +26,7 @@ pub struct ConcurrentSensorObserver {
     agent_factory: Mutex<AgentFactory>,
     mqtt_client: RwLock<MqttSensorClient>,
     eventloop: Mutex<MqttEventLoop>,
-    receiver: Mutex<Receiver<SensorMessageDto>>,
+    receiver: Mutex<Receiver<SensorHandleMessage>>,
     db_conn: Mutex<PgConnection>,
 }
 
@@ -36,7 +34,7 @@ pub struct ConcurrentSensorObserver {
 impl ConcurrentSensorObserver {
     pub fn new() -> Arc<Self> {
         let db_conn = establish_db_connection();
-        let (sender, receiver) = tokio::sync::mpsc::channel::<SensorMessageDto>(128);
+        let (sender, receiver) = tokio::sync::mpsc::channel::<SensorHandleMessage>(128);
         let agent_factory = AgentFactory::new(sender);
         let container = RwLock::new(SensorCache::new());
         let (client, eventloop) = MqttSensorClient::new();
@@ -84,9 +82,13 @@ impl ConcurrentSensorObserver {
         loop {
             info!(APP_LOGGING, "Start capturing ipc-plugin events");
             while let Some(item) = receiver.next().await {
-                let mut mqtt_client = self.mqtt_client.write().await;
-                if let Err(e) = mqtt_client.send_cmd(&item).await {
-                    error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+                let container = self.container_ref.read().await;
+                let sensor_opt = container.sensor_unchecked(item.sensor_id).await;
+                if sensor_opt.is_some() {
+                    let mut mqtt_client = self.mqtt_client.write().await;
+                    if let Err(e) = mqtt_client.send_cmd(&sensor_opt.unwrap()).await {
+                        error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+                    }
                 }
             }
         }
@@ -380,6 +382,11 @@ impl SensorCache {
         }
     }
 
+    pub async fn sensor_unchecked(&self, sensor_id: i32) -> Option<MutexGuard<'_, SensorHandle>> {
+        let sensor_mutex = self.sensors.get(&sensor_id)?;
+        Some(sensor_mutex.lock().await)
+    }
+
     pub async fn sensors(
         &self,
         sensor_id: i32,
@@ -395,6 +402,7 @@ impl SensorCache {
     }
 
     pub fn insert_sensor(&mut self, sensor: SensorHandle) {
+        // TODO: Read-write lock
         self.sensors.insert(sensor.id(), Mutex::new(sensor));
     }
 

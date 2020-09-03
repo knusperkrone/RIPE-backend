@@ -50,6 +50,7 @@ pub trait AgentTrait: std::fmt::Debug + Send {
         }
     }
 
+    fn cmd(&self) -> i32;
     fn render_ui(&self, data: &SensorDataMessage) -> AgentUI;
     fn deserialize(&self) -> AgentConfig;
     fn state(&self) -> &AgentState;

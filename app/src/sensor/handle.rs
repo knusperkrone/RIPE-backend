@@ -5,6 +5,13 @@ use crate::plugin::agent::{Agent, AgentFactory};
 use iftem_core::{error::AgentError, SensorDataMessage};
 use std::vec::Vec;
 
+#[derive(Debug)]
+pub struct SensorHandleMessage {
+    pub sensor_id: i32,
+    pub domain: String,
+    pub payload: u32,
+}
+
 pub struct SensorHandle {
     pub dao: SensorDao,
     pub agents: Vec<Agent>,
@@ -17,11 +24,13 @@ impl SensorHandle {
         factory: &AgentFactory,
     ) -> Result<SensorHandle, AgentError> {
         // TODO: Filter invalid!
-        let agents: Vec<Agent> = actions
+        let mut agents: Vec<Agent> = actions
             .into_iter()
             .map(|config| factory.restore_agent(sensor.id(), config))
             .filter_map(Result::ok)
             .collect();
+        agents.sort_by(|a, b| a.domain().cmp(b.domain()));
+
         debug!(
             APP_LOGGING,
             "Sensor \"{}\" with {} agents",
@@ -39,6 +48,10 @@ impl SensorHandle {
         self.agents.iter_mut().for_each(|a| a.on_data(data))
     }
 
+    pub fn format_cmds(&self) -> Vec<i32> {
+        self.agents.iter().map(|a| a.cmd()).collect()
+    }
+
     pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
         self.agents
             .iter_mut()
@@ -54,6 +67,7 @@ impl SensorHandle {
             .count()
         {
             self.agents.push(agent);
+            self.agents.sort_by(|a, b| a.domain().cmp(b.domain()));
         }
     }
 

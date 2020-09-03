@@ -5,8 +5,7 @@ use std::pin::Pin;
 
 pub enum AgentMessage {
     State(AgentState),
-    Bool(bool),
-    Int(i32),
+    Command(u32),
     Task(Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync + 'static>>),
 }
 

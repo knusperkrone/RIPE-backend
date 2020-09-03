@@ -1,6 +1,12 @@
-use crate::models::{dao::SensorDao};
+use crate::models::dao::SensorDao;
 use crate::plugin::{test::MockAgent, Agent};
-use crate::{mqtt::MqttSensorClient, sensor::{observer::SensorCache, handle::SensorHandle}, rest::SensorMessageDto};
+use crate::{
+    mqtt::MqttSensorClient,
+    sensor::{
+        handle::{SensorHandle, SensorHandleMessage},
+        observer::SensorCache,
+    },
+};
 use iftem_core::{AgentMessage, SensorDataMessage};
 use rumq_client::{self, Publish, QoS};
 use std::sync::Arc;
@@ -41,7 +47,7 @@ async fn test_valid_mqtt_path() {
     // prepare
     let sensor_id = 0;
     let key_b64 = "123456";
-    let (sender, _) = tokio::sync::mpsc::channel::<SensorMessageDto>(2);
+    let (sender, _) = tokio::sync::mpsc::channel::<SensorHandleMessage>(2);
     let (plugin_sender, plugin_receiver) = tokio::sync::mpsc::channel::<AgentMessage>(2);
     let mut container = SensorCache::new();
     let (mut client, _) = MqttSensorClient::new();

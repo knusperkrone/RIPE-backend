@@ -158,6 +158,7 @@ pub fn get_agent_config(conn: &PgConnection, sensor_dao: &SensorDao) -> Vec<Agen
     use crate::schema::agent_configs::dsl::*;
     match agent_configs
         .filter(sensor_id.eq(sensor_dao.id()))
+        .order(domain.asc())
         .load::<AgentConfigDao>(conn)
     {
         Ok(result) => result,

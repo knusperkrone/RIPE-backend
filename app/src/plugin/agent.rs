@@ -1,9 +1,6 @@
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
-use crate::{
-    models::dao::AgentConfigDao,
-    rest::{AgentPayload, SensorMessageDto},
-};
+use crate::{models::dao::AgentConfigDao, sensor::handle::SensorHandleMessage};
 use dotenv::dotenv;
 use futures::future::{AbortHandle, Abortable};
 use iftem_core::{
@@ -65,7 +62,7 @@ impl Drop for Agent {
 
 impl Agent {
     pub fn new(
-        agent_sender: Sender<SensorMessageDto>,
+        agent_sender: Sender<SensorHandleMessage>,
         plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
@@ -119,6 +116,10 @@ impl Agent {
         self.agent_proxy.on_data(data);
     }
 
+    pub fn cmd(&self) -> i32 {
+        self.agent_proxy.cmd()
+    }
+
     pub fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
         self.agent_proxy.render_ui(data)
     }
@@ -145,7 +146,7 @@ impl Agent {
         sensor_id: i32,
         domain: String,
         state_lock: Arc<RwLock<AgentState>>,
-        agent_sender: Sender<SensorMessageDto>,
+        agent_sender: Sender<SensorHandleMessage>,
         mut plugin_receiver: Receiver<AgentMessage>,
     ) {
         while let Some(payload) = plugin_receiver.next().await {
@@ -179,11 +180,12 @@ impl Agent {
             } else if let AgentMessage::State(state) = payload {
                 let mut self_state = state_lock.write().unwrap();
                 *self_state = state;
-            } else if let Ok(message) = AgentPayload::from(payload) {
-                let mut msg = SensorMessageDto {
+            } else if let AgentMessage::Command(command) = payload {
+                // Notify main loop over agent
+                let mut msg = SensorHandleMessage {
                     sensor_id: sensor_id,
                     domain: domain.clone(),
-                    payload: message,
+                    payload: command,
                 };
 
                 let mut tries = 3;
@@ -206,12 +208,12 @@ impl Agent {
 
 #[derive(Debug)]
 pub struct AgentFactory {
-    agent_sender: Sender<SensorMessageDto>,
+    agent_sender: Sender<SensorHandleMessage>,
     libraries: HashMap<String, Library>,
 }
 
 impl AgentFactory {
-    pub fn new(sender: Sender<SensorMessageDto>) -> Self {
+    pub fn new(sender: Sender<SensorHandleMessage>) -> Self {
         let mut factory = AgentFactory {
             agent_sender: sender,
             libraries: HashMap::new(),

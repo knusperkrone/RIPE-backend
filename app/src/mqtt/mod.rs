@@ -1,9 +1,6 @@
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
-use crate::{
-    rest::SensorMessageDto,
-    sensor::{handle::SensorHandle, observer::SensorCache},
-};
+use crate::sensor::{handle::SensorHandle, observer::SensorCache};
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
 use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
@@ -136,41 +133,34 @@ impl MqttSensorClient {
         }
     }
 
-    pub async fn send_cmd(&mut self, sensor_command: &SensorMessageDto) -> Result<(), MQTTError> {
-        let cmd_topic = format!(
-            "{}/{}/{}",
-            MqttSensorClient::SENSOR_TOPIC,
-            MqttSensorClient::CMD_TOPIC,
-            sensor_command.sensor_id,
-        );
+    pub async fn send_cmd(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        let cmd_topic = self.build_topic(sensor, MqttSensorClient::CMD_TOPIC);
 
-        let payload = serde_json::to_string(&sensor_command).unwrap();
-        let tmp = Publish::new(&cmd_topic, QoS::ExactlyOnce, payload);
+        let cmds = sensor.format_cmds();
+        let (_, payload, _) = unsafe { cmds.align_to::<u8>() };
+        let mut tmp = Publish::new(&cmd_topic, QoS::ExactlyOnce, payload);
+        tmp.set_retain(true);
+
         let publish = Request::Publish(tmp);
         self.requests_tx.send(publish).await?;
-        info!(
-            APP_LOGGING,
-            "Send command {} - {:?}", cmd_topic, sensor_command
-        );
+        info!(APP_LOGGING, "Send command {}", cmd_topic);
         Ok(())
     }
 
     fn build_topics(&self, sensor: &SensorHandle) -> Vec<String> {
         vec![
-            format!(
-                "{}/{}/{}/{}",
-                MqttSensorClient::SENSOR_TOPIC,
-                MqttSensorClient::DATA_TOPIC,
-                sensor.id(),
-                sensor.key_b64(),
-            ),
-            format!(
-                "{}/{}/{}/{}",
-                MqttSensorClient::SENSOR_TOPIC,
-                MqttSensorClient::LOG_TOPIC,
-                sensor.id(),
-                sensor.key_b64(),
-            ),
+            self.build_topic(sensor, MqttSensorClient::DATA_TOPIC),
+            self.build_topic(sensor, MqttSensorClient::LOG_TOPIC),
         ]
+    }
+
+    fn build_topic(&self, sensor: &SensorHandle, topic: &str) -> String {
+        format!(
+            "{}/{}/{}/{}",
+            MqttSensorClient::SENSOR_TOPIC,
+            topic,
+            sensor.id(),
+            sensor.key_b64(),
+        )
     }
 }

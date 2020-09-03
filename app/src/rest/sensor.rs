@@ -69,7 +69,7 @@ pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
 /// DTO
 ///
 pub mod dto {
-    use crate::rest::{AgentPayload, AgentStatusDto};
+    use crate::rest::AgentStatusDto;
     use iftem_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
 
@@ -87,14 +87,6 @@ pub mod dto {
     #[derive(Debug, Serialize, Deserialize)]
     pub struct SensorUnregisterRequestDto {
         pub id: i32,
-    }
-
-    #[derive(Debug, Serialize)]
-    pub struct SensorMessageDto {
-        #[serde(skip_serializing)]
-        pub sensor_id: i32,
-        pub domain: String,
-        pub payload: AgentPayload,
     }
 
     #[derive(Debug, Serialize, Deserialize)]

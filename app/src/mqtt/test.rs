@@ -83,6 +83,6 @@ async fn test_valid_mqtt_path() {
     // validate
     assert_eq!(result.is_ok(), true);
     let container = mocked_container.read().await;
-    let _sensor = container.sensors(sensor_id, &key_b64.to_owned()).await;
+    let _sensor = container.sensor(sensor_id, &key_b64.to_owned()).await;
     // TODO: check agent
 }

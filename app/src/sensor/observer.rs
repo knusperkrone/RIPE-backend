@@ -14,7 +14,11 @@ use diesel::pg::PgConnection;
 use iftem_core::SensorDataMessage;
 use notify::{watcher, Watcher};
 use rumq_client::{MqttEventLoop, Publish};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{hash_map::Values, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     stream::StreamExt,
     sync::mpsc::Receiver,
@@ -117,6 +121,8 @@ impl ConcurrentSensorObserver {
             info!(APP_LOGGING, "MQTT Connected");
             if reconnects == 0 {
                 self.populate().await; // Subscribing to persisted sensors
+            } else {
+                self.repopulate().await; // Resubscribe to in memory sensors
             }
 
             let mut stream = stream_res.unwrap();
@@ -156,6 +162,21 @@ impl ConcurrentSensorObserver {
             match restore_result {
                 Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
                 Err(msg) => error!(APP_LOGGING, "{}", msg),
+            }
+        }
+    }
+
+    async fn repopulate(&self) {
+        let container = self.container_ref.read().await;
+        for sensor_mtx in container.sensors() {
+            let sensor = sensor_mtx.lock().await;
+            if let Err(e) = self.register_sensor_mqtt(&sensor).await {
+                error!(
+                    APP_LOGGING,
+                    "Failed registering sensor {} with: {}",
+                    sensor.id(),
+                    e
+                );
             }
         }
     }
@@ -239,7 +260,7 @@ impl ConcurrentSensorObserver {
         // Cummulate and render sensors
         let container = self.container_ref.read().await;
         let sensor = container
-            .sensors(sensor_id, key_b64.as_str())
+            .sensor(sensor_id, key_b64.as_str())
             .await
             .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
 
@@ -268,7 +289,7 @@ impl ConcurrentSensorObserver {
     ) -> Result<(), ObserverError> {
         let container = self.container_ref.read().await;
         let mut sensor = container
-            .sensors(sensor_id, &key_b64)
+            .sensor(sensor_id, &key_b64)
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
@@ -298,7 +319,7 @@ impl ConcurrentSensorObserver {
     ) -> Result<(), ObserverError> {
         let container = self.container_ref.read().await;
         let mut sensor = container
-            .sensors(sensor_id, &key_b64)
+            .sensor(sensor_id, &key_b64)
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
@@ -323,7 +344,7 @@ impl ConcurrentSensorObserver {
     ) -> Result<(), ObserverError> {
         let container = self.container_ref.read().await;
         let mut sensor = container
-            .sensors(sensor_id, &key_b64)
+            .sensor(sensor_id, &key_b64)
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
@@ -353,13 +374,18 @@ impl ConcurrentSensorObserver {
         let sensor_id = sensor_dao.id();
         let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(&vec![]), &agent_factory)?;
 
-        self.mqtt_client
-            .write()
-            .await
-            .subscribe_sensor(&sensor)
-            .await?;
+        self.register_sensor_mqtt(&sensor).await?;
         self.container_ref.write().await.insert_sensor(sensor);
         Ok(sensor_id)
+    }
+
+    async fn register_sensor_mqtt(&self, sensor: &SensorHandle) -> Result<(), ObserverError> {
+        let mut mqtt = self.mqtt_client.write().await;
+        mqtt.subscribe_sensor(sensor).await?;
+        if let Err(e) = mqtt.send_cmd(sensor).await {
+            error!(APP_LOGGING, "Failed sending initia mqtt command: {}", e);
+        }
+        Ok(())
     }
 
     fn generate_sensor_key(&self) -> String {
@@ -382,12 +408,16 @@ impl SensorCache {
         }
     }
 
+    pub fn sensors(&self) -> Values<'_, i32, Mutex<SensorHandle>> {
+        self.sensors.values()
+    }
+
     pub async fn sensor_unchecked(&self, sensor_id: i32) -> Option<MutexGuard<'_, SensorHandle>> {
         let sensor_mutex = self.sensors.get(&sensor_id)?;
         Some(sensor_mutex.lock().await)
     }
 
-    pub async fn sensors(
+    pub async fn sensor(
         &self,
         sensor_id: i32,
         key_b64: &str,

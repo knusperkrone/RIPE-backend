@@ -111,7 +111,7 @@ impl MqttSensorClient {
                 let sensor_dto = serde_json::from_str::<SensorDataMessage>(&payload)?;
                 let container = container_lock.read().await;
                 let mut sensor = container
-                    .sensors(sensor_id, key)
+                    .sensor(sensor_id, key)
                     .await
                     .ok_or(MQTTError::NoSensor())?;
                 sensor.on_data(&sensor_dto);

@@ -76,4 +76,8 @@ impl AgentTrait for TestAgent {
     fn state(&self) -> &AgentState {
         &AgentState::Default
     }
+
+    fn cmd(&self) -> i32 {
+        0
+    }
 }

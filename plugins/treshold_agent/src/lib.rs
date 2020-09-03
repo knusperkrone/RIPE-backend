@@ -96,9 +96,11 @@ impl ThresholdAgent {
 
 impl AgentTrait for ThresholdAgent {
     fn do_action(&mut self, data: &SensorDataMessage) {
-        if self.task_cell.borrow().is_active() {
-            info!(self.logger, "{} Already active action", NAME);
-            return;
+        if let Ok(task) = self.task_cell.try_borrow() {
+            if task.is_active() {
+                info!(self.logger, "{} Already active action", NAME);
+                return;
+            }
         }
 
         let watering_delta = Utc::now()
@@ -138,6 +140,15 @@ impl AgentTrait for ThresholdAgent {
 
     fn state(&self) -> &AgentState {
         &self.state
+    }
+
+    fn cmd(&self) -> i32 {
+        if let Ok(task) = self.task_cell.try_borrow() {
+            if task.is_active() {
+                return 1;
+            }
+        }
+        0
     }
 
     fn deserialize(&self) -> AgentConfig {
@@ -243,7 +254,7 @@ impl ThresholdTask {
                     &config.sender,
                     AgentMessage::State(state),
                 );
-                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Bool(true));
+                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(1));
                 info!(
                     config.logger,
                     "{} started Task until {}", NAME, config.until
@@ -260,7 +271,7 @@ impl ThresholdTask {
                     &config.sender,
                     AgentMessage::State(state),
                 );
-                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Bool(false));
+                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(0));
 
                 let delta_secs = (Utc::now() - start).num_seconds();
                 if config.aborted.load(Ordering::Relaxed) {

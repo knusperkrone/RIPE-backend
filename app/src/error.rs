@@ -30,7 +30,7 @@ pub enum MQTTError {
     PathError(std::string::String),
     PayloadError(std::string::String),
     ParseError(serde_json::error::Error),
-    SendError(tokio::sync::mpsc::error::SendError<rumq_client::Request>),
+    SendError(mqtt_async_client::Error),
 }
 
 impl fmt::Display for MQTTError {
@@ -47,8 +47,8 @@ impl fmt::Display for MQTTError {
 
 impl error::Error for MQTTError {}
 
-impl From<tokio::sync::mpsc::error::SendError<rumq_client::Request>> for MQTTError {
-    fn from(err: tokio::sync::mpsc::error::SendError<rumq_client::Request>) -> Self {
+impl From<mqtt_async_client::Error> for MQTTError {
+    fn from(err: mqtt_async_client::Error) -> Self {
         MQTTError::SendError(err)
     }
 }

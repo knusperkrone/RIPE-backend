@@ -97,6 +97,7 @@ impl Agent {
     }
 
     pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
+        info!(APP_LOGGING, "Reloading agent: {}", self.sensor_id);
         if self.agent_proxy.state() == &AgentState::Active {
             return Err(PluginError::AgentStateError(AgentState::Active));
         }

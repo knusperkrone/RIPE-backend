@@ -12,8 +12,8 @@ use crate::mqtt::MqttSensorClient;
 use crate::rest::{AgentRegisterDto, AgentStatusDto, SensorRegisterResponseDto, SensorStatusDto};
 use diesel::pg::PgConnection;
 use iftem_core::SensorDataMessage;
+use mqtt_async_client::client::{Client, ReadResult};
 use notify::{watcher, Watcher};
-use rumq_client::{MqttEventLoop, Publish};
 use std::{
     collections::{hash_map::Values, HashMap},
     sync::Arc,
@@ -29,10 +29,13 @@ pub struct ConcurrentSensorObserver {
     container_ref: Arc<RwLock<SensorCache>>,
     agent_factory: Mutex<AgentFactory>,
     mqtt_client: RwLock<MqttSensorClient>,
-    eventloop: Mutex<MqttEventLoop>,
+    rx_mqtt: Mutex<Client>,
     receiver: Mutex<Receiver<SensorHandleMessage>>,
     db_conn: Mutex<PgConnection>,
 }
+
+unsafe impl Send for ConcurrentSensorObserver {}
+unsafe impl Sync for ConcurrentSensorObserver {}
 
 // Init
 impl ConcurrentSensorObserver {
@@ -41,12 +44,12 @@ impl ConcurrentSensorObserver {
         let (sender, receiver) = tokio::sync::mpsc::channel::<SensorHandleMessage>(128);
         let agent_factory = AgentFactory::new(sender);
         let container = RwLock::new(SensorCache::new());
-        let (client, eventloop) = MqttSensorClient::new();
+        let (client, rx_mqtt) = MqttSensorClient::new();
         let observer = ConcurrentSensorObserver {
             agent_factory: Mutex::new(agent_factory),
             container_ref: Arc::new(container),
             mqtt_client: RwLock::new(client),
-            eventloop: Mutex::new(eventloop),
+            rx_mqtt: Mutex::new(rx_mqtt),
             receiver: Mutex::new(receiver),
             db_conn: Mutex::new(db_conn),
         };
@@ -102,17 +105,16 @@ impl ConcurrentSensorObserver {
 // MQTT
 impl ConcurrentSensorObserver {
     pub async fn dispatch_mqtt(self: Arc<ConcurrentSensorObserver>) -> () {
-        let mut reconnects: i32 = 0;
-        let eventloop_res = self.eventloop.try_lock();
-        if eventloop_res.is_err() {
-            error!(APP_LOGGING, "dispatch_mqtt() already called!");
+        let rx_mqtt_res = self.rx_mqtt.try_lock();
+        if rx_mqtt_res.is_err() {
+            error!(APP_LOGGING, "dispatch_ipc() already called!");
             return;
         }
 
-        let mut eventloop = eventloop_res.unwrap();
+        let mut rx_mqtt = rx_mqtt_res.unwrap();
+        let mut reconnects: i32 = 0;
         loop {
-            let stream_res = eventloop.connect().await;
-            if stream_res.is_err() {
+            if rx_mqtt.connect().await.is_err() {
                 info!(APP_LOGGING, "Failed connecting mqtt!");
                 tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
                 continue;
@@ -125,18 +127,9 @@ impl ConcurrentSensorObserver {
                 self.repopulate().await; // Resubscribe to in memory sensors
             }
 
-            let mut stream = stream_res.unwrap();
-            while let Some(item) = stream.next().await {
-                match item {
-                    rumq_client::Notification::Publish(msg) => {
-                        debug!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic_name);
-                        self.on_mqtt_message(msg).await;
-                    }
-                    rumq_client::Notification::Suback(_) => (),
-                    rumq_client::Notification::Pubrec(_) => (),
-                    rumq_client::Notification::Pubcomp(_) => (),
-                    _ => warn!(APP_LOGGING, "Received unexpected = {:?}", item),
-                };
+            while let Ok(msg) = rx_mqtt.read_subscriptions().await {
+                debug!(APP_LOGGING, "MQTT Reveived topic: {}", msg.topic());
+                self.on_mqtt_message(msg).await;
             }
 
             tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
@@ -181,7 +174,7 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    async fn on_mqtt_message(&self, msg: Publish) {
+    async fn on_mqtt_message(&self, msg: ReadResult) {
         let mut client = self.mqtt_client.write().await;
         match client.on_sensor_message(&self.container_ref, msg).await {
             Ok(None) => (),
@@ -238,7 +231,7 @@ impl ConcurrentSensorObserver {
             .write()
             .await
             .unsubscribe_sensor(&sensor)
-            .await;
+            .await?;
 
         info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
         Ok(())

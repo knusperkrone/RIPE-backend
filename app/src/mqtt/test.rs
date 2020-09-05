@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use iftem_core::{AgentMessage, SensorDataMessage};
-use rumq_client::{self, Publish, QoS};
+use mqtt_async_client::client::ReadResult;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -26,12 +26,8 @@ async fn test_invalid_mqtt_path() {
     let (mut client, _) = MqttSensorClient::new();
 
     // execute
-    let mocked_message = Publish {
-        dup: false,
-        retain: false,
-        qos: QoS::ExactlyOnce,
-        pkid: None,
-        topic_name: "sensor/data/0".to_string(),
+    let mocked_message = ReadResult {
+        topic: "sensor/data/0".to_string(),
         payload: vec![],
     };
 
@@ -67,12 +63,8 @@ async fn test_valid_mqtt_path() {
     let mocked_container = Arc::new(RwLock::new(container));
 
     // execute
-    let mocked_message = Publish {
-        dup: false,
-        retain: false,
-        qos: QoS::ExactlyOnce,
-        pkid: None,
-        topic_name: format!("sensor/data/{}/{}", sensor_id, key_b64),
+    let mocked_message = ReadResult {
+        topic: format!("sensor/data/{}/{}", sensor_id, key_b64),
         payload: serde_json::to_vec(&SensorDataMessage::default()).unwrap(),
     };
 

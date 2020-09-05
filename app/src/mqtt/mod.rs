@@ -3,19 +3,18 @@ use crate::logging::APP_LOGGING;
 use crate::sensor::{handle::SensorHandle, observer::SensorCache};
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
-use rumq_client::{self, eventloop, MqttEventLoop, MqttOptions, Publish, QoS, Request, Subscribe};
+use mqtt_async_client::client::{
+    Client, Publish, QoS, ReadResult, Subscribe, SubscribeTopic, Unsubscribe, UnsubscribeTopic,
+};
 use std::env;
 use std::sync::Arc;
-use tokio::sync::{
-    mpsc::{channel, Sender},
-    RwLock,
-};
+use tokio::sync::RwLock;
 
 #[cfg(test)]
 mod test;
 
 pub struct MqttSensorClient {
-    requests_tx: Sender<Request>,
+    tx_client: Client,
 }
 
 impl MqttSensorClient {
@@ -24,7 +23,7 @@ impl MqttSensorClient {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    pub fn new() -> (Self, MqttEventLoop) {
+    pub fn new() -> (Self, Client) {
         dotenv().ok();
         let mqtt_name = env::var("MQTT_NAME").expect("MQTT_NAME must be set");
         let mqtt_url = env::var("MQTT_URL").expect("MQTT_URL must be set");
@@ -33,23 +32,41 @@ impl MqttSensorClient {
             .parse()
             .unwrap();
 
-        let mqttoptions = MqttOptions::new(mqtt_name, mqtt_url, mqtt_port);
-        let (requests_tx, requests_rx) = channel(std::i32::MAX as usize); // FIXME?
-        let eventloop = eventloop(mqttoptions, requests_rx);
-        let client = MqttSensorClient {
-            requests_tx: requests_tx,
-        };
-        (client, eventloop)
+        let rx_client = Client::builder()
+            .set_username(Some(mqtt_name.clone() + "_wx"))
+            .set_host(mqtt_url.clone())
+            .set_port(mqtt_port)
+            .build()
+            .unwrap();
+        let tx_client = Client::builder()
+            .set_username(Some(mqtt_name + "_tx"))
+            .set_host(mqtt_url)
+            .set_port(mqtt_port)
+            .build()
+            .unwrap();
+
+        (
+            MqttSensorClient {
+                tx_client: tx_client,
+            },
+            rx_client,
+        )
     }
 
     pub async fn subscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let mut topics = self.build_topics(sensor);
-        let mut sub = Subscribe::new(topics.pop().unwrap(), QoS::AtLeastOnce);
-        for topic in topics {
-            sub.add(topic, QoS::AtLeastOnce);
-        }
+        let topics = self
+            .build_topics(sensor)
+            .drain(..)
+            .map(|t| SubscribeTopic {
+                topic_path: t,
+                qos: QoS::ExactlyOnce,
+            })
+            .collect::<Vec<SubscribeTopic>>();
+        let sub = Subscribe::new(topics);
 
-        self.requests_tx.send(Request::Subscribe(sub)).await?;
+        let _ = self.tx_client.connect().await;
+        self.tx_client.subscribe(sub).await?;
+
         info!(
             APP_LOGGING,
             "Subscribed topics: {:?}",
@@ -58,12 +75,23 @@ impl MqttSensorClient {
         Ok(())
     }
 
-    pub async fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) {
-        let mut _topics = self.build_topics(sensor);
-        warn!(
+    pub async fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        let topics = self
+            .build_topics(sensor)
+            .drain(..)
+            .map(|t| UnsubscribeTopic::new(t))
+            .collect::<Vec<UnsubscribeTopic>>();
+        let unsub = Unsubscribe::new(topics);
+
+        let _ = self.tx_client.connect().await;
+        self.tx_client.unsubscribe(unsub).await?;
+
+        info!(
             APP_LOGGING,
-            "Cannot unsubscribe yet, due rumq-clients alpha state!"
+            "Unsubscribed topics: {:?}",
+            self.build_topics(sensor)
         );
+        Ok(())
     }
 
     /// Parses and dispatches a mqtt message
@@ -72,14 +100,14 @@ impl MqttSensorClient {
     pub async fn on_sensor_message(
         &mut self,
         container_lock: &Arc<RwLock<SensorCache>>,
-        msg: Publish,
+        msg: ReadResult,
     ) -> Result<Option<(i32, SensorDataMessage)>, MQTTError> {
         // parse message
-        let path: Vec<&str> = msg.topic_name.splitn(4, '/').collect();
+        let path: Vec<&str> = msg.topic().splitn(4, '/').collect();
         if path.len() != 4 {
             return Err(MQTTError::PathError(format!(
                 "Couldn't split topic: {}",
-                msg.topic_name
+                msg.topic()
             )));
         } else if path[0] != MqttSensorClient::SENSOR_TOPIC {
             return Err(MQTTError::PathError(format!("Invalid topic: {}", path[0])));
@@ -97,8 +125,8 @@ impl MqttSensorClient {
             )));
         }
 
-        let payload: String;
-        if let Ok(string) = String::from_utf8(msg.payload) {
+        let payload: &str;
+        if let Ok(string) = std::str::from_utf8(msg.payload()) {
             payload = string;
         } else {
             return Err(MQTTError::PayloadError(
@@ -108,7 +136,7 @@ impl MqttSensorClient {
 
         match endpoint {
             MqttSensorClient::DATA_TOPIC => {
-                let sensor_dto = serde_json::from_str::<SensorDataMessage>(&payload)?;
+                let sensor_dto = serde_json::from_str::<SensorDataMessage>(payload)?;
                 let container = container_lock.read().await;
                 let mut sensor = container
                     .sensor(sensor_id, key)
@@ -136,14 +164,21 @@ impl MqttSensorClient {
     pub async fn send_cmd(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         let cmd_topic = self.build_topic(sensor, MqttSensorClient::CMD_TOPIC);
 
-        let cmds = sensor.format_cmds();
-        let (_, payload, _) = unsafe { cmds.align_to::<u8>() };
-        let mut tmp = Publish::new(&cmd_topic, QoS::ExactlyOnce, payload);
-        tmp.set_retain(true);
+        let mut cmds = sensor.format_cmds();
+        let payload = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
-        let publish = Request::Publish(tmp);
-        self.requests_tx.send(publish).await?;
-        info!(APP_LOGGING, "Send command {}", cmd_topic);
+        let mut publ = Publish::new(cmd_topic, payload);
+        publ.set_retain(true);
+
+        let _ = self.tx_client.connect().await;
+        self.tx_client.publish(&publ).await?;
+
+        info!(
+            APP_LOGGING,
+            "Send to topic {}, {:?}",
+            publ.topic(),
+            publ.payload()
+        );
         Ok(())
     }
 

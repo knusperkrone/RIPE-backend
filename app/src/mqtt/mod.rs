@@ -59,7 +59,7 @@ impl MqttSensorClient {
             .drain(..)
             .map(|t| SubscribeTopic {
                 topic_path: t,
-                qos: QoS::ExactlyOnce,
+                qos: QoS::AtLeastOnce,
             })
             .collect::<Vec<SubscribeTopic>>();
         let sub = Subscribe::new(topics);

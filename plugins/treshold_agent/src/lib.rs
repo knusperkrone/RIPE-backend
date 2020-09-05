@@ -4,10 +4,9 @@ extern crate slog;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use iftem_core::*;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, RwLock,
 };
 use tokio::sync::mpsc::Sender;
 
@@ -48,7 +47,7 @@ pub struct ThresholdAgent {
     #[serde(skip, default = "iftem_core::sender_sentinel")]
     sender: Sender<AgentMessage>,
     #[serde(skip)]
-    task_cell: RefCell<ThresholdTask>,
+    task_cell: RwLock<ThresholdTask>,
     state: AgentState,
     min_threshold: f64,
     action_duration_sec: i64,
@@ -73,7 +72,7 @@ impl Default for ThresholdAgent {
         ThresholdAgent {
             logger: iftem_core::logger_sentinel(),
             sender: iftem_core::sender_sentinel(),
-            task_cell: RefCell::default(),
+            task_cell: RwLock::default(),
             state: AgentState::Active.into(),
             min_threshold: 20.0,
             action_duration_sec: 60,
@@ -86,19 +85,19 @@ impl Default for ThresholdAgent {
 
 impl ThresholdAgent {
     fn start_task(&self, force: bool, until: DateTime<Utc>) {
-        let mut action_task =
-            ThresholdTask::kickoff(force, until, self.logger.clone(), self.sender.clone());
-        action_task.run();
-
-        self.task_cell.replace(action_task);
+        if let Ok(mut task) = self.task_cell.write() {
+            task.kickoff(force, until, self.logger.clone(), self.sender.clone());
+        } else {
+            error!(self.logger, "{} cannot start task!", NAME);
+        }
     }
 }
 
 impl AgentTrait for ThresholdAgent {
     fn do_action(&mut self, data: &SensorDataMessage) {
-        if let Ok(task) = self.task_cell.try_borrow() {
+        if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
-                info!(self.logger, "{} Already active action", NAME);
+                info!(self.logger, "{} no action, as already running", NAME);
                 return;
             }
         }
@@ -129,12 +128,13 @@ impl AgentTrait for ThresholdAgent {
         }
     }
 
-    fn do_force(&mut self, active: bool, until: DateTime<Utc>) {
-        let mut task = self.task_cell.borrow_mut();
-        if task.is_active() && !active {
-            task.abort();
-        } else if !task.is_active() && active {
-            self.start_task(true, until);
+    fn do_force(&mut self, set_active: bool, until: DateTime<Utc>) {
+        if let Ok(mut task) = self.task_cell.write() {
+            if task.is_active() && !set_active {
+                task.abort();
+            } else if !task.is_active() && set_active {
+                self.start_task(true, until);
+            }
         }
     }
 
@@ -143,7 +143,7 @@ impl AgentTrait for ThresholdAgent {
     }
 
     fn cmd(&self) -> i32 {
-        if let Ok(task) = self.task_cell.try_borrow() {
+        if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
                 return 1;
             }
@@ -215,21 +215,29 @@ impl Default for ThresholdTask {
 
 impl ThresholdTask {
     pub fn kickoff(
+        &mut self,
         forced: bool,
         until: DateTime<Utc>,
         logger: slog::Logger,
         sender: Sender<AgentMessage>,
-    ) -> Self {
-        ThresholdTask {
-            task_config: Arc::new(ThresholdTaskConfig {
-                active: Arc::new(AtomicBool::new(true)),
-                aborted: Arc::new(AtomicBool::new(false)),
-                forced: forced,
-                logger: logger,
-                sender: sender,
-                until: until,
-            }),
+    ) {
+        if self.is_active() {
+            warn!(
+                logger,
+                "Cannot kickoff task, as there is one already running!"
+            );
+            return;
         }
+
+        self.task_config = Arc::new(ThresholdTaskConfig {
+            active: Arc::new(AtomicBool::new(true)),
+            aborted: Arc::new(AtomicBool::new(false)),
+            forced: forced,
+            logger: logger,
+            sender: sender,
+            until: until,
+        });
+        self.run();
     }
 
     pub fn abort(&mut self) {

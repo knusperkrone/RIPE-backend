@@ -33,7 +33,7 @@ pub fn build_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> Ht
     }
 }
 
-pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) -> () {
+pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) -> () {
     // Set up logging
     dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=info");

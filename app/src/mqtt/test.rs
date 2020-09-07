@@ -13,13 +13,15 @@ use std::sync::{Arc, RwLock};
 
 #[actix_rt::test]
 async fn test_mqtt_connection() {
-    let client = MqttSensorClient::new(Arc::new(RwLock::new(SensorCache::new())));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let client = MqttSensorClient::new(tx, Arc::new(RwLock::new(SensorCache::new())));
     client.connect();
 }
 
 #[actix_rt::test]
 async fn test_invalid_mqtt_path() {
     // prepare
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let container = SensorCache::new();
     let mocked_container = Arc::new(RwLock::new(container));
 
@@ -27,7 +29,7 @@ async fn test_invalid_mqtt_path() {
     let mocked_message = Message::new("sensor/data/0".to_string(), vec![], 1);
 
     // validate
-    let result = MqttSensorClient::on_sensor_message(&mocked_container, mocked_message);
+    let result = MqttSensorClient::on_sensor_message(&tx, &mocked_container, mocked_message);
     assert_ne!(result.is_ok(), true);
 }
 
@@ -36,7 +38,7 @@ async fn test_valid_mqtt_path() {
     // prepare
     let sensor_id = 0;
     let key_b64 = "123456";
-    let (sender, _) = tokio::sync::mpsc::channel::<SensorHandleMessage>(2);
+    let (sender, _) = tokio::sync::mpsc::unbounded_channel::<SensorHandleMessage>();
     let (plugin_sender, plugin_receiver) = tokio::sync::mpsc::channel::<AgentMessage>(2);
     let mut container = SensorCache::new();
     let mock_sensor = SensorHandle {
@@ -61,7 +63,8 @@ async fn test_valid_mqtt_path() {
         1,
     );
 
-    let result = MqttSensorClient::on_sensor_message(&mocked_container, mocked_message);
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let result = MqttSensorClient::on_sensor_message(&tx, &mocked_container, mocked_message);
 
     // validate
     assert_eq!(result.is_ok(), true);

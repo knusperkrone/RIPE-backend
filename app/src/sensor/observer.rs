@@ -20,13 +20,14 @@ use std::{
 };
 use tokio::{
     stream::StreamExt,
-    sync::mpsc::Receiver,
+    sync::mpsc::{unbounded_channel, Receiver, UnboundedReceiver},
     sync::{Mutex, RwLock},
 };
 pub struct ConcurrentSensorObserver {
     container_ref: Arc<std::sync::RwLock<SensorCache>>,
     agent_factory: Mutex<AgentFactory>,
-    receiver: Arc<Mutex<Receiver<SensorHandleMessage>>>,
+    iac_receiver: Mutex<UnboundedReceiver<SensorHandleMessage>>,
+    data_receveiver: Mutex<UnboundedReceiver<(i32, SensorDataMessage)>>,
     mqtt_client: RwLock<MqttSensorClient>,
     db_conn: Mutex<PgConnection>,
 }
@@ -34,18 +35,19 @@ pub struct ConcurrentSensorObserver {
 unsafe impl Send for ConcurrentSensorObserver {}
 unsafe impl Sync for ConcurrentSensorObserver {}
 
-// Init
 impl ConcurrentSensorObserver {
     pub fn new() -> Arc<Self> {
         let db_conn = establish_db_connection();
-        let (sender, receiver) = tokio::sync::mpsc::channel::<SensorHandleMessage>(128);
-        let agent_factory = AgentFactory::new(sender);
+        let (iac_sender, iac_receiver) = unbounded_channel::<SensorHandleMessage>();
+        let (data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
+        let agent_factory = AgentFactory::new(iac_sender);
         let container_ref = Arc::new(std::sync::RwLock::new(SensorCache::new()));
-        let client = MqttSensorClient::new(container_ref.clone());
+        let client = MqttSensorClient::new(data_sender, container_ref.clone());
         let observer = ConcurrentSensorObserver {
             container_ref: container_ref,
             agent_factory: Mutex::new(agent_factory),
-            receiver: Arc::new(Mutex::new(receiver)),
+            iac_receiver: Mutex::new(iac_receiver),
+            data_receveiver: Mutex::new(data_receiver),
             mqtt_client: RwLock::new(client),
             db_conn: Mutex::new(db_conn),
         };
@@ -53,7 +55,34 @@ impl ConcurrentSensorObserver {
         Arc::new(observer)
     }
 
-    pub async fn dispatch_plugin(self: Arc<ConcurrentSensorObserver>) -> () {
+    /// Starts the paho-thread, registers all callbacks
+    /// After a successful connection, the agent's get inited from the database
+    /// Caller thread, so async looping over all sent SensorDataMessages
+    pub async fn dispatch_mqtt_loop(self: Arc<ConcurrentSensorObserver>) -> () {
+        let reveiver_res = self.data_receveiver.try_lock();
+        if reveiver_res.is_err() {
+            error!(APP_LOGGING, "dispatch_mqtt_loop() already called!");
+            return;
+        }
+        let mut receiver = reveiver_res.unwrap();
+
+        self.mqtt_client.read().await.connect();
+        self.populate_agents().await; // Subscribing to persisted sensors
+
+        loop {
+            info!(APP_LOGGING, "Start capturing sensor data events");
+            while let Some((sensor_id, data)) = receiver.recv().await {
+                let conn = self.db_conn.lock().await;
+                if let Err(e) = models::insert_sensor_data(&conn, sensor_id, data) {
+                    warn!(APP_LOGGING, "Failed persiting sensor data: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Dispatches the plugin loop
+    /// Caller thread is interval checking, if the plugin libary files got updated
+    pub async fn dispatch_plugin_loop(self: Arc<ConcurrentSensorObserver>) -> () {
         let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = watcher(tx, Duration::from_secs(10)).unwrap();
@@ -63,7 +92,8 @@ impl ConcurrentSensorObserver {
 
         info!(APP_LOGGING, "Start watching plugin dir: {}", path);
         loop {
-            if let Ok(_) = rx.try_recv() { // Non blocking
+            if let Ok(_) = rx.try_recv() {
+                // Non blocking
                 info!(APP_LOGGING, "Plugin changes registered - reloading");
                 let mut factory = self.agent_factory.lock().await;
                 unsafe {
@@ -74,17 +104,18 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    pub async fn dispatch_ipc(self: Arc<ConcurrentSensorObserver>) -> () {
-        let receiver = self.receiver.clone();
-        let receiver_res = receiver.try_lock();
+    /// Dispatches the inter-agent-communication (iac) stream
+    /// Caller Thread is now listening to all agent messages
+    pub async fn dispatch_iac_stream(self: Arc<ConcurrentSensorObserver>) -> () {
+        let receiver_res = self.iac_receiver.try_lock();
         if receiver_res.is_err() {
-            error!(APP_LOGGING, "dispatch_ipc() already called!");
+            error!(APP_LOGGING, "dispatch_iac_stream() already called!");
             return;
         }
 
         let mut receiver = receiver_res.unwrap();
         loop {
-            info!(APP_LOGGING, "Start capturing ipc-plugin events");
+            info!(APP_LOGGING, "Start capturing iac events");
             while let Some(item) = receiver.next().await {
                 let container = self.container_ref.read().unwrap();
                 let sensor_opt = container.sensor_unchecked(item.sensor_id);
@@ -99,36 +130,6 @@ impl ConcurrentSensorObserver {
     }
 }
 
-// MQTT
-impl ConcurrentSensorObserver {
-    pub async fn dispatch_mqtt(self: Arc<ConcurrentSensorObserver>) -> () {
-        self.mqtt_client.read().await.connect();
-        self.populate().await; // Subscribing to persisted sensors
-    }
-
-    async fn populate(&self) {
-        let db_conn = self.db_conn.lock().await;
-        let mut persisted_sensors = models::get_sensors(&db_conn);
-        let mut sensor_configs: Vec<Vec<AgentConfigDao>> = persisted_sensors
-            .iter()
-            .map(|dao| models::get_agent_config(&db_conn, &dao)) // retrieve agent config
-            .collect();
-
-        while !persisted_sensors.is_empty() {
-            let sensor_dao = persisted_sensors.pop().unwrap();
-            let agent_configs = sensor_configs.pop().unwrap();
-            let restore_result = self
-                .register_sensor_dao(sensor_dao, Some(&agent_configs))
-                .await;
-            match restore_result {
-                Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
-                Err(msg) => error!(APP_LOGGING, "{}", msg),
-            }
-        }
-    }
-}
-
-// REST
 impl ConcurrentSensorObserver {
     /*
      * Sensor
@@ -292,6 +293,27 @@ impl ConcurrentSensorObserver {
     /*
      * Helpers
      */
+
+    async fn populate_agents(&self) {
+        let db_conn = self.db_conn.lock().await;
+        let mut persisted_sensors = models::get_sensors(&db_conn);
+        let mut sensor_configs: Vec<Vec<AgentConfigDao>> = persisted_sensors
+            .iter()
+            .map(|dao| models::get_agent_config(&db_conn, &dao)) // retrieve agent config
+            .collect();
+
+        while !persisted_sensors.is_empty() {
+            let sensor_dao = persisted_sensors.pop().unwrap();
+            let agent_configs = sensor_configs.pop().unwrap();
+            let restore_result = self
+                .register_sensor_dao(sensor_dao, Some(&agent_configs))
+                .await;
+            match restore_result {
+                Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
+                Err(msg) => error!(APP_LOGGING, "{}", msg),
+            }
+        }
+    }
 
     async fn register_sensor_dao(
         &self,

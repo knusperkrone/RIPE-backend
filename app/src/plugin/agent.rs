@@ -20,7 +20,7 @@ use std::{
     },
 };
 use tokio::stream::StreamExt;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 
 static TERMINATED: AtomicBool = AtomicBool::new(false);
 static TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -60,9 +60,12 @@ impl Drop for Agent {
     }
 }
 
+/// A agent, is the lower level wrapper around a AgentTrait implementation
+/// It holds all necessary meta-information, for sending messages to the sensor
+/// All messages, are handled via the iac-stream
 impl Agent {
     pub fn new(
-        agent_sender: Sender<SensorHandleMessage>,
+        agent_sender: UnboundedSender<SensorHandleMessage>,
         plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
@@ -74,7 +77,7 @@ impl Agent {
 
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
         let future = Abortable::new(
-            Agent::dispatch_plugin_ipc(
+            Agent::dispatch_iac(
                 sensor_id,
                 domain.clone(),
                 state.clone(),
@@ -143,11 +146,11 @@ impl Agent {
         &self.domain
     }
 
-    async fn dispatch_plugin_ipc(
+    async fn dispatch_iac(
         sensor_id: i32,
         domain: String,
         state_lock: Arc<RwLock<AgentState>>,
-        agent_sender: Sender<SensorHandleMessage>,
+        agent_sender: UnboundedSender<SensorHandleMessage>,
         mut plugin_receiver: Receiver<AgentMessage>,
     ) {
         while let Some(payload) = plugin_receiver.next().await {
@@ -190,9 +193,8 @@ impl Agent {
                 };
 
                 let mut tries = 3;
-                let mut sender = agent_sender.clone();
                 while tries != 0 {
-                    if let Err(e) = sender.send(msg).await {
+                    if let Err(e) = agent_sender.send(msg) {
                         error!(APP_LOGGING, "[{}/3] Error sending payload: {}", tries, e);
                         tries -= 1;
                         msg = e.0;
@@ -209,12 +211,12 @@ impl Agent {
 
 #[derive(Debug)]
 pub struct AgentFactory {
-    agent_sender: Sender<SensorHandleMessage>,
+    agent_sender: UnboundedSender<SensorHandleMessage>,
     libraries: HashMap<String, Library>,
 }
 
 impl AgentFactory {
-    pub fn new(sender: Sender<SensorHandleMessage>) -> Self {
+    pub fn new(sender: UnboundedSender<SensorHandleMessage>) -> Self {
         let mut factory = AgentFactory {
             agent_sender: sender,
             libraries: HashMap::new(),
@@ -346,7 +348,7 @@ impl AgentFactory {
         domain: &String,
         state_json: Option<&String>,
     ) -> Result<Agent, AgentError> {
-        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(32);
+        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(64);
         if cfg!(test) && agent_name == "MockAgent" {
             info!(APP_LOGGING, "Creating mock agent!");
             return Ok(Agent::new(

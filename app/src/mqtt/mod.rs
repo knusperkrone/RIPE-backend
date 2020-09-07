@@ -6,6 +6,7 @@ use iftem_core::SensorDataMessage;
 use paho_mqtt::{AsyncClient, AsyncClientBuilder, ConnectOptions, Message};
 use std::env;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(test)]
 mod test;
@@ -20,7 +21,10 @@ impl MqttSensorClient {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    pub fn new(container_ref: Arc<RwLock<SensorCache>>) -> Self {
+    pub fn new(
+        data_sender: UnboundedSender<(i32, SensorDataMessage)>,
+        container_ref: Arc<RwLock<SensorCache>>,
+    ) -> Self {
         dotenv().ok();
         let mqtt_name: String = env::var("MQTT_NAME").expect("MQTT_NAME must be set");
         let mqtt_url: String = env::var("MQTT_URL").expect("MQTT_URL must be set");
@@ -43,7 +47,11 @@ impl MqttSensorClient {
             mqtt_client.set_message_callback(move |_cli, msg| {
                 if let Some(msg) = msg {
                     // TODO: Message Channel!
-                    let _ = MqttSensorClient::on_sensor_message(&container_message_ref, msg);
+                    let _ = MqttSensorClient::on_sensor_message(
+                        &data_sender,
+                        &container_message_ref,
+                        msg,
+                    );
                 }
             });
             mqtt_client.set_connection_lost_callback(move |_cli| {
@@ -135,6 +143,7 @@ impl MqttSensorClient {
     ///
     /// Returns nothing on submitted command, or the submitted sensor data
     fn on_sensor_message(
+        sender: &UnboundedSender<(i32, SensorDataMessage)>,
         container_lock: &RwLock<SensorCache>,
         msg: Message,
     ) -> Result<(), MQTTError> {
@@ -179,7 +188,9 @@ impl MqttSensorClient {
                     .sensor(sensor_id, key)
                     .ok_or(MQTTError::NoSensor())?;
                 sensor.on_data(&sensor_dto);
-                // TODO: send Ok(Some((sensor_id, sensor_dto)))
+                if let Err(e) = sender.send((sensor_id, sensor_dto)) {
+                    warn!(APP_LOGGING, "Failed sending SensorDataMessage: {}", e);
+                }
                 Ok(())
             }
             MqttSensorClient::LOG_TOPIC => {

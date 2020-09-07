@@ -30,7 +30,7 @@ pub enum MQTTError {
     PathError(std::string::String),
     PayloadError(std::string::String),
     ParseError(serde_json::error::Error),
-    SendError(mqtt_async_client::Error),
+    SendError(paho_mqtt::MqttError),
 }
 
 impl fmt::Display for MQTTError {
@@ -40,15 +40,15 @@ impl fmt::Display for MQTTError {
             MQTTError::PathError(msg) => write!(f, "Patherror: {}", msg),
             MQTTError::PayloadError(msg) => write!(f, "Invalid payload: {}", msg),
             MQTTError::ParseError(e) => e.fmt(f),
-            MQTTError::SendError(e) => e.fmt(f),
+            MQTTError::SendError(e) => write!(f, "SendError: {}", e),
         }
     }
 }
 
 impl error::Error for MQTTError {}
 
-impl From<mqtt_async_client::Error> for MQTTError {
-    fn from(err: mqtt_async_client::Error) -> Self {
+impl From<paho_mqtt::MqttError> for MQTTError {
+    fn from(err: paho_mqtt::MqttError) -> Self {
         MQTTError::SendError(err)
     }
 }

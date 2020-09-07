@@ -14,6 +14,7 @@ mod sensor;
 
 #[actix_rt::main]
 async fn main() {
+    env_logger::init();
     let sensor_arc = sensor::ConcurrentSensorObserver::new();
     let dispatch_mqtt = sensor::ConcurrentSensorObserver::dispatch_mqtt(sensor_arc.clone());
     let dispatch_ipc = sensor::ConcurrentSensorObserver::dispatch_ipc(sensor_arc.clone());

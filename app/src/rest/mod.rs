@@ -37,7 +37,6 @@ pub async fn dispatch_server(observer: Arc<ConcurrentSensorObserver>) -> () {
     // Set up logging
     dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=info");
-    env_logger::init();
     let bind_addr = env::var("BIND_ADDR").expect("BIND_ADDR must be set");
     let print_addr = bind_addr.clone();
 

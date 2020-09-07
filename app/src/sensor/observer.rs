@@ -13,14 +13,10 @@ use crate::rest::{AgentRegisterDto, AgentStatusDto, SensorRegisterResponseDto, S
 use diesel::pg::PgConnection;
 use iftem_core::SensorDataMessage;
 use notify::{watcher, Watcher};
-use std::{
-    collections::{hash_map::Values, HashMap},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     stream::StreamExt,
-    sync::mpsc::{unbounded_channel, Receiver, UnboundedReceiver},
+    sync::mpsc::{unbounded_channel, UnboundedReceiver},
     sync::{Mutex, RwLock},
 };
 pub struct ConcurrentSensorObserver {
@@ -358,9 +354,11 @@ impl SensorCache {
         }
     }
 
+    /*
     pub fn sensors(&self) -> Values<'_, i32, std::sync::Mutex<SensorHandle>> {
         self.sensors.values()
     }
+    */
 
     pub fn sensor_unchecked(
         &self,

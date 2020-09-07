@@ -1,6 +1,7 @@
 #1 BUILD
 FROM rust:1.45 as build
 RUN USER=root cargo new --bin iftem
+RUN /bin/sh -c 'apt-get update && apt-get install -y cmake'
 
 RUN USER=root cargo new --bin iftem/app
 RUN USER=root cargo new --bin iftem/core

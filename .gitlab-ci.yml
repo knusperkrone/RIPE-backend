@@ -27,22 +27,17 @@ include:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
 
-build-branch-application:
-  # Erbt von .build-application, definiert in IF/pipeline-templates:job-templates/build-docker.yml
-  extends: .build-branch-application
-  variables:
-    DOCKERFILE_PATH: "Dockerfile"
 build-application:
   # Erbt von .build-application, definiert in IF/pipeline-templates:job-templates/build-docker.yml
   extends: .build-application
   variables:
     DOCKERFILE_PATH: "Dockerfile  --cache=true"
+  except:
+    - branches
 
 build-treshold-plugin:
   <<: *prepare-docker-build
   script:
     - /kaniko/executor --context $CI_PROJECT_DIR/$BASE_DIR --dockerfile $CI_PROJECT_DIR/$BASE_DIR/Dockerfile.treshold_plugin --destination $CI_REGISTRY_IMAGE$IMAGE_SUFFIX:$CI_COMMIT_REF_SLUG --destination $CI_REGISTRY_IMAGE$IMAGE_SUFFIX/treshold_plugin/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA
-  only:
-    - /^staging-.*$/
   except:
     - branches

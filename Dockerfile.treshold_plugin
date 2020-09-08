@@ -1,4 +1,4 @@
-FROM rust:1.45
+FROM rust:1.45 as build
 
 RUN mkdir /iftem && mkdir /out
 WORKDIR /iftem
@@ -12,5 +12,6 @@ COPY ./plugins/treshold_agent ./plugins/treshold_agent
 WORKDIR /iftem/plugins/treshold_agent
 RUN cargo build --release
 
-RUN ls /iftem/plugins/treshold_agent/target/release
-ENTRYPOINT /bin/sh -c "/iftem/plugins/treshold_agent/target/release/treshold_agent.so /out"
+FROM rust:1.45
+COPY --from=build /iftem/plugins/treshold_agent/target/release/treshold_agent.so .
+ENTRYPOINT /bin/sh -c "cp /treshold_agent.so /out"

@@ -1,0 +1,16 @@
+FROM rust:1.45
+
+RUN mkdir /iftem && mkdir /out
+WORKDIR /iftem
+
+COPY ./core/ ./core
+
+ARG theshold_agent
+
+COPY ./plugins/treshold_agent ./plugins/treshold_agent
+
+WORKDIR /iftem/plugins/treshold_agent
+RUN cargo build --release
+
+RUN ls /iftem/plugins/treshold_agent/target/release
+ENTRYPOINT /bin/sh -c "/iftem/plugins/treshold_agent/target/release/treshold_agent.so /out"

@@ -13,6 +13,6 @@ WORKDIR /iftem/plugins/treshold_agent
 RUN cargo build --release
 RUN ls /iftem/plugins/treshold_agent/target/release
 
-FROM rust:1.45
+FROM alpine:latest
 COPY --from=build /iftem/plugins/treshold_agent/target/release/*treshold_agent.so .
 ENTRYPOINT /bin/sh -c "cp /*treshold_agent.so /out"

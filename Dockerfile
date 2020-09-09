@@ -1,7 +1,8 @@
 #1 BUILD
-FROM rust:1.45 as build
-RUN USER=root cargo new --bin iftem
-RUN /bin/sh -c 'apt-get update && apt-get install -y cmake'
+FROM alpine:latest as build
+RUN apk update && \
+    apk add git build-base openssl-dev \
+    rust cargo cmake postgresql-dev
 
 RUN USER=root cargo new --bin iftem/app
 RUN USER=root cargo new --bin iftem/core
@@ -15,7 +16,7 @@ COPY ./core/Cargo.toml ./core/Cargo.toml
 
 # this build step will cache your dependencies
 WORKDIR /iftem/app
-RUN cargo build --release
+RUN cargo build --target x86_64-alpine-linux-musl --release
 
 WORKDIR /iftem
 RUN rm ./app/src/*.rs
@@ -27,12 +28,20 @@ COPY ./core/src ./core/src
 COPY ./core/build.rs ./core/build.rs
 
 # build for release
-RUN rm ./app/target/release/deps/iftem*
-
+# RUN rm ./app/target/release/deps/iftem*
 WORKDIR /iftem/app
-RUN cargo build --release
+RUN cargo build --target x86_64-alpine-linux-musl --release 
 
 #2 RUN
 FROM alpine:latest
-COPY --from=build /iftem/app/target/release/iftem .
-CMD ["/iftem"]
+RUN apk update && \
+    apk add git build-base postgresql-dev 
+
+RUN addgroup -g 1000 iftem
+RUN adduser -D -s /bin/sh -u 1000 -G iftem iftem
+USER iftem
+
+WORKDIR /home/iftem/bin/
+COPY --from=build /iftem/app/target/x86_64-alpine-linux-musl/release/iftem .
+RUN chown iftem:iftem iftem
+CMD ["./iftem"]

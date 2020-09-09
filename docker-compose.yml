@@ -22,13 +22,13 @@ services:
     entrypoint: ["sh", "-c", "sleep 2 && diesel migration run"]
 
   threshold_plugin:
-    image: docker-registry.if-lab.de/arme/iftem_backend/treshold_plugin/master
+    image: docker-registry.if-lab.de/arme/iftem_backend/treshold_plugin:latest
     volumes:
       - ./plugins:/out
 
   backend:
     restart: "always"
-    image: docker-registry.if-lab.de/arme/iftem_backend
+    image: docker-registry.if-lab.de/arme/iftem_backend:latest
     environment:
       BIND_ADDR: 0.0.0.0:8000
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem

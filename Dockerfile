@@ -33,6 +33,6 @@ WORKDIR /iftem/app
 RUN cargo build --release
 
 #2 RUN
-FROM rust:1.45
+FROM alpine:latest
 COPY --from=build /iftem/app/target/release/iftem .
 CMD ["./iftem"]

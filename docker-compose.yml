@@ -19,7 +19,12 @@ services:
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem
     depends_on:
       - db
-    entrypoint: [ "sh", "-c", "sleep 2 && diesel migration run" ]
+    entrypoint: ["sh", "-c", "sleep 2 && diesel migration run"]
+
+  threshold_plugin:
+    image: docker-registry.if-lab.de/arme/iftem_backend/treshold_plugin/master
+    volumes:
+      - ./plugins:/out
 
   backend:
     restart: "always"
@@ -37,3 +42,4 @@ services:
       - 8000:8000
     depends_on:
       - db_schema
+      - threshold_plugin

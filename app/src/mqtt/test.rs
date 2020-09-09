@@ -43,6 +43,7 @@ async fn test_valid_mqtt_path() {
     let mut container = SensorCache::new();
     let mock_sensor = SensorHandle {
         dao: SensorDao::new(sensor_id, key_b64.to_owned(), "mock".to_owned()),
+        has_pending_update: false,
         agents: vec![Agent::new(
             sender,
             plugin_sender,
@@ -51,6 +52,7 @@ async fn test_valid_mqtt_path() {
             "MockDomain".to_owned(),
             "AgentName".to_owned(),
             Box::new(MockAgent::new()),
+            Arc::new(libloading::Library::new("./libtest_agent.so").unwrap()),
         )],
     };
     container.insert_sensor(mock_sensor);

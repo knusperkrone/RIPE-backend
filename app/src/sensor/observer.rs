@@ -13,7 +13,7 @@ use crate::rest::{AgentRegisterDto, AgentStatusDto, SensorRegisterResponseDto, S
 use diesel::pg::PgConnection;
 use iftem_core::SensorDataMessage;
 use notify::{watcher, Watcher};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::hash_map::Values, collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     stream::StreamExt,
     sync::mpsc::{unbounded_channel, UnboundedReceiver},
@@ -92,11 +92,25 @@ impl ConcurrentSensorObserver {
                 // Non blocking
                 info!(APP_LOGGING, "Plugin changes registered - reloading");
                 let mut factory = self.agent_factory.lock().await;
+                let loaded_libs;
                 unsafe {
-                    factory.load_plugins();
+                    loaded_libs = factory.load_plugins();
+                }
+                if !loaded_libs.is_empty() {
+                    let factory = self.agent_factory.lock().await;
+                    let container = self.container_ref.read().unwrap();
+                    for sensor in container.sensors() {
+                        sensor.lock().unwrap().reload_agents(&loaded_libs, &factory);
+                    }
+                }
+            } else {
+                let factory = self.agent_factory.lock().await;
+                let container = self.container_ref.read().unwrap();
+                for sensor in container.sensors() {
+                    sensor.lock().unwrap().reload_pending_agents(&factory);
                 }
             }
-            tokio::time::delay_for(Duration::from_secs(5)).await;
+            tokio::time::delay_for(Duration::from_secs(10)).await;
         }
     }
 
@@ -354,11 +368,9 @@ impl SensorCache {
         }
     }
 
-    /*
     pub fn sensors(&self) -> Values<'_, i32, std::sync::Mutex<SensorHandle>> {
         self.sensors.values()
     }
-    */
 
     pub fn sensor_unchecked(
         &self,

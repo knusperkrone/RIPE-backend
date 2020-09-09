@@ -15,6 +15,7 @@ pub struct SensorHandleMessage {
 pub struct SensorHandle {
     pub dao: SensorDao,
     pub agents: Vec<Agent>,
+    pub has_pending_update: bool,
 }
 
 impl SensorHandle {
@@ -41,6 +42,7 @@ impl SensorHandle {
         Ok(SensorHandle {
             dao: sensor,
             agents,
+            has_pending_update: false,
         })
     }
 
@@ -53,10 +55,39 @@ impl SensorHandle {
     }
 
     pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        self.agents
-            .iter_mut()
-            .for_each(|a| a.reload_agent(factory).unwrap());
+        for agent in self.agents.iter_mut() {
+            if agent.reload_agent(factory).is_err() {
+                agent.set_needs_update(true);
+                self.has_pending_update = true;
+            }
+        }
         Ok(())
+    }
+
+    pub fn reload_agents(&mut self, loaded_libs: &Vec<String>, factory: &AgentFactory) {
+        for agent in self.agents.iter_mut() {
+            if loaded_libs.contains(agent.agent_name()) {
+                if agent.reload_agent(factory).is_err() {
+                    agent.set_needs_update(true);
+                    self.has_pending_update = true;
+                }
+            }
+        }
+    }
+
+    pub fn reload_pending_agents(&mut self, factory: &AgentFactory) {
+        if !self.has_pending_update {
+            return;
+        }
+        
+        self.has_pending_update = false;
+        for agent in self.agents.iter_mut() {
+            if agent.needs_update() {
+                if agent.reload_agent(factory).is_err() {
+                    self.has_pending_update = true;
+                }
+            }
+        }
     }
 
     pub fn add_agent(&mut self, agent: Agent) {

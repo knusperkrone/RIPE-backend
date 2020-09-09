@@ -46,6 +46,7 @@ pub struct Agent {
     abort_handle: AbortHandle,
     agent_proxy: Box<dyn AgentTrait>,
     needs_update: bool,
+    library_ref: Arc<Library>, // Reference counter, to not free lib .text section
 }
 
 impl std::fmt::Debug for Agent {
@@ -72,6 +73,7 @@ impl Agent {
         domain: String,
         agent_name: String,
         agent_proxy: Box<dyn AgentTrait>,
+        library_ref: Arc<Library>,
     ) -> Self {
         let state = Arc::new(RwLock::new(AgentState::Default));
 
@@ -95,21 +97,27 @@ impl Agent {
             agent_name,
             abort_handle,
             agent_proxy,
+            library_ref,
             needs_update: false,
         }
     }
 
     pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        info!(APP_LOGGING, "Reloading agent: {}", self.sensor_id);
         if self.agent_proxy.state() == &AgentState::Active {
+            info!(
+                APP_LOGGING,
+                "Failed reloading active agent: {}", self.sensor_id
+            );
             return Err(PluginError::AgentStateError(AgentState::Active));
         }
 
+        info!(APP_LOGGING, "Reloading agent: {}", self.sensor_id);
         let state_json = self.agent_proxy.deserialize().state_json;
         unsafe {
-            let proxy = factory
+            let (libary, proxy) = factory
                 .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
                 .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone()))?;
+            self.library_ref = libary;
             self.agent_proxy = proxy;
         }
         self.needs_update = false;
@@ -144,6 +152,14 @@ impl Agent {
 
     pub fn domain(&self) -> &String {
         &self.domain
+    }
+
+    pub fn set_needs_update(&mut self, needs_update: bool) {
+        self.needs_update = needs_update;
+    }
+
+    pub fn needs_update(&self) -> bool {
+        self.needs_update
     }
 
     async fn dispatch_iac(
@@ -212,7 +228,7 @@ impl Agent {
 #[derive(Debug)]
 pub struct AgentFactory {
     agent_sender: UnboundedSender<SensorHandleMessage>,
-    libraries: HashMap<String, Library>,
+    libraries: HashMap<String, Arc<Library>>,
 }
 
 impl AgentFactory {
@@ -261,37 +277,45 @@ impl AgentFactory {
         }
     }
 
-    pub unsafe fn load_plugins(&mut self) {
+    pub unsafe fn load_plugins(&mut self) -> Vec<String> {
         dotenv().ok();
         let path = env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
         let plugins_dir = std::path::Path::new(&path);
         let entries_res = std::fs::read_dir(plugins_dir);
         if entries_res.is_err() {
             error!(APP_LOGGING, "Invalid plugin dir: {}", path);
-            return;
+            return vec![];
         }
 
-        for entry in entries_res.unwrap() {
-            let path: std::path::PathBuf = entry.unwrap().path();
-            if path.is_file() && path.extension().is_some() {
-                // Extact file extension and load .so/.ddl
-                let ext = path.extension().unwrap();
-                if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
-                    match self.load_library(path.as_os_str()) {
-                        Ok(_) => info!(APP_LOGGING, "Loaded plugin {:?}", path),
-                        Err(err) => {
-                            error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
+        entries_res
+            .unwrap()
+            .into_iter()
+            .filter_map(|entry| {
+                let path: std::path::PathBuf = entry.unwrap().path();
+                if path.is_file() && path.extension().is_some() {
+                    // Extact file extension and load .so/.ddl
+                    let ext = path.extension().unwrap();
+                    if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
+                        match self.load_library(path.as_os_str()) {
+                            Ok(lib_name) => {
+                                info!(APP_LOGGING, "Loaded plugin {:?}", path);
+                                return Some(lib_name.to_owned());
+                            }
+                            Err(err) => {
+                                error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
+                            }
                         }
                     }
                 }
-            }
-        }
+                None
+            })
+            .collect()
     }
 
     unsafe fn load_library<P: AsRef<OsStr>>(
         &mut self,
         library_path: P,
-    ) -> Result<&str, PluginError> {
+    ) -> Result<String, PluginError> {
         // load the library into memory
         let library = Library::new(library_path)?;
 
@@ -317,8 +341,9 @@ impl AgentFactory {
                 return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
             }
         }
-        self.libraries.insert(decl.agent_name.to_owned(), library);
-        return Ok(decl.agent_name);
+        self.libraries
+            .insert(decl.agent_name.to_owned(), Arc::new(library));
+        return Ok(decl.agent_name.to_owned());
     }
 
     unsafe fn build_proxy_agent(
@@ -326,7 +351,7 @@ impl AgentFactory {
         agent_name: &String,
         state_json: Option<&String>,
         plugin_sender: &Sender<AgentMessage>,
-    ) -> Option<Box<dyn AgentTrait>> {
+    ) -> Option<(Arc<Library>, Box<dyn AgentTrait>)> {
         if let Some(library) = self.libraries.get(agent_name) {
             let decl = library
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
@@ -335,7 +360,7 @@ impl AgentFactory {
 
             let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
             let proxy = (decl.agent_builder)(state_json, logger.clone(), plugin_sender.clone());
-            Some(proxy)
+            Some((library.clone(), proxy))
         } else {
             None
         }
@@ -359,10 +384,13 @@ impl AgentFactory {
                 domain.clone(),
                 agent_name.clone(),
                 Box::new(crate::plugin::test::MockAgent::new()),
+                Arc::new(Library::new("./libtest_agent.so").unwrap()),
             ));
         }
 
-        if let Some(plugin_agent) = self.build_proxy_agent(agent_name, state_json, &plugin_sender) {
+        if let Some((plugin_library, plugin_agent)) =
+            self.build_proxy_agent(agent_name, state_json, &plugin_sender)
+        {
             Ok(Agent::new(
                 self.agent_sender.clone(),
                 plugin_sender,
@@ -371,6 +399,7 @@ impl AgentFactory {
                 domain.clone(),
                 agent_name.clone(),
                 plugin_agent,
+                plugin_library,
             ))
         } else {
             Err(AgentError::InvalidIdentifier(agent_name.clone()))

@@ -76,18 +76,27 @@ impl MqttSensorClient {
     pub fn subscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         let cli_mtx = &self.mqtt_client;
         let cli = cli_mtx.lock().unwrap();
+        if cfg!(test) && !cli.is_connected() {
+            return Ok(());
+        }
         MqttSensorClient::do_subscribe_sensor(&cli, sensor)
     }
 
     pub fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         let cli_mtx = &self.mqtt_client;
         let cli = cli_mtx.lock().unwrap();
+        if cfg!(test) && !cli.is_connected() {
+            return Ok(());
+        }
         MqttSensorClient::do_unsubscribe_sensor(&cli, sensor)
     }
 
     pub fn send_cmd(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         let cli_mtx = &self.mqtt_client;
         let cli = cli_mtx.lock().unwrap();
+        if cfg!(test) && !cli.is_connected() {
+            return Ok(());
+        }
         MqttSensorClient::do_send_cmd(&cli, sensor)
     }
 

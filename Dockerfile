@@ -35,4 +35,4 @@ RUN cargo build --release
 #2 RUN
 FROM alpine:latest
 COPY --from=build /iftem/app/target/release/iftem .
-CMD ["./iftem"]
+CMD ["/iftem"]

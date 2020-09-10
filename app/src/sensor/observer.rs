@@ -82,9 +82,10 @@ impl ConcurrentSensorObserver {
         let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = watcher(tx, Duration::from_secs(10)).unwrap();
-        watcher
-            .watch(&path, notify::RecursiveMode::NonRecursive)
-            .unwrap();
+        if let Err(e) = watcher.watch(&path, notify::RecursiveMode::NonRecursive) {
+            crit!(APP_LOGGING, "Cannot watch plugin dir: {}", e);
+            return;
+        }
 
         info!(APP_LOGGING, "Start watching plugin dir: {}", path);
         loop {

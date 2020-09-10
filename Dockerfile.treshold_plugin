@@ -1,18 +1,20 @@
-FROM rust:1.45 as build
+FROM alpine:latest as build
+RUN apk update && \
+    apk add git build-base openssl-dev \
+    rust cargo
 
 RUN mkdir /iftem && mkdir /out
 WORKDIR /iftem
 
 COPY ./core/ ./core
 
-ARG theshold_agent
+ARG PLUGIN
+COPY ./plugins/${PLUGIN} ./plugins/${PLUGIN}
 
-COPY ./plugins/treshold_agent ./plugins/treshold_agent
-
-WORKDIR /iftem/plugins/treshold_agent
-RUN cargo build --release
-RUN ls /iftem/plugins/treshold_agent/target/release
+WORKDIR /iftem/plugins/${PLUGIN}
+RUN cargo build --target x86_64-alpine-linux-musl --release
+RUN ls /iftem/plugins/${PLUGIN}/target/release
 
 FROM alpine:latest
-COPY --from=build /iftem/plugins/treshold_agent/target/release/*treshold_agent.so .
-ENTRYPOINT /bin/sh -c "cp /*treshold_agent.so /out"
+COPY --from=build /iftem/plugins/${PLUGIN}/target/release/*${PLUGIN}.so .
+ENTRYPOINT /bin/sh -c "cp /*${PLUGIN}.so /out"

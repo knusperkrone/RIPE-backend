@@ -39,9 +39,10 @@ RUN apk update && \
 
 RUN addgroup -g 1000 iftem
 RUN adduser -D -s /bin/sh -u 1000 -G iftem iftem
-USER iftem
 
 WORKDIR /home/iftem/bin/
 COPY --from=build /iftem/app/target/x86_64-alpine-linux-musl/release/iftem .
 RUN chown iftem:iftem iftem
+
+USER iftem
 CMD ["./iftem"]

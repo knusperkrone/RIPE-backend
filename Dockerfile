@@ -35,7 +35,7 @@ RUN cargo build --target x86_64-alpine-linux-musl --release
 #2 RUN
 FROM alpine:latest
 RUN apk update && \
-    apk add git build-base postgresql-dev 
+    apk add postgresql-dev 
 
 RUN addgroup -g 1000 iftem
 RUN adduser -D -s /bin/sh -u 1000 -G iftem iftem

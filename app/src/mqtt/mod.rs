@@ -33,6 +33,7 @@ impl MqttSensorClient {
             .parse()
             .unwrap();
 
+        info!(APP_LOGGING, "MQTT config: tcp://{}:{}", mqtt_url, mqtt_port);
         let raw_mqtt_client = AsyncClientBuilder::new()
             .server_uri(&format!("tcp://{}:{}", mqtt_url, mqtt_port))
             .client_id(&mqtt_name)
@@ -103,7 +104,7 @@ impl MqttSensorClient {
     fn do_connect(mqtt_client: &MutexGuard<'_, AsyncClient>) {
         let tok = mqtt_client.connect(ConnectOptions::new());
         if let Err(e) = tok.wait_for(std::time::Duration::from_secs(5)) {
-            panic!("Coulnd't connect to MQTT: {}", e);
+            crit!(APP_LOGGING, "Coulnd't connect to MQTT: {}", e);
         }
     }
 

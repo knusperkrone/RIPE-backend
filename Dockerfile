@@ -2,8 +2,8 @@
 FROM alpine:latest as build
 RUN apk update && \
     apk add git build-base openssl-dev \
-    rust cargo cmake postgresql-dev
-
+    rust cargo cmake postgresql-dev libc6-compat
+ 
 RUN USER=root cargo new --bin iftem/app
 RUN USER=root cargo new --bin iftem/core
 WORKDIR /iftem

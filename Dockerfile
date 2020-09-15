@@ -1,7 +1,7 @@
 #1 BUILD
 FROM rust:1.46 as build
 RUN apt-get update && \
-        apt-get install cmake libpq-dev
+        apt-get install -y cmake libpq-dev
 
 RUN USER=root cargo new --bin iftem/app
 RUN USER=root cargo new --bin iftem/core

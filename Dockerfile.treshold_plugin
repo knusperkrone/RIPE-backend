@@ -1,13 +1,9 @@
-FROM alpine:latest as build
-RUN apk update && \
-    apk add git build-base openssl-dev \
-    rust cargo
+FROM rust:1.46 as build
 
 RUN mkdir /iftem && mkdir /out
 WORKDIR /iftem
 
 COPY ./core/ ./core
-
 COPY ./plugins/treshold_agent ./plugins/treshold_agent
 
 WORKDIR /iftem/plugins/treshold_agent

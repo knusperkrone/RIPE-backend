@@ -34,12 +34,9 @@ RUN cargo build --release
 #2 RUN
 FROM rust:1.46
 
-RUN addgroup -g 1000 iftem
-RUN adduser -D -s /bin/sh -u 1000 -G iftem iftem
-
-WORKDIR /home/iftem/bin/
+WORKDIR /app
 COPY --from=build /iftem/app/target/release/iftem .
 RUN chown iftem:iftem iftem
 
 USER iftem
-CMD ["./iftem"]
+CMD ["app/iftem"]

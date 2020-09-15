@@ -39,4 +39,4 @@ COPY --from=build /iftem/app/target/release/iftem .
 RUN chown iftem:iftem iftem
 
 USER iftem
-CMD ["app/iftem"]
+CMD ["/app/iftem"]

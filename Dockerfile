@@ -35,7 +35,7 @@ RUN cargo build --release
 FROM rust:1.46
 
 WORKDIR /app
-COPY --from=build /iftem/app/target/release/iftem 
+COPY --from=build /iftem/app/target/release/iftem .
 
 USER iftem
 CMD ["/app/iftem"]

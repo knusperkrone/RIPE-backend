@@ -28,4 +28,4 @@ slog = "2.5"
 sloggers = "0.3"
 tokio = { version = "0.2.22", features = ["blocking", "macros"] }
 tokio-test = "0.2"
-paho-mqtt = "0.7"
+paho-mqtt = { git = "https://github.com/eclipse/paho.mqtt.rust.git", branch = "develop" }

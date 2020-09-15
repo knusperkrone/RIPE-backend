@@ -62,7 +62,7 @@ impl ConcurrentSensorObserver {
         }
         let mut receiver = reveiver_res.unwrap();
 
-        self.mqtt_client.read().await.connect();
+        self.mqtt_client.read().await.connect().await;
         self.populate_agents().await; // Subscribing to persisted sensors
 
         loop {
@@ -132,7 +132,7 @@ impl ConcurrentSensorObserver {
                 let sensor_opt = container.sensor_unchecked(item.sensor_id);
                 if sensor_opt.is_some() {
                     let mut mqtt_client = self.mqtt_client.write().await;
-                    if let Err(e) = mqtt_client.send_cmd(&sensor_opt.unwrap()) {
+                    if let Err(e) = mqtt_client.send_cmd(&sensor_opt.unwrap()).await {
                         error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
                     }
                 }
@@ -182,7 +182,11 @@ impl ConcurrentSensorObserver {
             .unwrap()
             .remove_sensor(sensor_id)?;
         let sensor = sensor_mtx.lock().unwrap();
-        self.mqtt_client.write().await.unsubscribe_sensor(&sensor)?;
+        self.mqtt_client
+            .write()
+            .await
+            .unsubscribe_sensor(&sensor)
+            .await?;
 
         info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
         Ok(())
@@ -342,8 +346,8 @@ impl ConcurrentSensorObserver {
 
     async fn register_sensor_mqtt(&self, sensor: &SensorHandle) -> Result<(), ObserverError> {
         let mut mqtt = self.mqtt_client.write().await;
-        mqtt.subscribe_sensor(sensor)?;
-        if let Err(e) = mqtt.send_cmd(sensor) {
+        mqtt.subscribe_sensor(sensor).await?;
+        if let Err(e) = mqtt.send_cmd(sensor).await {
             error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
         }
         Ok(())
@@ -354,7 +358,10 @@ impl ConcurrentSensorObserver {
         for _ in 0..6 {
             buffer.push(rand::random::<u8>());
         }
-        base64::encode(buffer).replace('/', &"-")
+        base64::encode(buffer)
+            .replace('/', &"-")
+            .replace('+', &"_")
+            .replace('#', &"_")
     }
 }
 

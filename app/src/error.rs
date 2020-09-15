@@ -30,7 +30,7 @@ pub enum MQTTError {
     PathError(std::string::String),
     PayloadError(std::string::String),
     ParseError(serde_json::error::Error),
-    SendError(paho_mqtt::MqttError),
+    SendError(paho_mqtt::Error),
 }
 
 impl fmt::Display for MQTTError {
@@ -47,8 +47,8 @@ impl fmt::Display for MQTTError {
 
 impl error::Error for MQTTError {}
 
-impl From<paho_mqtt::MqttError> for MQTTError {
-    fn from(err: paho_mqtt::MqttError) -> Self {
+impl From<paho_mqtt::Error> for MQTTError {
+    fn from(err: paho_mqtt::Error) -> Self {
         MQTTError::SendError(err)
     }
 }

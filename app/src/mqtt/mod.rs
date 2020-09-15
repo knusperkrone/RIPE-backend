@@ -3,13 +3,16 @@ use crate::logging::APP_LOGGING;
 use crate::sensor::{handle::SensorHandle, observer::SensorCache};
 use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
-use paho_mqtt::{AsyncClient, AsyncClientBuilder, ConnectOptions, Message};
+use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
 use std::env;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(test)]
 mod test;
+
+const MQTTV5: u32 = 5;
+const QOS: i32 = 1;
 
 pub struct MqttSensorClient {
     mqtt_client: Arc<Mutex<AsyncClient>>,
@@ -33,11 +36,15 @@ impl MqttSensorClient {
             .parse()
             .unwrap();
 
-        info!(APP_LOGGING, "MQTT config: tcp://{}:{}", mqtt_url, mqtt_port);
-        let raw_mqtt_client = AsyncClientBuilder::new()
-            .server_uri(&format!("tcp://{}:{}", mqtt_url, mqtt_port))
-            .client_id(&mqtt_name)
+        let mqtt_uri = format!("tcp://{}:{}", mqtt_url, mqtt_port);
+        info!(APP_LOGGING, "MQTT config: {}", mqtt_uri);
+        // Create a client to the specified host, no persistence
+        let create_opts = CreateOptionsBuilder::new()
+            .mqtt_version(MQTTV5)
+            .client_id(mqtt_name)
+            .server_uri(mqtt_uri)
             .finalize();
+        let raw_mqtt_client = AsyncClient::new(create_opts).unwrap();
         let shared_mqtt_client_mtx = Arc::new(Mutex::new(raw_mqtt_client));
 
         {
@@ -48,6 +55,7 @@ impl MqttSensorClient {
             mqtt_client.set_message_callback(move |_cli, msg| {
                 if let Some(msg) = msg {
                     // TODO: Message Channel!
+                    debug!(APP_LOGGING, "Received msg for topic: {}", msg.topic());
                     let _ = MqttSensorClient::on_sensor_message(
                         &data_sender,
                         &container_message_ref,
@@ -59,7 +67,11 @@ impl MqttSensorClient {
                 error!(APP_LOGGING, "Lost connected to MQTT");
                 let cli_mtx = diconnect_mqtt_client_mtx.clone();
                 let cli = cli_mtx.lock().unwrap();
-                MqttSensorClient::do_connect(&cli);
+                if let Err(e) = cli.reconnect().wait_for(std::time::Duration::from_secs(5)) {
+                    panic!("Coulnd't reconnect to mqtt: {}", e);
+                } else {
+                    info!(APP_LOGGING, "Reconnected to MQTT");
+                }
             });
         }
 
@@ -68,71 +80,71 @@ impl MqttSensorClient {
         }
     }
 
-    pub fn connect(&self) {
+    pub async fn connect(&self) {
         let cli_mtx = &self.mqtt_client;
         let cli = cli_mtx.lock().unwrap();
-        MqttSensorClient::do_connect(&cli);
-    }
 
-    pub fn subscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli_mtx = &self.mqtt_client;
-        let cli = cli_mtx.lock().unwrap();
-        if cfg!(test) && !cli.is_connected() {
-            return Ok(());
-        }
-        MqttSensorClient::do_subscribe_sensor(&cli, sensor)
-    }
-
-    pub fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli_mtx = &self.mqtt_client;
-        let cli = cli_mtx.lock().unwrap();
-        if cfg!(test) && !cli.is_connected() {
-            return Ok(());
-        }
-        MqttSensorClient::do_unsubscribe_sensor(&cli, sensor)
-    }
-
-    pub fn send_cmd(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli_mtx = &self.mqtt_client;
-        let cli = cli_mtx.lock().unwrap();
-        if cfg!(test) && !cli.is_connected() {
-            return Ok(());
-        }
-        MqttSensorClient::do_send_cmd(&cli, sensor)
-    }
-
-    fn do_connect(mqtt_client: &MutexGuard<'_, AsyncClient>) {
-        let tok = mqtt_client.connect(ConnectOptions::new());
-        if let Err(e) = tok.wait_for(std::time::Duration::from_secs(5)) {
+        let conn_opts = ConnectOptionsBuilder::new()
+            .clean_start(true)
+            .mqtt_version(MQTTV5)
+            .finalize();
+        if let Err(e) = cli.connect(conn_opts).await {
             panic!("Coulnd't connect to MQTT: {}", e);
+        } else {
+            info!(APP_LOGGING, "MQTT connected!");
         }
     }
 
-    fn do_subscribe_sensor(
+    pub async fn subscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        let cli_mtx = &self.mqtt_client;
+        let cli = cli_mtx.lock().unwrap();
+        if cfg!(test) && !cli.is_connected() {
+            return Ok(());
+        }
+        MqttSensorClient::do_subscribe_sensor(&cli, sensor).await
+    }
+
+    pub async fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        let cli_mtx = &self.mqtt_client;
+        let cli = cli_mtx.lock().unwrap();
+        if cfg!(test) && !cli.is_connected() {
+            return Ok(());
+        }
+        MqttSensorClient::do_unsubscribe_sensor(&cli, sensor).await
+    }
+
+    pub async fn send_cmd(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        let cli_mtx = &self.mqtt_client;
+        let cli = cli_mtx.lock().unwrap();
+        if cfg!(test) && !cli.is_connected() {
+            return Ok(());
+        }
+        MqttSensorClient::do_send_cmd(&cli, sensor).await
+    }
+
+    async fn do_subscribe_sensor(
         mqtt_client: &MutexGuard<'_, AsyncClient>,
         sensor: &SensorHandle,
     ) -> Result<(), MQTTError> {
         let topics = MqttSensorClient::build_topics(sensor);
-        let tok = mqtt_client.subscribe_many(&topics, &vec![1, 1]);
-        tok.wait_for(std::time::Duration::from_secs(1))?;
+        mqtt_client.subscribe_many(&topics, &vec![QOS, QOS]).await?;
 
         info!(APP_LOGGING, "Subscribed topics {:?}", topics);
         Ok(())
     }
 
-    fn do_unsubscribe_sensor(
+    async fn do_unsubscribe_sensor(
         mqtt_client: &MutexGuard<'_, AsyncClient>,
         sensor: &SensorHandle,
     ) -> Result<(), MQTTError> {
         let topics = MqttSensorClient::build_topics(sensor);
-        let tok = mqtt_client.unsubscribe_many(&topics);
-        tok.wait_for(std::time::Duration::from_secs(1))?;
+        mqtt_client.unsubscribe_many(&topics).await?;
 
         info!(APP_LOGGING, "Unsubscribed topics: {:?}", topics);
         Ok(())
     }
 
-    fn do_send_cmd(
+    async fn do_send_cmd(
         mqtt_client: &MutexGuard<'_, AsyncClient>,
         sensor: &SensorHandle,
     ) -> Result<(), MQTTError> {
@@ -141,9 +153,8 @@ impl MqttSensorClient {
         let mut cmds = sensor.format_cmds();
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
-        let publ = Message::new_retained(cmd_topic, payload, 1);
-        let tok = mqtt_client.publish(publ);
-        tok.wait_for(std::time::Duration::from_millis(2500))?;
+        let publ = Message::new_retained(cmd_topic, payload, QOS);
+        mqtt_client.publish(publ).await?;
 
         info!(APP_LOGGING, "Send command to sensor {}", sensor.id());
         Ok(())

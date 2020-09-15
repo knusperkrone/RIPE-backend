@@ -26,15 +26,21 @@ services:
     volumes:
       - ./plugins:/out
 
+  mqtt_broker:
+    image: eclipse-mosquitto:latest
+    ports:
+      - 1883:1883
+      - 9001:9001
+
   backend:
     restart: "always"
     image: docker-registry.if-lab.de/arme/iftem_backend:latest
     environment:
       BIND_ADDR: 0.0.0.0:8000
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem
+      MQTT_URL: mqtt_broker
       MQTT_PORT: 1883
       MQTT_NAME: iftem-master
-      MQTT_URL: 18.196.113.35
       PLUGIN_DIR: /plugins
     volumes:
       - ./plugins:/plugins
@@ -43,3 +49,4 @@ services:
     depends_on:
       - db_schema
       - threshold_plugin
+      - mqtt_broker

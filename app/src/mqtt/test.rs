@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 async fn test_mqtt_connection() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let client = MqttSensorClient::new(tx, Arc::new(RwLock::new(SensorCache::new())));
-    client.connect();
+    client.connect().await;
 }
 
 #[actix_rt::test]

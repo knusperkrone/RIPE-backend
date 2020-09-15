@@ -1449,7 +1449,7 @@ checksum = "260e51e7efe62b592207e9e13a68e43692a7a279171d6ba57abd208bf23645ad"
 [[package]]
 name = "paho-mqtt"
 version = "0.8.0"
-source = "git+https://github.com/eclipse/paho.mqtt.rust.git?branch=develop#1178259ee00f9184ed033471b6c484f8597e0941"
+source = "git+https://github.com/eclipse/paho.mqtt.rust.git#976e7ea538d75b960731183515207ee40dd6a153"
 dependencies = [
  "futures 0.3.5",
  "futures-timer",
@@ -1462,7 +1462,7 @@ dependencies = [
 [[package]]
 name = "paho-mqtt-sys"
 version = "0.4.0"
-source = "git+https://github.com/eclipse/paho.mqtt.rust.git?branch=develop#1178259ee00f9184ed033471b6c484f8597e0941"
+source = "git+https://github.com/eclipse/paho.mqtt.rust.git#976e7ea538d75b960731183515207ee40dd6a153"
 dependencies = [
  "cmake",
 ]

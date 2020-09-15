@@ -639,19 +639,6 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aafcde04e90a5226a6443b7aabdb016ba2f8307c847d524724bd9b346dd1a2d3"
-dependencies = [
- "atty",
- "humantime",
- "log 0.4.11",
- "regex",
- "termcolor",
-]
-
-[[package]]
-name = "env_logger"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
@@ -988,7 +975,7 @@ dependencies = [
  "ctrlc",
  "diesel",
  "dotenv",
- "env_logger 0.7.1",
+ "env_logger",
  "futures 0.3.5",
  "iftem_core",
  "libloading",
@@ -1312,6 +1299,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-derive"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f09b9841adb6b5e1f89ef7087ea636e0fd94b2851f887c1e3eb5d5f8228fab3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1354,23 +1352,24 @@ checksum = "260e51e7efe62b592207e9e13a68e43692a7a279171d6ba57abd208bf23645ad"
 
 [[package]]
 name = "paho-mqtt"
-version = "0.6.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "662e0ce380ac38a98071bf43cae40f33bfabad4ec5d0e9425fb35a785e816050"
+checksum = "4115ddef47704b582e5d03a760e2b8cca0c3d456c060cd382d10dad1807612de"
 dependencies = [
- "env_logger 0.6.2",
  "futures 0.1.29",
  "futures-timer",
  "libc",
  "log 0.4.11",
+ "num-derive",
+ "num-traits",
  "paho-mqtt-sys",
 ]
 
 [[package]]
 name = "paho-mqtt-sys"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea5b57c183a901ff955a5a0ec36963593dfe82b24ffb38086286a09c376b1e9f"
+checksum = "a26f81abbcaf3ef810b6e7fb4f34ed5c0de590e64b268a20392cc2eb24fb78de"
 dependencies = [
  "cmake",
 ]

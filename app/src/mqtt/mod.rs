@@ -104,7 +104,7 @@ impl MqttSensorClient {
     fn do_connect(mqtt_client: &MutexGuard<'_, AsyncClient>) {
         let tok = mqtt_client.connect(ConnectOptions::new());
         if let Err(e) = tok.wait_for(std::time::Duration::from_secs(5)) {
-            crit!(APP_LOGGING, "Coulnd't connect to MQTT: {}", e);
+            panic!("Coulnd't connect to MQTT: {}", e);
         }
     }
 

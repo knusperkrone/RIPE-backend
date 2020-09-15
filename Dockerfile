@@ -1,7 +1,7 @@
 #1 BUILD
 FROM rust:1.46 as build
 RUN apt-get update && \
-        apt-get install -y cmake libpq-dev
+        apt-get install -y cmake
 
 RUN USER=root cargo new --bin iftem/app
 RUN USER=root cargo new --bin iftem/core
@@ -35,8 +35,7 @@ RUN cargo build --release
 FROM rust:1.46
 
 WORKDIR /app
-COPY --from=build /iftem/app/target/release/iftem .
-RUN chown iftem:iftem iftem
+COPY --from=build /iftem/app/target/release/iftem 
 
 USER iftem
 CMD ["/app/iftem"]

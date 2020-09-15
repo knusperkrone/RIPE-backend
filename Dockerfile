@@ -1,8 +1,8 @@
 #1 BUILD
 FROM alpine:latest as build
 RUN apk update && \
-    apk add git build-base openssl-dev \
-    rust cargo cmake postgresql-dev libc-dev
+    apk add git build-base openssl-dev musl-dev libc-dev \
+    rust cargo cmake postgresql-dev
  
 RUN USER=root cargo new --bin iftem/app
 RUN USER=root cargo new --bin iftem/core

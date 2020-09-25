@@ -36,13 +36,13 @@ impl AgentTrait for MockAgent {
         0
     }
 
-    fn state(&self) -> &AgentState {
-        &AgentState::Active
+    fn state(&self) -> AgentState {
+        AgentState::Active
     }
 
     fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
         AgentUI {
-            decorator: AgentUIDecorator::Slide(0.0, 1.0),
+            decorator: AgentUIDecorator::Slider(0.0, 1.0),
             rendered: format!("Last tested at {}", data.timestamp),
             state: AgentState::default(),
         }

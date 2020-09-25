@@ -2,6 +2,7 @@
 extern crate slog;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use crossbeam::atomic::AtomicCell;
 use iftem_core::*;
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -15,6 +16,7 @@ const VERSION_CODE: u32 = 1;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
+#[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
     config: Option<&std::string::String>,
     logger: slog::Logger,
@@ -133,13 +135,17 @@ impl AgentTrait for ThresholdAgent {
             if task.is_active() && !set_active {
                 task.abort();
             } else if !task.is_active() && set_active {
-                self.start_task(true, until);
+                self.last_action = Some(Utc::now());
+                task.kickoff(true, until, self.logger.clone(), self.sender.clone());
             }
         }
     }
 
-    fn state(&self) -> &AgentState {
-        &self.state
+    fn state(&self) -> AgentState {
+        if let Ok(task) = self.task_cell.read() {
+            return task.state();
+        }
+        AgentState::Error
     }
 
     fn cmd(&self) -> i32 {
@@ -162,13 +168,13 @@ impl AgentTrait for ThresholdAgent {
         let rendered: String;
         if let Some(last_action) = self.last_action {
             let delta: Duration = Utc::now() - last_action;
-            if delta.num_hours() != 0 {
-                rendered = format!("Letzte Wässerung vor {} Minuten.", delta.num_minutes());
+            if delta.num_hours() == 0 {
+                rendered = format!("Letzte Wässerung vor {} Minuten", delta.num_minutes());
             } else {
                 rendered = format!(
-                    "Letzte Wässerung vor {}:{} Stunden.",
+                    "Letzte Wässerung vor {}:{} Stunden",
                     delta.num_hours(),
-                    delta.num_hours()
+                    (delta.num_minutes() - delta.num_hours() * 60)
                 );
             }
         } else {
@@ -176,9 +182,9 @@ impl AgentTrait for ThresholdAgent {
         }
 
         AgentUI {
-            decorator: AgentUIDecorator::TimedButton(30),
+            decorator: AgentUIDecorator::TimePane(30),
             rendered: rendered,
-            state: self.state,
+            state: self.state(),
         }
     }
 }
@@ -187,6 +193,7 @@ impl AgentTrait for ThresholdAgent {
 struct ThresholdTaskConfig {
     active: Arc<AtomicBool>,
     aborted: Arc<AtomicBool>,
+    state: AtomicCell<AgentState>,
     forced: bool,
     until: DateTime<Utc>,
     logger: slog::Logger,
@@ -204,6 +211,7 @@ impl Default for ThresholdTask {
             task_config: Arc::new(ThresholdTaskConfig {
                 active: Arc::new(AtomicBool::from(false)),
                 aborted: Arc::new(AtomicBool::from(false)),
+                state: AtomicCell::new(AgentState::Default),
                 forced: false,
                 until: Utc::now(),
                 logger: iftem_core::logger_sentinel(),
@@ -232,10 +240,11 @@ impl ThresholdTask {
         self.task_config = Arc::new(ThresholdTaskConfig {
             active: Arc::new(AtomicBool::new(true)),
             aborted: Arc::new(AtomicBool::new(false)),
+            state: AtomicCell::new(AgentState::Default),
             forced: forced,
+            until: until,
             logger: logger,
             sender: sender,
-            until: until,
         });
         self.run();
     }
@@ -252,16 +261,17 @@ impl ThresholdTask {
             &self.task_config.sender,
             AgentMessage::Task(Box::pin(async move {
                 let start = Utc::now();
-
                 let mut state = AgentState::Active;
                 if config.forced {
-                    state = AgentState::Forced(config.until.clone());
+                    state = AgentState::Forced(true, config.until.clone());
                 }
+
                 iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
                     AgentMessage::State(state),
                 );
+                config.state.store(state);
                 iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(1));
                 info!(
                     config.logger,
@@ -279,6 +289,7 @@ impl ThresholdTask {
                     &config.sender,
                     AgentMessage::State(state),
                 );
+                config.state.store(state);
                 iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(0));
 
                 let delta_secs = (Utc::now() - start).num_seconds();
@@ -295,6 +306,10 @@ impl ThresholdTask {
                 }
             })),
         );
+    }
+
+    fn state(&self) -> AgentState {
+        self.task_config.state.load()
     }
 
     fn is_active(&self) -> bool {

@@ -10,6 +10,7 @@ const VERSION_CODE: u32 = 1;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
+#[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
     _config: Option<&std::string::String>,
     logger: slog::Logger,
@@ -60,9 +61,9 @@ impl AgentTrait for TestAgent {
 
     fn render_ui(&self, _data: &SensorDataMessage) -> AgentUI {
         AgentUI {
-            decorator: AgentUIDecorator::Slide(0.0, 1.0),
+            decorator: AgentUIDecorator::Slider(0.0, 1.0),
             rendered: "TEXT".to_owned(),
-            state: *self.state(),
+            state: self.state(),
         }
     }
 
@@ -73,8 +74,8 @@ impl AgentTrait for TestAgent {
         }
     }
 
-    fn state(&self) -> &AgentState {
-        &AgentState::Default
+    fn state(&self) -> AgentState {
+        AgentState::Default
     }
 
     fn cmd(&self) -> i32 {

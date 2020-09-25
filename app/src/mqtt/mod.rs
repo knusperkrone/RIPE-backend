@@ -149,6 +149,7 @@ impl MqttSensorClient {
         sensor: &SensorHandle,
     ) -> Result<(), MQTTError> {
         let cmd_topic = MqttSensorClient::build_topic(sensor, MqttSensorClient::CMD_TOPIC);
+        info!(APP_LOGGING, "Send command to sensor {}", cmd_topic);
 
         let mut cmds = sensor.format_cmds();
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();

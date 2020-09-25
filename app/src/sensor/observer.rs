@@ -305,6 +305,23 @@ impl ConcurrentSensorObserver {
         Ok(())
     }
 
+    pub async fn force_agent(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+        domain: String,
+        active: bool,
+        duration: chrono::Duration,
+    ) -> Result<(), ObserverError> {
+        let container = self.container_ref.read().unwrap();
+        let mut sensor = container
+            .sensor(sensor_id, &key_b64)
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        sensor.force_agent(&domain, active, duration)?;
+        Ok(())
+    }
+
     /*
      * Helpers
      */

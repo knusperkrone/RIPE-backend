@@ -3,6 +3,12 @@ use crate::sensor::ConcurrentSensorObserver;
 use actix_web::{web, HttpResponse};
 use std::sync::Arc;
 
+#[derive(serde::Deserialize)]
+struct ForceRequest {
+    active: bool,
+    secs: u32,
+}
+
 /// Registers an agent to a sensor
 ///
 /// Returns 200 if the new agent was added
@@ -31,6 +37,20 @@ async fn agent_unregister(
     build_response(resp)
 }
 
+async fn force_state(
+    observer: web::Data<Arc<ConcurrentSensorObserver>>,
+    path: web::Path<(i32, String, String)>,
+    params: web::Query<ForceRequest>,
+) -> HttpResponse {
+    let (sensor_id, key_b64, domain) = path.into_inner();
+    let active = params.active;
+    let secs = chrono::Duration::seconds(params.secs as i64);
+    let resp = observer
+        .force_agent(sensor_id, key_b64, domain, active, secs)
+        .await;
+    build_response(resp)
+}
+
 /// Show all active agent plugins
 ///
 /// Returns a string list of all names
@@ -45,7 +65,8 @@ pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
             web::resource("api/agent/{id}/{key}")
                 .route(web::post().to(agent_register))
                 .route(web::delete().to(agent_unregister)),
-        );
+        )
+        .service(web::resource("api/agent/{id}/{key}/{domain}").route(web::post().to(force_state)));
 }
 
 ///
@@ -78,6 +99,29 @@ mod test {
     use crate::rest::AgentRegisterDto;
     use actix_web::dev::Service;
     use actix_web::{test, web, App};
+    use chrono::Utc;
+    use iftem_core::{AgentState, AgentUIDecorator};
+
+    #[actix_rt::test]
+    async fn test_print_agent_state() {
+        AgentUIDecorator::Slider(0.0, 1.0);
+        AgentUIDecorator::TimePane(60);
+
+        println!(
+            "Slider: {}",
+            serde_json::json!(AgentUIDecorator::Slider(0.0, 1.0))
+        );
+        println!(
+            "TimePane: {}",
+            serde_json::json!(AgentUIDecorator::TimePane(60))
+        );
+        println!("Active: {}", serde_json::json!(AgentState::Active));
+        println!("Default: {}", serde_json::json!(AgentState::Default));
+        println!(
+            "Forced: {}",
+            serde_json::json!(AgentState::Forced(true, Utc::now()))
+        );
+    }
 
     #[actix_rt::test]
     async fn test_register_agent() {

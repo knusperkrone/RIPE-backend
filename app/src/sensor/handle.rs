@@ -1,4 +1,4 @@
-use crate::error::PluginError;
+use crate::error::{DBError, ObserverError, PluginError};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
 use crate::plugin::agent::{Agent, AgentFactory};
@@ -79,7 +79,7 @@ impl SensorHandle {
         if !self.has_pending_update {
             return;
         }
-        
+
         self.has_pending_update = false;
         for agent in self.agents.iter_mut() {
             if agent.needs_update() {
@@ -88,6 +88,21 @@ impl SensorHandle {
                 }
             }
         }
+    }
+
+    pub fn force_agent(
+        &mut self,
+        domain: &String,
+        active: bool,
+        duration: chrono::Duration,
+    ) -> Result<(), ObserverError> {
+        for agent in self.agents.iter_mut() {
+            if agent.domain() == domain {
+                agent.on_force(active, duration);
+                return Ok(());
+            }
+        }
+        Err(DBError::SensorNotFound(self.id()).into())
     }
 
     pub fn add_agent(&mut self, agent: Agent) {

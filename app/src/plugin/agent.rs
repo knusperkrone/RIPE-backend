@@ -103,7 +103,7 @@ impl Agent {
     }
 
     pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        if self.agent_proxy.state() == &AgentState::Active {
+        if self.agent_proxy.state() == AgentState::Active {
             info!(
                 APP_LOGGING,
                 "Failed reloading active agent: {}", self.sensor_id
@@ -111,7 +111,10 @@ impl Agent {
             return Err(PluginError::AgentStateError(AgentState::Active));
         }
 
-        info!(APP_LOGGING, "Reloading agent: {}", self.sensor_id);
+        info!(
+            APP_LOGGING,
+            "Reloading agent: {} - {}", self.sensor_id, self.domain
+        );
         let state_json = self.agent_proxy.deserialize().state_json;
         unsafe {
             let (libary, proxy) = factory
@@ -122,6 +125,14 @@ impl Agent {
         }
         self.needs_update = false;
         Ok(())
+    }
+
+    pub fn on_force(&mut self, active: bool, duration: chrono::Duration) {
+        info!(
+            APP_LOGGING,
+            "Forcing agent: {} - {}", self.sensor_id, self.domain
+        );
+        self.agent_proxy.on_force(active, duration);
     }
 
     pub fn on_data(&mut self, data: &SensorDataMessage) {

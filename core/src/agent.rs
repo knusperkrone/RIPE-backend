@@ -12,21 +12,21 @@ pub struct AgentConfig {
 pub struct AgentUI {
     pub decorator: AgentUIDecorator,
     pub state: AgentState,
-    pub rendered: String,
-    // pub config_rendered: String
+    pub rendered: String, // pub config_rendered: String
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum AgentUIDecorator {
-    TimedButton(u32), // ui_stepsize
-    Slide(f32, f32),  // Range
+    TimePane(u32),    // ui_stepsize
+    Slider(f32, f32), // Range
 }
 
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone, Copy)]
 pub enum AgentState {
     Active,
     Default,
-    Forced(DateTime<Utc>),
+    Forced(bool, DateTime<Utc>),
+    Error,
 }
 
 impl Default for AgentState {
@@ -45,7 +45,7 @@ pub trait AgentTrait: std::fmt::Debug + Send {
     }
 
     fn on_data(&mut self, data: &SensorDataMessage) {
-        if AgentState::Active == *self.state() {
+        if AgentState::Active == self.state() {
             self.do_action(data);
         }
     }
@@ -53,5 +53,5 @@ pub trait AgentTrait: std::fmt::Debug + Send {
     fn cmd(&self) -> i32;
     fn render_ui(&self, data: &SensorDataMessage) -> AgentUI;
     fn deserialize(&self) -> AgentConfig;
-    fn state(&self) -> &AgentState;
+    fn state(&self) -> AgentState;
 }

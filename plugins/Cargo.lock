@@ -662,6 +662,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "time_agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "env_logger",
+ "iftem_core",
+ "serde",
+ "serde_json",
+ "slog",
+ "sloggers",
+ "tokio",
+]
+
+[[package]]
 name = "tokio"
 version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"

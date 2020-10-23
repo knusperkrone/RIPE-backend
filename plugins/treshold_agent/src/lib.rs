@@ -113,7 +113,6 @@ impl AgentTrait for ThresholdAgent {
             return;
         }
 
-        // TODO: Configure getter
         if data.moisture.is_none() {
             warn!(self.logger, "{} no moisture provided", NAME);
             return;
@@ -169,16 +168,16 @@ impl AgentTrait for ThresholdAgent {
         if let Some(last_action) = self.last_action {
             let delta: Duration = Utc::now() - last_action;
             if delta.num_hours() == 0 {
-                rendered = format!("Letzte Wässerung vor {} Minuten", delta.num_minutes());
+                rendered = format!("Letzte Aktion vor {} Minuten", delta.num_minutes());
             } else {
                 rendered = format!(
-                    "Letzte Wässerung vor {}:{} Stunden",
+                    "Letzte Aktion vor {}.{} Stunden",
                     delta.num_hours(),
                     (delta.num_minutes() - delta.num_hours() * 60)
                 );
             }
         } else {
-            rendered = "Noch nicht gewässert.".to_owned();
+            rendered = "Noch keine Aktion.".to_owned();
         }
 
         AgentUI {

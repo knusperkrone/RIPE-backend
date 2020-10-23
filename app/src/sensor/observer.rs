@@ -1,5 +1,5 @@
 use crate::error::{DBError, ObserverError};
-use crate::plugin::agent::AgentFactory;
+use crate::plugin::AgentFactory;
 
 use super::handle::{SensorHandle, SensorHandleMessage};
 use crate::logging::APP_LOGGING;

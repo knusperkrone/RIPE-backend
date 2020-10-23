@@ -1,18 +1,13 @@
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
+use crate::plugin::AgentFactory;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorHandleMessage};
-use dotenv::dotenv;
+use futures::future::FutureExt;
 use futures::future::{AbortHandle, Abortable};
-use iftem_core::{
-    error::AgentError, AgentMessage, AgentState, AgentTrait, AgentUI, PluginDeclaration,
-    SensorDataMessage,
-};
+use iftem_core::{AgentMessage, AgentState, AgentTrait, AgentUI, SensorDataMessage};
 use libloading::Library;
 use std::{
-    collections::HashMap,
-    env,
-    ffi::OsStr,
-    fmt::Debug,
+    pin::Pin,
     string::String,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -20,7 +15,7 @@ use std::{
     },
 };
 use tokio::stream::StreamExt;
-use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 
 static TERMINATED: AtomicBool = AtomicBool::new(false);
 static TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -44,6 +39,7 @@ pub struct Agent {
     plugin_sender: Sender<AgentMessage>,
     agent_name: String,
     abort_handle: AbortHandle,
+    repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     agent_proxy: Box<dyn AgentTrait>,
     needs_update: bool,
     library_ref: Arc<Library>, // Reference counter, to not free lib .text section
@@ -58,6 +54,9 @@ impl std::fmt::Debug for Agent {
 impl Drop for Agent {
     fn drop(&mut self) {
         self.abort_handle.abort();
+        if let Some(repeat_handle) = self.repeat_abort_handle.write().unwrap().as_ref() {
+            repeat_handle.abort();
+        }
     }
 }
 
@@ -75,20 +74,19 @@ impl Agent {
         agent_proxy: Box<dyn AgentTrait>,
         library_ref: Arc<Library>,
     ) -> Self {
-        let state = Arc::new(RwLock::new(AgentState::Default));
-
+        let repeat_abort_handle = Arc::new(RwLock::new(None));
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        let future = Abortable::new(
+        let ipc_future = Abortable::new(
             Agent::dispatch_iac(
                 sensor_id,
                 domain.clone(),
-                state.clone(),
                 agent_sender,
                 plugin_receiver,
+                repeat_abort_handle.clone(),
             ),
             abort_registration,
         );
-        tokio::spawn(async move { future.await });
+        tokio::spawn(async move { ipc_future.await });
 
         Agent {
             sensor_id,
@@ -96,6 +94,7 @@ impl Agent {
             plugin_sender,
             agent_name,
             abort_handle,
+            repeat_abort_handle,
             agent_proxy,
             library_ref,
             needs_update: false,
@@ -173,247 +172,132 @@ impl Agent {
         self.needs_update
     }
 
+    /*
+     * Helpers
+     */
+
     async fn dispatch_iac(
         sensor_id: i32,
         domain: String,
-        state_lock: Arc<RwLock<AgentState>>,
         agent_sender: UnboundedSender<SensorHandleMessage>,
         mut plugin_receiver: Receiver<AgentMessage>,
+        repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
         while let Some(payload) = plugin_receiver.next().await {
-            if let AgentMessage::Task(agent_task) = payload {
-                if TERMINATED.load(Ordering::Relaxed) {
-                    info!(APP_LOGGING, "Task wasn't started as app is cancelled");
-                } else {
-                    tokio::task::spawn(async move {
+            match payload {
+                AgentMessage::OneshotTask(agent_task) => {
+                    Agent::dispatch_oneshot_task(sensor_id, agent_task).await;
+                }
+                AgentMessage::RepeatedTask(delay, interval_task) => {
+                    Agent::dispatch_repating_task(
+                        sensor_id,
+                        delay,
+                        interval_task,
+                        repeat_abort_handle.clone(),
+                    )
+                    .await;
+                }
+                AgentMessage::Command(command) => {
+                    // Notify main loop over agent
+                    let mut msg = SensorHandleMessage {
+                        sensor_id: sensor_id,
+                        domain: domain.clone(),
+                        payload: command,
+                    };
+
+                    let mut tries = 3;
+                    while tries != 0 {
+                        if let Err(e) = agent_sender.send(msg) {
+                            error!(APP_LOGGING, "[{}/3] Error sending payload: {}", tries, e);
+                            tries -= 1;
+                            msg = e.0;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            };
+        }
+        crit!(APP_LOGGING, "dispatch_iac endend for {}", sensor_id);
+    }
+
+    async fn dispatch_oneshot_task(
+        sensor_id: i32,
+        agent_task: Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync + 'static>>,
+    ) {
+        if TERMINATED.load(Ordering::Relaxed) {
+            info!(APP_LOGGING, "Task wasn't started as app is cancelled");
+        } else {
+            tokio::task::spawn(async move {
+                let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+                info!(
+                    APP_LOGGING,
+                    "Spawning new task for sensor: {} - active tasks: {}", sensor_id, task_count
+                );
+
+                agent_task.await;
+
+                task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
+                info!(
+                    APP_LOGGING,
+                    "Ended new oneshot task for sensor: {} - active tasks: {}",
+                    sensor_id,
+                    task_count
+                );
+                if TERMINATED.load(Ordering::Relaxed) && task_count == 0 {
+                    std::process::exit(0);
+                }
+            });
+        }
+    }
+
+    async fn dispatch_repating_task(
+        sensor_id: i32,
+        delay: std::time::Duration,
+        interval_task: Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>>,
+        repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
+    ) {
+        let repeat_handle_ref = repeat_abort_handle.clone();
+        let mut handle = repeat_abort_handle.write().unwrap();
+        if handle.is_none() {
+            let (abort_handle, abort_registration) = AbortHandle::new_pair();
+            let repeating_future = Abortable::new(
+                async move {
+                    info!(APP_LOGGING, "Started repeating task for {}", sensor_id);
+                    let shared_future = interval_task.shared();
+
+                    loop {
                         let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
                         info!(
                             APP_LOGGING,
-                            "Spawning new task for sensor: {} - active tasks: {}",
+                            "Spawning repeating task for sensor: {} - active tasks: {}",
                             sensor_id,
                             task_count
                         );
 
-                        agent_task.await;
-
+                        let is_finished = shared_future.clone().await;
                         task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-                        info!(
-                            APP_LOGGING,
-                            "Ended new task for sensor: {} - active tasks: {}",
-                            sensor_id,
-                            task_count
-                        );
-                        if TERMINATED.load(Ordering::Relaxed) && task_count == 0 {
+
+                        if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
                             std::process::exit(0);
                         }
-                    });
-                }
-            } else if let AgentMessage::State(state) = payload {
-                let mut self_state = state_lock.write().unwrap();
-                *self_state = state;
-            } else if let AgentMessage::Command(command) = payload {
-                // Notify main loop over agent
-                let mut msg = SensorHandleMessage {
-                    sensor_id: sensor_id,
-                    domain: domain.clone(),
-                    payload: command,
-                };
 
-                let mut tries = 3;
-                while tries != 0 {
-                    if let Err(e) = agent_sender.send(msg) {
-                        error!(APP_LOGGING, "[{}/3] Error sending payload: {}", tries, e);
-                        tries -= 1;
-                        msg = e.0;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                error!(APP_LOGGING, "Unhandled payload");
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct AgentFactory {
-    agent_sender: UnboundedSender<SensorHandleMessage>,
-    libraries: HashMap<String, Arc<Library>>,
-}
-
-impl AgentFactory {
-    pub fn new(sender: UnboundedSender<SensorHandleMessage>) -> Self {
-        let mut factory = AgentFactory {
-            agent_sender: sender,
-            libraries: HashMap::new(),
-        };
-        unsafe {
-            factory.load_plugins();
-        }
-        factory
-    }
-
-    pub fn agents(&self) -> Vec<String> {
-        self.libraries.keys().map(|name| name.clone()).collect()
-    }
-
-    pub fn new_agent(
-        &self,
-        sensor_id: i32,
-        agent_name: &String,
-        domain: &String,
-    ) -> Result<Agent, AgentError> {
-        unsafe { Ok(self.build_agent(sensor_id, agent_name, domain, None)?) }
-    }
-
-    pub fn restore_agent(
-        &self,
-        sensor_id: i32,
-        config: &AgentConfigDao,
-    ) -> Result<Agent, AgentError> {
-        unsafe {
-            match self.build_agent(
-                sensor_id,
-                config.agent_impl(),
-                config.domain(),
-                Some(config.state_json()),
-            ) {
-                Ok(agent) => Ok(agent),
-                Err(e) => {
-                    error!(APP_LOGGING, "Failed restoring agent: {}", e);
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    pub unsafe fn load_plugins(&mut self) -> Vec<String> {
-        dotenv().ok();
-        let path = env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
-        let plugins_dir = std::path::Path::new(&path);
-        let entries_res = std::fs::read_dir(plugins_dir);
-        if entries_res.is_err() {
-            error!(APP_LOGGING, "Invalid plugin dir: {}", path);
-            return vec![];
-        }
-
-        entries_res
-            .unwrap()
-            .into_iter()
-            .filter_map(|entry| {
-                let path: std::path::PathBuf = entry.unwrap().path();
-                if path.is_file() && path.extension().is_some() {
-                    // Extact file extension and load .so/.ddl
-                    let ext = path.extension().unwrap();
-                    if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
-                        match self.load_library(path.as_os_str()) {
-                            Ok(lib_name) => {
-                                info!(APP_LOGGING, "Loaded plugin {:?}", path);
-                                return Some(lib_name.to_owned());
-                            }
-                            Err(err) => {
-                                error!(APP_LOGGING, "Failed Loaded plugin {:?} - {}", path, err)
-                            }
+                        if is_finished {
+                            break;
                         }
+                        tokio::time::delay_for(delay.into()).await;
                     }
-                }
-                None
-            })
-            .collect()
-    }
 
-    unsafe fn load_library<P: AsRef<OsStr>>(
-        &mut self,
-        library_path: P,
-    ) -> Result<String, PluginError> {
-        // load the library into memory
-        let library = Library::new(library_path)?;
-
-        // get a pointer to the plugin_declaration symbol.
-        let decl = library
-            .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
-            .read();
-
-        if decl.rustc_version != iftem_core::RUSTC_VERSION
-            || decl.core_version != iftem_core::CORE_VERSION
-        {
-            // version checks to prevent accidental ABI incompatibilities
-            return Err(PluginError::CompilerMismatch(
-                decl.rustc_version.to_owned(),
-                iftem_core::RUSTC_VERSION.to_owned(),
-            ));
-        } else if let Some(loaded_lib) = self.libraries.get(decl.agent_name) {
-            // Check duplicated or outdated library
-            let loaded_decl = loaded_lib
-                .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
-                .read();
-            if loaded_decl.agent_version <= decl.agent_version {
-                return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
-            }
-        }
-        self.libraries
-            .insert(decl.agent_name.to_owned(), Arc::new(library));
-        return Ok(decl.agent_name.to_owned());
-    }
-
-    unsafe fn build_proxy_agent(
-        &self,
-        agent_name: &String,
-        state_json: Option<&String>,
-        plugin_sender: &Sender<AgentMessage>,
-    ) -> Option<(Arc<Library>, Box<dyn AgentTrait>)> {
-        if let Some(library) = self.libraries.get(agent_name) {
-            let decl = library
-                .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
-                .unwrap() // Panic should be impossible
-                .read();
-
-            let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
-            let proxy = (decl.agent_builder)(state_json, logger.clone(), plugin_sender.clone());
-            Some((library.clone(), proxy))
+                    info!(APP_LOGGING, "Ended repeating task for {}", sensor_id);
+                    let mut handle = repeat_handle_ref.write().unwrap();
+                    *handle = None;
+                },
+                abort_registration,
+            );
+            tokio::spawn(repeating_future);
+            *handle = Some(abort_handle);
         } else {
-            None
-        }
-    }
-
-    unsafe fn build_agent(
-        &self,
-        sensor_id: i32,
-        agent_name: &String,
-        domain: &String,
-        state_json: Option<&String>,
-    ) -> Result<Agent, AgentError> {
-        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(64);
-        if cfg!(test) && agent_name == "MockAgent" {
-            info!(APP_LOGGING, "Creating mock agent!");
-            return Ok(Agent::new(
-                self.agent_sender.clone(),
-                plugin_sender,
-                plugin_receiver,
-                sensor_id,
-                domain.clone(),
-                agent_name.clone(),
-                Box::new(crate::plugin::test::MockAgent::new()),
-                Arc::new(Library::new("./libtest_agent.so").unwrap()),
-            ));
-        }
-
-        if let Some((plugin_library, plugin_agent)) =
-            self.build_proxy_agent(agent_name, state_json, &plugin_sender)
-        {
-            Ok(Agent::new(
-                self.agent_sender.clone(),
-                plugin_sender,
-                plugin_receiver,
-                sensor_id,
-                domain.clone(),
-                agent_name.clone(),
-                plugin_agent,
-                plugin_library,
-            ))
-        } else {
-            Err(AgentError::InvalidIdentifier(agent_name.clone()))
+            warn!(APP_LOGGING, "Already scheduled a repeating task!");
         }
     }
 }

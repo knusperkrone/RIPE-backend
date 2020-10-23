@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
 pub enum AgentMessage {
-    Command(u32),
+    Command(i32),
     OneshotTask(Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync + 'static>>),
     RepeatedTask(
         std::time::Duration,

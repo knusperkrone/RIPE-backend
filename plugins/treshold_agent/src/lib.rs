@@ -220,6 +220,9 @@ impl Default for ThresholdTask {
     }
 }
 
+const CMD_ACTIVE: i32 = 1;
+const CMD_INACTIVE: i32 = 1;
+
 impl ThresholdTask {
     pub fn kickoff(
         &mut self,
@@ -258,7 +261,7 @@ impl ThresholdTask {
         send_payload(
             &self.task_config.logger,
             &self.task_config.sender,
-            AgentMessage::Task(Box::pin(async move {
+            AgentMessage::OneshotTask(Box::pin(async move {
                 let start = Utc::now();
                 let mut state = AgentState::Active;
                 if config.forced {
@@ -268,7 +271,7 @@ impl ThresholdTask {
                 iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
-                    AgentMessage::State(state),
+                    AgentMessage::Command(CMD_ACTIVE),
                 );
                 config.state.store(state);
                 iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(1));
@@ -286,7 +289,7 @@ impl ThresholdTask {
                 iftem_core::send_payload(
                     &config.logger,
                     &config.sender,
-                    AgentMessage::State(state),
+                    AgentMessage::Command(CMD_INACTIVE),
                 );
                 config.state.store(state);
                 iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(0));

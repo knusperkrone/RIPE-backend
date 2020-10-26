@@ -2,13 +2,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
+pub trait FutBuilder: Send + Sync {
+    fn build_future(
+        &self,
+    ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>>;
+}
+
 pub enum AgentMessage {
     Command(i32),
-    OneshotTask(Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync + 'static>>),
-    RepeatedTask(
-        std::time::Duration,
-        Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>>,
-    ),
+    OneshotTask(Box<dyn FutBuilder>),
+    RepeatedTask(std::time::Duration, Box<dyn FutBuilder>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -9,7 +9,7 @@ use std::vec::Vec;
 pub struct SensorHandleMessage {
     pub sensor_id: i32,
     pub domain: String,
-    pub payload: u32,
+    pub payload: i32,
 }
 
 pub struct SensorHandle {

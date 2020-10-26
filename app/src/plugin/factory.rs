@@ -122,6 +122,8 @@ impl AgentFactory {
             let loaded_decl = loaded_lib
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
                 .read();
+
+            
             if loaded_decl.agent_version <= decl.agent_version {
                 return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
             }

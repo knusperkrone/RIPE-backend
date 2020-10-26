@@ -1,6 +1,12 @@
 #[macro_use]
 extern crate slog;
 
+use std::pin::Pin;
+use std::sync::{
+    atomic::{AtomicI32, Ordering},
+    Arc,
+};
+
 use chrono::{DateTime, Utc};
 use iftem_core::*;
 use tokio::sync::mpsc::Sender;
@@ -16,38 +22,78 @@ extern "C" fn build_agent(
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {
-    let agent_logger = logger.clone();
-    let agent_sender = sender.clone();
-
     send_payload(
-        &logger.clone(),
-        &sender.clone(),
-        AgentMessage::Task(std::boxed::Box::pin(async move {
-            if let Ok(_) = sender
-                .clone()
-                .send(AgentMessage::State(AgentState::Active))
-                .await
-            {
-                info!(logger, "SENT MESSAGE");
-            }
-
-            info!(logger, "TASK IS SLEEPING");
-            delay_task_for(std::time::Duration::from_secs(20)).await;
-            info!(logger, "TASK IS AWAKE");
+        &logger,
+        &sender,
+        AgentMessage::OneshotTask(Box::new(TestFutBuilder {
+            is_oneshot: true,
+            sender: sender.clone(),
+            logger: logger.clone(),
+            counter: Arc::new(AtomicI32::new(5)),
         })),
     );
 
-    let agent = TestAgent {
-        logger: agent_logger.clone(),
-        sender: agent_sender.clone(),
-    };
-    Box::new(agent)
+    // let repeat_sender = sender.clone();
+    send_payload(
+        &logger.clone(),
+        &sender.clone(),
+        AgentMessage::RepeatedTask(
+            std::time::Duration::from_secs(1),
+            Box::new(TestFutBuilder {
+                is_oneshot: false,
+                sender: sender.clone(),
+                logger: logger.clone(),
+                counter: Arc::new(AtomicI32::new(5)),
+            }),
+        ),
+    );
+
+    Box::new(TestAgent {
+        logger: logger.clone(),
+        sender: sender.clone(),
+    })
 }
 
 #[derive(Debug)]
 struct TestAgent {
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
+}
+
+struct TestFutBuilder {
+    is_oneshot: bool,
+    logger: slog::Logger,
+    counter: Arc<AtomicI32>,
+    sender: Sender<AgentMessage>,
+}
+
+impl FutBuilder for TestFutBuilder {
+    fn build_future(
+        &self,
+    ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
+        let logger = self.logger.clone();
+        if self.is_oneshot {
+            let oneshot_sender = self.sender.clone();
+            std::boxed::Box::pin(async move {
+                if let Ok(_) = oneshot_sender.clone().send(AgentMessage::Command(1)).await {
+                    info!(logger, "SENT MESSAGE");
+                }
+
+                info!(logger, "TASK IS SLEEPING");
+                delay_task_for(std::time::Duration::from_secs(5)).await;
+                info!(logger, "TASK IS AWAKE");
+                true
+            })
+        } else {
+            let counter = self.counter.clone();
+            std::boxed::Box::pin(async move {
+                info!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
+                let i = counter.fetch_sub(1, Ordering::Relaxed);
+
+                i == 0
+            })
+        }
+    }
 }
 
 impl AgentTrait for TestAgent {

@@ -2,12 +2,10 @@ use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
 use crate::plugin::AgentFactory;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorHandleMessage};
-use futures::future::FutureExt;
 use futures::future::{AbortHandle, Abortable};
-use iftem_core::{AgentMessage, AgentState, AgentTrait, AgentUI, SensorDataMessage};
+use iftem_core::{AgentMessage, AgentState, AgentTrait, AgentUI, FutBuilder, SensorDataMessage};
 use libloading::Library;
 use std::{
-    pin::Pin,
     string::String,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -185,8 +183,8 @@ impl Agent {
     ) {
         while let Some(payload) = plugin_receiver.next().await {
             match payload {
-                AgentMessage::OneshotTask(agent_task) => {
-                    Agent::dispatch_oneshot_task(sensor_id, agent_task).await;
+                AgentMessage::OneshotTask(agent_task_builder) => {
+                    Agent::dispatch_oneshot_task(sensor_id, agent_task_builder).await;
                 }
                 AgentMessage::RepeatedTask(delay, interval_task) => {
                     Agent::dispatch_repating_task(
@@ -221,10 +219,7 @@ impl Agent {
         crit!(APP_LOGGING, "dispatch_iac endend for {}", sensor_id);
     }
 
-    async fn dispatch_oneshot_task(
-        sensor_id: i32,
-        agent_task: Pin<Box<dyn std::future::Future<Output = ()> + Send + Sync + 'static>>,
-    ) {
+    async fn dispatch_oneshot_task(sensor_id: i32, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) {
             info!(APP_LOGGING, "Task wasn't started as app is cancelled");
         } else {
@@ -235,7 +230,7 @@ impl Agent {
                     "Spawning new task for sensor: {} - active tasks: {}", sensor_id, task_count
                 );
 
-                agent_task.await;
+                agent_task.build_future().await;
 
                 task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                 info!(
@@ -254,7 +249,7 @@ impl Agent {
     async fn dispatch_repating_task(
         sensor_id: i32,
         delay: std::time::Duration,
-        interval_task: Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>>,
+        interval_task: Box<dyn FutBuilder>,
         repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
         let repeat_handle_ref = repeat_abort_handle.clone();
@@ -264,20 +259,18 @@ impl Agent {
             let repeating_future = Abortable::new(
                 async move {
                     info!(APP_LOGGING, "Started repeating task for {}", sensor_id);
-                    let shared_future = interval_task.shared();
 
+                    info!(
+                        APP_LOGGING,
+                        "Spawning repeating task for sensor: {} - sleep duration: {:?}",
+                        sensor_id,
+                        delay,
+                    );
                     loop {
-                        let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-                        info!(
-                            APP_LOGGING,
-                            "Spawning repeating task for sensor: {} - active tasks: {}",
-                            sensor_id,
-                            task_count
-                        );
+                        let _ = TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-                        let is_finished = shared_future.clone().await;
-                        task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-
+                        let is_finished = interval_task.build_future().await;
+                        let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                         if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
                             std::process::exit(0);
                         }

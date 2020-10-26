@@ -16,6 +16,9 @@ const VERSION_CODE: u32 = 1;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
+const CMD_ACTIVE: i32 = 1;
+const CMD_INACTIVE: i32 = 1;
+
 #[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
     config: Option<&std::string::String>,
@@ -189,7 +192,17 @@ impl AgentTrait for ThresholdAgent {
 }
 
 #[derive(Debug)]
-struct ThresholdTaskConfig {
+struct ThresholdTask {
+    task_config: Arc<ThresholdTaskInner>,
+}
+
+#[derive(Debug)]
+struct ThresholdTaskBuilder {
+    task_config: Arc<ThresholdTaskInner>,
+}
+
+#[derive(Debug)]
+struct ThresholdTaskInner {
     active: Arc<AtomicBool>,
     aborted: Arc<AtomicBool>,
     state: AtomicCell<AgentState>,
@@ -199,15 +212,10 @@ struct ThresholdTaskConfig {
     sender: Sender<AgentMessage>,
 }
 
-#[derive(Debug)]
-struct ThresholdTask {
-    task_config: Arc<ThresholdTaskConfig>,
-}
-
 impl Default for ThresholdTask {
     fn default() -> Self {
         ThresholdTask {
-            task_config: Arc::new(ThresholdTaskConfig {
+            task_config: Arc::new(ThresholdTaskInner {
                 active: Arc::new(AtomicBool::from(false)),
                 aborted: Arc::new(AtomicBool::from(false)),
                 state: AtomicCell::new(AgentState::Default),
@@ -219,9 +227,6 @@ impl Default for ThresholdTask {
         }
     }
 }
-
-const CMD_ACTIVE: i32 = 1;
-const CMD_INACTIVE: i32 = 1;
 
 impl ThresholdTask {
     pub fn kickoff(
@@ -239,7 +244,7 @@ impl ThresholdTask {
             return;
         }
 
-        self.task_config = Arc::new(ThresholdTaskConfig {
+        self.task_config = Arc::new(ThresholdTaskInner {
             active: Arc::new(AtomicBool::new(true)),
             aborted: Arc::new(AtomicBool::new(false)),
             state: AtomicCell::new(AgentState::Default),
@@ -248,66 +253,18 @@ impl ThresholdTask {
             logger: logger,
             sender: sender,
         });
-        self.run();
-    }
-
-    pub fn abort(&mut self) {
-        self.task_config.aborted.store(true, Ordering::Relaxed);
-    }
-
-    fn run(&mut self) {
-        let config = self.task_config.clone();
 
         send_payload(
             &self.task_config.logger,
             &self.task_config.sender,
-            AgentMessage::OneshotTask(Box::pin(async move {
-                let start = Utc::now();
-                let mut state = AgentState::Active;
-                if config.forced {
-                    state = AgentState::Forced(true, config.until.clone());
-                }
-
-                iftem_core::send_payload(
-                    &config.logger,
-                    &config.sender,
-                    AgentMessage::Command(CMD_ACTIVE),
-                );
-                config.state.store(state);
-                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(1));
-                info!(
-                    config.logger,
-                    "{} started Task until {}", NAME, config.until
-                );
-
-                while Utc::now() < config.until && !config.aborted.load(Ordering::Relaxed) {
-                    iftem_core::task_sleep(0).await;
-                }
-
-                config.active.store(false, Ordering::Relaxed);
-                state = AgentState::Default;
-                iftem_core::send_payload(
-                    &config.logger,
-                    &config.sender,
-                    AgentMessage::Command(CMD_INACTIVE),
-                );
-                config.state.store(state);
-                iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(0));
-
-                let delta_secs = (Utc::now() - start).num_seconds();
-                if config.aborted.load(Ordering::Relaxed) {
-                    info!(
-                        config.logger,
-                        "{} aborted Task after {} secs", NAME, delta_secs
-                    );
-                } else {
-                    debug!(
-                        config.logger,
-                        "{} ended Task after {} secs", NAME, delta_secs
-                    );
-                }
+            AgentMessage::OneshotTask(Box::new(ThresholdTaskBuilder {
+                task_config: self.task_config.clone(),
             })),
-        );
+        )
+    }
+
+    pub fn abort(&mut self) {
+        self.task_config.aborted.store(true, Ordering::Relaxed);
     }
 
     fn state(&self) -> AgentState {
@@ -316,5 +273,60 @@ impl ThresholdTask {
 
     fn is_active(&self) -> bool {
         self.task_config.active.load(Ordering::Relaxed)
+    }
+}
+
+impl FutBuilder for ThresholdTaskBuilder {
+    fn build_future(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
+        let config = self.task_config.clone();
+        Box::pin(async move {
+            let start = Utc::now();
+            let mut state = AgentState::Active;
+            if config.forced {
+                state = AgentState::Forced(true, config.until.clone());
+            }
+
+            iftem_core::send_payload(
+                &config.logger,
+                &config.sender,
+                AgentMessage::Command(CMD_ACTIVE),
+            );
+            config.state.store(state);
+            iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(1));
+            info!(
+                config.logger,
+                "{} started Task until {}", NAME, config.until
+            );
+
+            while Utc::now() < config.until && !config.aborted.load(Ordering::Relaxed) {
+                iftem_core::task_sleep(0).await;
+            }
+
+            config.active.store(false, Ordering::Relaxed);
+            state = AgentState::Default;
+            iftem_core::send_payload(
+                &config.logger,
+                &config.sender,
+                AgentMessage::Command(CMD_INACTIVE),
+            );
+            config.state.store(state);
+            iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(0));
+
+            let delta_secs = (Utc::now() - start).num_seconds();
+            if config.aborted.load(Ordering::Relaxed) {
+                info!(
+                    config.logger,
+                    "{} aborted Task after {} secs", NAME, delta_secs
+                );
+            } else {
+                debug!(
+                    config.logger,
+                    "{} ended Task after {} secs", NAME, delta_secs
+                );
+            }
+            true
+        })
     }
 }

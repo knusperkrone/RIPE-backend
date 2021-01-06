@@ -12,8 +12,8 @@ mod rest;
 mod schema;
 mod sensor;
 
-#[actix_rt::main]
-async fn main() {
+#[tokio::main]
+pub async fn main() -> std::io::Result<()> {
     env_logger::init();
     let sensor_arc = sensor::ConcurrentSensorObserver::new();
     let mqtt_thread = sensor::ConcurrentSensorObserver::dispatch_mqtt_loop(sensor_arc.clone());
@@ -22,5 +22,6 @@ async fn main() {
     let server_daemon = rest::dispatch_server_daemon(sensor_arc.clone());
     plugin::agent::register_sigint_handler();
 
-    tokio::join!(mqtt_thread, iac_loop, plugin_loop, server_daemon);
+    let _ = tokio::join!(mqtt_thread, iac_loop, plugin_loop, server_daemon);
+    Ok(())
 }

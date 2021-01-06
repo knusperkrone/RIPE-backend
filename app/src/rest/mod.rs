@@ -33,12 +33,17 @@ pub fn build_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> Ht
     }
 }
 
-pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) -> () {
+pub async fn dispatch_server_daemon(
+    observer: Arc<ConcurrentSensorObserver>,
+) -> std::io::Result<()> {
     // Set up logging
     dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=info");
     let bind_addr = env::var("BIND_ADDR").expect("BIND_ADDR must be set");
     let print_addr = bind_addr.clone();
+
+    let local: tokio::task::LocalSet = tokio::task::LocalSet::new();
+    let sys = actix_web::rt::System::run_in_tokio("server", &local);
 
     info!(APP_LOGGING, "Starting webserver at: {}", print_addr);
     HttpServer::new(move || {
@@ -53,6 +58,7 @@ pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) -> 
     .unwrap()
     .disable_signals()
     .run()
-    .await
-    .unwrap();
+    .await?;
+    sys.await?;
+    Ok(())
 }

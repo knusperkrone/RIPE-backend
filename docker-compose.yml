@@ -2,7 +2,9 @@ version: "2"
 services:
   db:
     restart: "always"
-    image: postgres:13
+    image: postgres:11-alpine
+    ports: 
+      - 54321:5432
     # volumes: ./data:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: iftem
@@ -26,12 +28,6 @@ services:
     volumes:
       - ./plugins:/out
 
-  mqtt_broker:
-    image: eclipse-mosquitto:latest
-    ports:
-      - 1883:1883
-      - 9001:9001
-
   backend:
     restart: "always"
     image: docker-registry.if-lab.de/arme/iftem_backend:latest
@@ -49,4 +45,3 @@ services:
     depends_on:
       - db_schema
       - threshold_plugin
-      - mqtt_broker

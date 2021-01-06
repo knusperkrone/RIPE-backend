@@ -1,10 +1,11 @@
 #[macro_use]
 extern crate slog;
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{Timelike, Utc};
 use iftem_core::*;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     pin::Pin,
     sync::{
         atomic::{AtomicI32, Ordering},
@@ -17,6 +18,8 @@ const NAME: &str = "TimeAgent";
 const VERSION_CODE: u32 = 1;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
+
+const DAY_MS: i32 = 86_400_000;
 
 #[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
@@ -47,9 +50,6 @@ extern "C" fn build_agent(
     Box::new(agent)
 }
 
-const CMD_ACTIVE: i32 = 1;
-const CMD_INACTIVE: i32 = 1;
-
 #[derive(Debug)]
 pub struct TimeAgent {
     inner: Arc<TimeAgentInner>,
@@ -62,15 +62,15 @@ pub struct TimeAgentInner {
     #[serde(skip, default = "iftem_core::sender_sentinel")]
     sender: Sender<AgentMessage>,
     #[serde(skip, default = "default_force_state")]
-    force_state: RwLock<Option<(bool, DateTime<Utc>)>>,
+    force_state: RwLock<AgentState>,
     #[serde(skip, default = "default_shadow_cmd")]
     shadow_command: AtomicI32,
-    start_time_ms: u32,
-    end_time_ms: u32,
+    start_time_ms: i32,
+    end_time_ms: i32,
 }
 
-fn default_force_state() -> RwLock<Option<(bool, DateTime<Utc>)>> {
-    RwLock::new(None)
+fn default_force_state() -> RwLock<AgentState> {
+    RwLock::new(AgentState::Ready)
 }
 
 fn default_shadow_cmd() -> AtomicI32 {
@@ -91,21 +91,25 @@ impl Default for TimeAgentInner {
 }
 
 impl AgentTrait for TimeAgent {
-    fn do_action(&mut self, _: &SensorDataMessage) {
-        // NO-OP
+    fn on_data(&mut self, _data: &SensorDataMessage) {
+        // no-op
     }
 
-    fn do_force(&mut self, active: bool, until: DateTime<Utc>) {
-        *self.inner.force_state.write().unwrap() = Some((active, until));
-        iftem_core::send_payload(
-            &self.inner.logger,
-            &self.inner.sender,
-            AgentMessage::Command(self.cmd()),
-        );
-    }
+    fn on_cmd(&mut self, payload: i64) {
+        let until_opt = AgentUIDecorator::transform_cmd_timepane(payload);
+        if let Some(until) = until_opt {
+            if self.inner.cmd() == CMD_ACTIVE {
+                *self.inner.force_state.write().unwrap() = AgentState::Stopped(until);
+            } else {
+                *self.inner.force_state.write().unwrap() = AgentState::Forced(until);
+            }
 
-    fn cmd(&self) -> i32 {
-        return self.inner.cmd();
+            iftem_core::send_payload(
+                &self.inner.logger,
+                &self.inner.sender,
+                AgentMessage::Command(self.cmd()),
+            );
+        }
     }
 
     fn render_ui(&self, _: &SensorDataMessage) -> AgentUI {
@@ -114,10 +118,14 @@ impl AgentTrait for TimeAgent {
             state: self.state(),
             rendered: format!(
                 "Von {} - {}",
-                self.to_hr(self.inner.start_time_ms),
-                self.to_hr(self.inner.end_time_ms)
+                secs_to_hr(self.inner.start_time_ms),
+                secs_to_hr(self.inner.end_time_ms)
             ),
         }
+    }
+
+    fn cmd(&self) -> i32 {
+        return self.inner.cmd();
     }
 
     fn deserialize(&self) -> AgentConfig {
@@ -129,16 +137,72 @@ impl AgentTrait for TimeAgent {
 
     fn state(&self) -> AgentState {
         if self.inner.cmd() == CMD_ACTIVE {
-            if let Some((active, until)) = self.inner.force_state.read().unwrap().as_ref() {
-                if until < &Utc::now() {
-                    return AgentState::Forced(*active, *until);
-                } else {
-                    *self.inner.force_state.write().unwrap() = None
-                }
+            let state_guard = self.inner.force_state.read().unwrap().to_owned();
+            let until_opt = match state_guard {
+                AgentState::Executing(until) => (true, Some(until)),
+                AgentState::Stopped(until) => (false, Some(until)),
+                _ => (false, None),
+            };
+
+            if let (active, Some(until)) = until_opt {
+                if until < Utc::now() {
+                    return if active {
+                        AgentState::Executing(until)
+                    } else {
+                        AgentState::Stopped(until)
+                    };
+                };
             }
             return AgentState::Active;
         }
-        AgentState::Default
+        AgentState::Ready
+    }
+
+    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+        let mut config = HashMap::new();
+        config.insert("active", ("Agent aktiv", AgentConfigType::Switch(true)));
+        config.insert(
+            "time",
+            (
+                "Startzeit",
+                AgentConfigType::DateTime(self.inner.start_time_ms as u64),
+            ),
+        );
+        config.insert(
+            "slider",
+            (
+                "Bewässerungsdauer in Stunden",
+                AgentConfigType::IntSliderRange(0, 24, self.duration() as i64),
+            ),
+        );
+        config
+    }
+
+    fn on_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
+        let active;
+        let time;
+        let duration;
+        if let AgentConfigType::Switch(val) = &values["active"] {
+            active = *val;
+        } else {
+            return false;
+        }
+        if let AgentConfigType::DateTime(val) = &values["time"] {
+            time = *val;
+        } else {
+            return false;
+        }
+        if let AgentConfigType::IntSliderRange(_, __, val) = &values["slider"] {
+            duration = *val;
+        } else {
+            return false;
+        }
+
+        info!(
+            self.inner.logger,
+            "Set config: {}, {}, {}", active, time, duration
+        );
+        return true;
     }
 }
 
@@ -157,19 +221,13 @@ impl TimeAgent {
         );
     }
 
-    fn to_hr(&self, time_ms: u32) -> String {
-        let seconds = time_ms / 1000;
-        let minutes = seconds / 60;
-        let hours = minutes / 60;
-
-        let pad = |x| {
-            return if x < 10 {
-                format!("0{}", x)
-            } else {
-                format!("{}", x)
-            };
-        };
-        return format!("{}:{}", pad(hours), pad(minutes % 60));
+    fn duration(&self) -> i32 {
+        let is_next_day = self.inner.end_time_ms <= self.inner.start_time_ms;
+        if is_next_day {
+            DAY_MS - self.inner.start_time_ms + self.inner.start_time_ms
+        } else {
+            self.inner.end_time_ms - self.inner.start_time_ms
+        }
     }
 }
 
@@ -200,12 +258,14 @@ impl TimeAgentInner {
     }
 
     fn cmd(&self) -> i32 {
-        if let Some((active, until)) = self.force_state.read().unwrap().as_ref() {
-            let now = Utc::now();
-            if until < &now {
-                return if *active { CMD_ACTIVE } else { CMD_INACTIVE };
-            } else {
-                *self.force_state.write().unwrap() = None
+        let state_guard = self.force_state.read().unwrap().to_owned();
+        if let AgentState::Executing(until) = state_guard {
+            if until < Utc::now() {
+                return CMD_ACTIVE;
+            }
+        } else if let AgentState::Stopped(until) = state_guard {
+            if until < Utc::now() {
+                return CMD_INACTIVE;
             }
         }
 
@@ -219,9 +279,9 @@ impl TimeAgentInner {
     fn now_in_range(&self) -> bool {
         let now = Utc::now();
 
-        let mut daytime_ms = now.second() * 1000; // Secs
-        daytime_ms += now.minute() * 60 * 1000; // Mins
-        daytime_ms += now.hour() * 60 * (60 * 1000); // Hours
+        let mut daytime_ms = now.second() as i32 * 1000; // Secs
+        daytime_ms += now.minute() as i32 * 60 * 1000; // Mins
+        daytime_ms += now.hour() as i32 * 60 * (60 * 1000); // Hours
 
         let is_next_day = self.end_time_ms <= self.start_time_ms;
         if is_next_day {

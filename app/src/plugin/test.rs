@@ -1,4 +1,6 @@
-use chrono::{DateTime, Duration, Utc};
+use std::collections::HashMap;
+
+use chrono::Duration;
 use iftem_core::*;
 
 #[derive(std::fmt::Debug, PartialEq)]
@@ -17,11 +19,11 @@ impl MockAgent {
 }
 
 impl AgentTrait for MockAgent {
-    fn do_action(&mut self, _data: &SensorDataMessage) {
-        self.last_action = Some(1);
+    fn on_data(&mut self, _data: &SensorDataMessage) {
+        // no-op
     }
 
-    fn do_force(&mut self, _active: bool, _until: DateTime<Utc>) {
+    fn on_cmd(&mut self, _payload: i64) {
         // no-op
     }
 
@@ -37,14 +39,22 @@ impl AgentTrait for MockAgent {
     }
 
     fn state(&self) -> AgentState {
-        AgentState::Active
+        AgentState::Ready
     }
 
     fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
         AgentUI {
-            decorator: AgentUIDecorator::Slider(0.0, 1.0),
+            decorator: AgentUIDecorator::Slider(0.0, 1.0, 0.5),
             rendered: format!("Last tested at {}", data.timestamp),
             state: AgentState::default(),
         }
+    }
+
+    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+        HashMap::new()
+    }
+
+    fn on_config(&mut self, _: &HashMap<String, AgentConfigType>) -> bool {
+        true
     }
 }

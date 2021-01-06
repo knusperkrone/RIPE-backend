@@ -5,9 +5,12 @@ use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use crossbeam::atomic::AtomicCell;
 use iftem_core::*;
 use serde::{Deserialize, Serialize};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, RwLock,
+use std::{
+    collections::HashMap,
+    sync::{ 
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
 };
 use tokio::sync::mpsc::Sender;
 
@@ -15,9 +18,6 @@ const NAME: &str = "ThresholdAgent";
 const VERSION_CODE: u32 = 1;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
-
-const CMD_ACTIVE: i32 = 1;
-const CMD_INACTIVE: i32 = 1;
 
 #[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
@@ -54,7 +54,7 @@ pub struct ThresholdAgent {
     #[serde(skip)]
     task_cell: RwLock<ThresholdTask>,
     state: AgentState,
-    min_threshold: f64,
+    min_threshold: u32,
     action_duration_sec: i64,
     action_cooldown_sec: i64,
     action_start: Option<DateTime<Utc>>,
@@ -79,7 +79,7 @@ impl Default for ThresholdAgent {
             sender: iftem_core::sender_sentinel(),
             task_cell: RwLock::default(),
             state: AgentState::Active.into(),
-            min_threshold: 20.0,
+            min_threshold: 20,
             action_duration_sec: 60,
             action_cooldown_sec: 30,
             action_start: None,
@@ -88,18 +88,8 @@ impl Default for ThresholdAgent {
     }
 }
 
-impl ThresholdAgent {
-    fn start_task(&self, force: bool, until: DateTime<Utc>) {
-        if let Ok(mut task) = self.task_cell.write() {
-            task.kickoff(force, until, self.logger.clone(), self.sender.clone());
-        } else {
-            error!(self.logger, "{} cannot start task!", NAME);
-        }
-    }
-}
-
 impl AgentTrait for ThresholdAgent {
-    fn do_action(&mut self, data: &SensorDataMessage) {
+    fn on_data(&mut self, data: &SensorDataMessage) {
         if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
                 info!(self.logger, "{} no action, as already running", NAME);
@@ -121,48 +111,30 @@ impl AgentTrait for ThresholdAgent {
             return;
         }
 
-        let moisture = data.moisture.unwrap_or(std::f64::MAX);
+        let moisture = data.moisture.unwrap_or(std::f64::MAX) as u32;
         if moisture < self.min_threshold {
             info!(self.logger, "{} moisture below threshold", NAME);
             let until = Utc::now() + Duration::seconds(self.action_duration_sec);
             self.last_action = Some(until);
-            self.start_task(false, until);
+            if let Ok(mut task) = self.task_cell.write() {
+                task.kickoff(until, self.logger.clone(), self.sender.clone());
+            }
         } else {
             info!(self.logger, "{} moisture was fine {}%", NAME, moisture);
         }
     }
 
-    fn do_force(&mut self, set_active: bool, until: DateTime<Utc>) {
+    fn on_cmd(&mut self, payload: i64) {
         if let Ok(mut task) = self.task_cell.write() {
-            if task.is_active() && !set_active {
-                task.abort();
-            } else if !task.is_active() && set_active {
-                self.last_action = Some(Utc::now());
-                task.kickoff(true, until, self.logger.clone(), self.sender.clone());
-            }
-        }
-    }
-
-    fn state(&self) -> AgentState {
-        if let Ok(task) = self.task_cell.read() {
-            return task.state();
-        }
-        AgentState::Error
-    }
-
-    fn cmd(&self) -> i32 {
-        if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
-                return 1;
+                task.abort();
+            } else if !task.is_active() {
+                let until_opt = AgentUIDecorator::transform_cmd_timepane(payload);
+                if let Some(until) = until_opt {
+                    self.last_action = Some(Utc::now());
+                    task.kickoff(until, self.logger.clone(), self.sender.clone());
+                }
             }
-        }
-        0
-    }
-
-    fn deserialize(&self) -> AgentConfig {
-        AgentConfig {
-            name: NAME.to_owned(),
-            state_json: serde_json::to_string(self).unwrap(),
         }
     }
 
@@ -189,6 +161,82 @@ impl AgentTrait for ThresholdAgent {
             state: self.state(),
         }
     }
+
+    fn state(&self) -> AgentState {
+        if let Ok(task) = self.task_cell.read() {
+            return task.state();
+        }
+        AgentState::Error
+    }
+
+    fn cmd(&self) -> i32 {
+        if let Ok(task) = self.task_cell.read() {
+            if task.is_active() {
+                return 1;
+            }
+        }
+        0
+    }
+
+    fn deserialize(&self) -> AgentConfig {
+        AgentConfig {
+            name: NAME.to_owned(),
+            state_json: serde_json::to_string(self).unwrap(),
+        }
+    }
+
+    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+        let mut config = HashMap::new();
+        config.insert("active", ("Agent aktiv", AgentConfigType::Switch(true)));
+        config.insert(
+            "min_threshold",
+            (
+                "Schwellenwert",
+                AgentConfigType::IntRange(0, 100, self.min_threshold as i64),
+            ),
+        );
+        config.insert(
+            "action_duration_sec",
+            (
+                "Bewässerungsdauer in Minuten",
+                AgentConfigType::IntRange(0, i64::MAX, self.action_duration_sec),
+            ),
+        );
+        config.insert(
+            "action_cooldown_sec",
+            (
+                "Pause in Minuten",
+                AgentConfigType::IntRange(0, i64::MAX, self.action_cooldown_sec),
+            ),
+        );
+        config
+    }
+
+    fn on_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
+        let min_threshold;
+        let action_duration_sec;
+        let action_cooldown_sec;
+        if let AgentConfigType::IntRange(_, __, val) = &values["min_threshold"] {
+            min_threshold = *val;
+        } else {
+            return false;
+        }
+        if let AgentConfigType::IntRange(_, __, val) = &values["action_duration_sec"] {
+            action_duration_sec = *val;
+        } else {
+            return false;
+        }
+        if let AgentConfigType::IntRange(_, __, val) = &values["action_cooldown_sec"] {
+            action_cooldown_sec = *val;
+        } else {
+            return false;
+        }
+
+        self.min_threshold = min_threshold as u32;
+        self.action_duration_sec = action_duration_sec;
+        self.action_cooldown_sec = action_cooldown_sec;
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -203,10 +251,8 @@ struct ThresholdTaskBuilder {
 
 #[derive(Debug)]
 struct ThresholdTaskInner {
-    active: Arc<AtomicBool>,
     aborted: Arc<AtomicBool>,
     state: AtomicCell<AgentState>,
-    forced: bool,
     until: DateTime<Utc>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
@@ -216,10 +262,8 @@ impl Default for ThresholdTask {
     fn default() -> Self {
         ThresholdTask {
             task_config: Arc::new(ThresholdTaskInner {
-                active: Arc::new(AtomicBool::from(false)),
                 aborted: Arc::new(AtomicBool::from(false)),
-                state: AtomicCell::new(AgentState::Default),
-                forced: false,
+                state: AtomicCell::new(AgentState::Active),
                 until: Utc::now(),
                 logger: iftem_core::logger_sentinel(),
                 sender: iftem_core::sender_sentinel(),
@@ -231,7 +275,6 @@ impl Default for ThresholdTask {
 impl ThresholdTask {
     pub fn kickoff(
         &mut self,
-        forced: bool,
         until: DateTime<Utc>,
         logger: slog::Logger,
         sender: Sender<AgentMessage>,
@@ -245,10 +288,8 @@ impl ThresholdTask {
         }
 
         self.task_config = Arc::new(ThresholdTaskInner {
-            active: Arc::new(AtomicBool::new(true)),
             aborted: Arc::new(AtomicBool::new(false)),
-            state: AtomicCell::new(AgentState::Default),
-            forced: forced,
+            state: AtomicCell::new(AgentState::Active),
             until: until,
             logger: logger,
             sender: sender,
@@ -272,7 +313,11 @@ impl ThresholdTask {
     }
 
     fn is_active(&self) -> bool {
-        self.task_config.active.load(Ordering::Relaxed)
+        return if let AgentState::Executing(_) = self.task_config.state.load() {
+            true
+        } else {
+            false
+        };
     }
 }
 
@@ -283,18 +328,15 @@ impl FutBuilder for ThresholdTaskBuilder {
         let config = self.task_config.clone();
         Box::pin(async move {
             let start = Utc::now();
-            let mut state = AgentState::Active;
-            if config.forced {
-                state = AgentState::Forced(true, config.until.clone());
-            }
 
+            config
+                .state
+                .store(AgentState::Executing(config.until.clone()));
             iftem_core::send_payload(
                 &config.logger,
                 &config.sender,
                 AgentMessage::Command(CMD_ACTIVE),
             );
-            config.state.store(state);
-            iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(1));
             info!(
                 config.logger,
                 "{} started Task until {}", NAME, config.until
@@ -304,15 +346,12 @@ impl FutBuilder for ThresholdTaskBuilder {
                 iftem_core::task_sleep(0).await;
             }
 
-            config.active.store(false, Ordering::Relaxed);
-            state = AgentState::Default;
+            config.state.store(AgentState::Ready);
             iftem_core::send_payload(
                 &config.logger,
                 &config.sender,
                 AgentMessage::Command(CMD_INACTIVE),
             );
-            config.state.store(state);
-            iftem_core::send_payload(&config.logger, &config.sender, AgentMessage::Command(0));
 
             let delta_secs = (Utc::now() - start).num_seconds();
             if config.aborted.load(Ordering::Relaxed) {

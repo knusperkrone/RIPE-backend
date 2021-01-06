@@ -1,6 +1,14 @@
 use crate::AgentMessage;
 
 /*
+ * conventions
+ */
+
+pub const CMD_ACTIVE: i32 = 1;
+pub const CMD_INACTIVE: i32 = 0;
+
+
+/*
  * helper
  */
 
@@ -16,12 +24,27 @@ pub fn send_payload(
     }
 }
 
+pub fn secs_to_hr(time_ms: i32) -> String {
+    let seconds = time_ms / 1000;
+    let minutes = seconds / 60; 
+    let hours = minutes / 60;
+
+    let pad_fn = |x| {
+        return if x < 10 {
+            format!("0{}", x)
+        } else {
+            format!("{}", x)
+        };
+    };
+    return format!("{}:{}", pad_fn(hours), pad_fn(minutes % 60));
+}
+
 /*
- * Task stubs
+ * task stubs
  */
 
 pub async fn task_sleep(nanos: u64) {
-    tokio::task::yield_now().await;
+    // Workaround until tokio 1 in actix-rt
     std::thread::sleep(std::time::Duration::from_nanos(nanos));
 }
 

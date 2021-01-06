@@ -1,12 +1,12 @@
 use super::build_response;
 use crate::sensor::ConcurrentSensorObserver;
 use actix_web::{web, HttpResponse};
-use std::sync::Arc;
+use iftem_core::AgentConfigType;
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(serde::Deserialize)]
 struct ForceRequest {
-    active: bool,
-    secs: u32,
+    payload: i64,
 }
 
 /// Registers an agent to a sensor
@@ -37,16 +37,36 @@ async fn agent_unregister(
     build_response(resp)
 }
 
-async fn force_state(
+async fn on_agent_cmd(
     observer: web::Data<Arc<ConcurrentSensorObserver>>,
     path: web::Path<(i32, String, String)>,
-    params: web::Query<ForceRequest>,
+    params: web::Json<ForceRequest>,
 ) -> HttpResponse {
     let (sensor_id, key_b64, domain) = path.into_inner();
-    let active = params.active;
-    let secs = chrono::Duration::seconds(params.secs as i64);
+    let payload = params.payload;
     let resp = observer
-        .force_agent(sensor_id, key_b64, domain, active, secs)
+        .on_agent_cmd(sensor_id, key_b64, domain, payload)
+        .await;
+    build_response(resp)
+}
+
+async fn agent_config(
+    observer: web::Data<Arc<ConcurrentSensorObserver>>,
+    path: web::Path<(i32, String, String)>,
+) -> HttpResponse {
+    let (sensor_id, key_b64, domain) = path.into_inner();
+    let resp = observer.agent_config(sensor_id, key_b64, domain).await;
+    build_response(resp)
+}
+
+async fn on_agent_config(
+    observer: web::Data<Arc<ConcurrentSensorObserver>>,
+    path: web::Path<(i32, String, String)>,
+    config_request: web::Json<HashMap<String, AgentConfigType>>,
+) -> HttpResponse {
+    let (sensor_id, key_b64, domain) = path.into_inner();
+    let resp = observer
+        .on_agent_config(sensor_id, key_b64, domain, config_request.0)
         .await;
     build_response(resp)
 }
@@ -59,6 +79,9 @@ async fn get_active_agents(observer: web::Data<Arc<ConcurrentSensorObserver>>) -
     HttpResponse::Ok().json(agents)
 }
 
+/// Config
+///
+/// Registers endpoints of this file
 pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("api/agent").route(web::get().to(get_active_agents)))
         .service(
@@ -66,12 +89,19 @@ pub fn config_endpoints(cfg: &mut web::ServiceConfig) {
                 .route(web::post().to(agent_register))
                 .route(web::delete().to(agent_unregister)),
         )
-        .service(web::resource("api/agent/{id}/{key}/{domain}").route(web::post().to(force_state)));
+        .service(
+            web::resource("api/agent/{id}/{key}/{domain}/config")
+                .route(web::get().to(agent_config))
+                .route(web::post().to(on_agent_config)),
+        )
+        .service(
+            web::resource("api/agent/{id}/{key}/{domain}").route(web::post().to(on_agent_cmd)),
+        );
 }
 
 ///
 /// DTO
-///
+/// 
 pub mod dto {
     use iftem_core::AgentUI;
     use serde::{Deserialize, Serialize};
@@ -99,28 +129,24 @@ mod test {
     use crate::rest::AgentRegisterDto;
     use actix_web::dev::Service;
     use actix_web::{test, web, App};
-    use chrono::Utc;
     use iftem_core::{AgentState, AgentUIDecorator};
 
     #[actix_rt::test]
-    async fn test_print_agent_state() {
-        AgentUIDecorator::Slider(0.0, 1.0);
+    async fn test_print_serialized_agent_state() {
+        AgentUIDecorator::Slider(0.0, 1.0, 0.5);
         AgentUIDecorator::TimePane(60);
 
         println!(
             "Slider: {}",
-            serde_json::json!(AgentUIDecorator::Slider(0.0, 1.0))
+            serde_json::json!(AgentUIDecorator::Slider(0.0, 1.0, 0.5))
         );
         println!(
             "TimePane: {}",
             serde_json::json!(AgentUIDecorator::TimePane(60))
         );
         println!("Active: {}", serde_json::json!(AgentState::Active));
-        println!("Default: {}", serde_json::json!(AgentState::Default));
-        println!(
-            "Forced: {}",
-            serde_json::json!(AgentState::Forced(true, Utc::now()))
-        );
+        println!("Default: {}", serde_json::json!(AgentState::Disabled));
+        println!("Forced: {}", serde_json::json!(AgentState::Error));
     }
 
     #[actix_rt::test]

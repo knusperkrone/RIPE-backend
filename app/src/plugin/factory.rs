@@ -82,8 +82,8 @@ impl AgentFactory {
                     let ext = path.extension().unwrap();
                     if (cfg!(unix) && ext == "so") || (cfg!(windows) && ext == "dll") {
                         match self.load_library(path.as_os_str()) {
-                            Ok(lib_name) => {
-                                info!(APP_LOGGING, "Loaded plugin {:?}", path);
+                            Ok((lib_name, version)) => {
+                                info!(APP_LOGGING, "Loaded plugin {:?} v{}", path, version);
                                 return Some(lib_name.to_owned());
                             }
                             Err(err) => {
@@ -100,7 +100,7 @@ impl AgentFactory {
     unsafe fn load_library<P: AsRef<OsStr>>(
         &mut self,
         library_path: P,
-    ) -> Result<String, PluginError> {
+    ) -> Result<(String, u32), PluginError> {
         // load the library into memory
         let library = Library::new(library_path)?;
 
@@ -122,7 +122,6 @@ impl AgentFactory {
             let loaded_decl = loaded_lib
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
                 .read();
-
             
             if loaded_decl.agent_version <= decl.agent_version {
                 return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
@@ -130,7 +129,7 @@ impl AgentFactory {
         }
         self.libraries
             .insert(decl.agent_name.to_owned(), Arc::new(library));
-        return Ok(decl.agent_name.to_owned());
+        return Ok((decl.agent_name.to_owned(), decl.agent_version));
     }
 
     pub unsafe fn build_proxy_agent(
@@ -144,7 +143,7 @@ impl AgentFactory {
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
                 .unwrap() // Panic should be impossible
                 .read();
-
+ 
             let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
             let proxy = (decl.agent_builder)(state_json, logger.clone(), plugin_sender.clone());
             Some((library.clone(), proxy))

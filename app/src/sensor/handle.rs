@@ -2,8 +2,8 @@ use crate::error::{DBError, ObserverError, PluginError};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
 use crate::plugin::{Agent, AgentFactory};
-use iftem_core::{error::AgentError, SensorDataMessage};
-use std::vec::Vec;
+use iftem_core::{error::AgentError, AgentConfigType, SensorDataMessage};
+use std::{collections::HashMap, vec::Vec};
 
 #[derive(Debug)]
 pub struct SensorHandleMessage {
@@ -90,15 +90,10 @@ impl SensorHandle {
         }
     }
 
-    pub fn force_agent(
-        &mut self,
-        domain: &String,
-        active: bool,
-        duration: chrono::Duration,
-    ) -> Result<(), ObserverError> {
+    pub fn on_agent_cmd(&mut self, domain: &String, payload: i64) -> Result<(), ObserverError> {
         for agent in self.agents.iter_mut() {
             if agent.domain() == domain {
-                agent.on_force(active, duration);
+                agent.on_cmd(payload);
                 return Ok(());
             }
         }
@@ -125,6 +120,34 @@ impl SensorHandle {
             }
         }
         None
+    }
+
+    pub fn agent_config(&self, domain: &String) -> Option<HashMap<String, (String, AgentConfigType)>> {
+        for agent in self.agents.iter() {
+            if agent.domain() == domain {
+                return Some(agent.config());
+            }
+        }
+        None
+    }
+
+    pub fn on_agent_config(
+        &mut self,
+        domain: &String,
+        config: HashMap<String, AgentConfigType>,
+    ) -> Result<(), ObserverError> {
+        for agent in self.agents.iter_mut() {
+            if agent.domain() == domain {
+                if !agent.on_config(&config) {
+                    return Err(AgentError::InvalidConfig(
+                        serde_json::to_string(&config).unwrap_or("serde_error".to_owned()),
+                    )
+                    .into());
+                }
+                return Ok(());
+            }
+        }
+        Err(DBError::SensorNotFound(self.id()).into())
     }
 
     pub fn agents(&self) -> &Vec<Agent> {

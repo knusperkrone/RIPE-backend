@@ -11,14 +11,14 @@ use crate::models::{
 use crate::mqtt::MqttSensorClient;
 use crate::rest::{AgentRegisterDto, AgentStatusDto, SensorRegisterResponseDto, SensorStatusDto};
 use diesel::pg::PgConnection;
-use iftem_core::SensorDataMessage;
+use iftem_core::{AgentConfigType, SensorDataMessage};
 use notify::{watcher, Watcher};
 use std::{collections::hash_map::Values, collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
-    stream::StreamExt,
     sync::mpsc::{unbounded_channel, UnboundedReceiver},
     sync::{Mutex, RwLock},
 };
+
 pub struct ConcurrentSensorObserver {
     container_ref: Arc<std::sync::RwLock<SensorCache>>,
     agent_factory: Mutex<AgentFactory>,
@@ -127,7 +127,7 @@ impl ConcurrentSensorObserver {
         let mut receiver = receiver_res.unwrap();
         loop {
             info!(APP_LOGGING, "Start capturing iac events");
-            while let Some(item) = receiver.next().await {
+            while let Some(item) = receiver.recv().await {
                 let container = self.container_ref.read().unwrap();
                 let sensor_opt = container.sensor_unchecked(item.sensor_id);
                 if sensor_opt.is_some() {
@@ -305,20 +305,51 @@ impl ConcurrentSensorObserver {
         Ok(())
     }
 
-    pub async fn force_agent(
+    pub async fn on_agent_cmd(
         &self,
         sensor_id: i32,
         key_b64: String,
         domain: String,
-        active: bool,
-        duration: chrono::Duration,
+        payload: i64,
     ) -> Result<(), ObserverError> {
         let container = self.container_ref.read().unwrap();
         let mut sensor = container
             .sensor(sensor_id, &key_b64)
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
-        sensor.force_agent(&domain, active, duration)?;
+        sensor.on_agent_cmd(&domain, payload)?;
+        Ok(())
+    }
+
+    pub async fn agent_config(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+        domain: String,
+    ) -> Result<HashMap<String, (String, AgentConfigType)>, ObserverError> {
+        let container = self.container_ref.read().unwrap();
+        let sensor = container
+            .sensor(sensor_id, &key_b64)
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        Ok(sensor
+            .agent_config(&domain)
+            .ok_or(DBError::SensorNotFound(sensor_id))?)
+    }
+
+    pub async fn on_agent_config(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+        domain: String,
+        config: HashMap<String, AgentConfigType>,
+    ) -> Result<(), ObserverError> {
+        let container = self.container_ref.write().unwrap();
+        let mut sensor = container
+            .sensor(sensor_id, &key_b64)
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        sensor.on_agent_config(&domain, config)?;
         Ok(())
     }
 

@@ -3,25 +3,32 @@ use crate::logging::APP_LOGGING;
 use crate::plugin::AgentFactory;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorHandleMessage};
 use futures::future::{AbortHandle, Abortable};
-use iftem_core::{AgentMessage, AgentState, AgentTrait, AgentUI, FutBuilder, SensorDataMessage};
+use iftem_core::{
+    AgentConfigType, AgentMessage, AgentState, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
+};
 use libloading::Library;
 use std::{
+    collections::HashMap,
     string::String,
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicU32, Ordering},
         Arc, RwLock,
     },
 };
-use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 
-static TERMINATED: AtomicBool = AtomicBool::new(false);
+static TERMINATED: AtomicU32 = AtomicU32::new(0);
 static TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 pub fn register_sigint_handler() {
     // Set termination handler
     ctrlc::set_handler(|| {
-        TERMINATED.store(true, Ordering::Relaxed);
+        let count = TERMINATED.fetch_add(1, Ordering::Relaxed);
+        if count == 1 {
+            info!(APP_LOGGING, "Force killing");
+            std::process::exit(0);
+        }
+
         let task_count = TASK_COUNTER.load(Ordering::Relaxed);
         if task_count == 0 {
             std::process::exit(0);
@@ -100,13 +107,17 @@ impl Agent {
     }
 
     pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        if self.agent_proxy.state() == AgentState::Active {
+        let agent_state = self.agent_proxy.state();
+        if agent_state != AgentState::Ready && agent_state != AgentState::Disabled {
             info!(
                 APP_LOGGING,
                 "Failed reloading active agent: {}", self.sensor_id
             );
-            return Err(PluginError::AgentStateError(AgentState::Active));
+            return Err(PluginError::AgentStateError(agent_state));
         }
+
+        // TODO: FIX RACE condition for tasks
+        // TODO: Kill running tasks
 
         info!(
             APP_LOGGING,
@@ -124,12 +135,12 @@ impl Agent {
         Ok(())
     }
 
-    pub fn on_force(&mut self, active: bool, duration: chrono::Duration) {
+    pub fn on_cmd(&mut self, cmd: i64) {
         info!(
             APP_LOGGING,
-            "Forcing agent: {} - {}", self.sensor_id, self.domain
+            "{}-{} agent cmd: {}", self.sensor_id, self.domain, cmd
         );
-        self.agent_proxy.on_force(active, duration);
+        self.agent_proxy.on_cmd(cmd);
     }
 
     pub fn on_data(&mut self, data: &SensorDataMessage) {
@@ -142,6 +153,19 @@ impl Agent {
 
     pub fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
         self.agent_proxy.render_ui(data)
+    }
+
+    pub fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
+        let mut config = self.agent_proxy.config();
+        let mut transformed = HashMap::with_capacity(config.len());
+        for (k, (v0, v1)) in config.drain() {
+            transformed.insert(k.to_owned(), (v0.to_owned(), v1));
+        }
+        transformed
+    }
+
+    pub fn on_config(&mut self, config: &HashMap<String, AgentConfigType>) -> bool {
+        self.agent_proxy.on_config(config)
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {
@@ -181,7 +205,7 @@ impl Agent {
         mut plugin_receiver: Receiver<AgentMessage>,
         repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
-        while let Some(payload) = plugin_receiver.next().await {
+        while let Some(payload) = plugin_receiver.recv().await {
             match payload {
                 AgentMessage::OneshotTask(agent_task_builder) => {
                     Agent::dispatch_oneshot_task(sensor_id, agent_task_builder).await;
@@ -220,10 +244,10 @@ impl Agent {
     }
 
     async fn dispatch_oneshot_task(sensor_id: i32, agent_task: Box<dyn FutBuilder>) {
-        if TERMINATED.load(Ordering::Relaxed) {
+        if TERMINATED.load(Ordering::Relaxed) != 0 {
             info!(APP_LOGGING, "Task wasn't started as app is cancelled");
         } else {
-            tokio::task::spawn(async move {
+            tokio::spawn(async move {
                 let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
                 info!(
                     APP_LOGGING,
@@ -239,7 +263,7 @@ impl Agent {
                     sensor_id,
                     task_count
                 );
-                if TERMINATED.load(Ordering::Relaxed) && task_count == 0 {
+                if TERMINATED.load(Ordering::Relaxed) != 0 && task_count == 0 {
                     std::process::exit(0);
                 }
             });
@@ -271,7 +295,7 @@ impl Agent {
 
                         let is_finished = interval_task.build_future().await;
                         let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-                        if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
+                        if task_count == 0 && TERMINATED.load(Ordering::Relaxed) != 0 {
                             std::process::exit(0);
                         }
 

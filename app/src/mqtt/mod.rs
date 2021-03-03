@@ -149,15 +149,14 @@ impl MqttSensorClient {
         sensor: &SensorHandle,
     ) -> Result<(), MQTTError> {
         let cmd_topic = MqttSensorClient::build_topic(sensor, MqttSensorClient::CMD_TOPIC);
-        info!(APP_LOGGING, "Send command to sensor {}", cmd_topic);
 
         let mut cmds = sensor.format_cmds();
-        let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
+        info!(APP_LOGGING, "Send command to sensor {} - {:?}", cmd_topic, cmds);
 
+        let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
         let publ = Message::new_retained(cmd_topic, payload, QOS);
         mqtt_client.publish(publ).await?;
 
-        info!(APP_LOGGING, "Send command to sensor {}", sensor.id());
         Ok(())
     }
 

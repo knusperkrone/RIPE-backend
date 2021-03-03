@@ -124,7 +124,7 @@ impl AgentFactory {
                 .read();
             
             if loaded_decl.agent_version <= decl.agent_version {
-                return Err(PluginError::Duplicate(decl.agent_name.to_owned()));
+                return Err(PluginError::Duplicate(decl.agent_name.to_owned(), decl.agent_version));
             }
         }
         self.libraries

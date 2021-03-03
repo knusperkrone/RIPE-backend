@@ -127,7 +127,7 @@ impl Agent {
         unsafe {
             let (libary, proxy) = factory
                 .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
-                .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone()))?;
+                .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone(), 0))?;
             self.library_ref = libary;
             self.agent_proxy = proxy;
         }

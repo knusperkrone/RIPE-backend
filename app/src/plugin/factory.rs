@@ -1,6 +1,6 @@
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
-use crate::{models::dao::AgentConfigDao, sensor::handle::SensorHandleMessage};
+use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use dotenv::dotenv;
 use iftem_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
 use libloading::Library;
@@ -12,12 +12,12 @@ use super::Agent;
 
 #[derive(Debug)]
 pub struct AgentFactory {
-    agent_sender: UnboundedSender<SensorHandleMessage>,
+    agent_sender: UnboundedSender<SensorMQTTCommand>,
     libraries: HashMap<String, Arc<Library>>,
 }
 
 impl AgentFactory {
-    pub fn new(sender: UnboundedSender<SensorHandleMessage>) -> Self {
+    pub fn new(sender: UnboundedSender<SensorMQTTCommand>) -> Self {
         let mut factory = AgentFactory {
             agent_sender: sender,
             libraries: HashMap::new(),
@@ -122,9 +122,12 @@ impl AgentFactory {
             let loaded_decl = loaded_lib
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
                 .read();
-            
+
             if loaded_decl.agent_version <= decl.agent_version {
-                return Err(PluginError::Duplicate(decl.agent_name.to_owned(), decl.agent_version));
+                return Err(PluginError::Duplicate(
+                    decl.agent_name.to_owned(),
+                    decl.agent_version,
+                ));
             }
         }
         self.libraries
@@ -137,16 +140,16 @@ impl AgentFactory {
         agent_name: &String,
         state_json: Option<&String>,
         plugin_sender: &Sender<AgentMessage>,
-    ) -> Option<(Arc<Library>, Box<dyn AgentTrait>)> {
+    ) -> Option<Box<dyn AgentTrait>> {
         if let Some(library) = self.libraries.get(agent_name) {
             let decl = library
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
-                .unwrap() // Panic should be impossible
-                .read();
- 
+                .unwrap()
+                .read(); // Panic should be impossible
+
             let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
             let proxy = (decl.agent_builder)(state_json, logger.clone(), plugin_sender.clone());
-            Some((library.clone(), proxy))
+            Some(proxy)
         } else {
             None
         }
@@ -170,13 +173,10 @@ impl AgentFactory {
                 domain.clone(),
                 agent_name.clone(),
                 Box::new(crate::plugin::test::MockAgent::new()),
-                Arc::new(Library::new("./libtest_agent.so").unwrap()),
             ));
         }
 
-        if let Some((plugin_library, plugin_agent)) =
-            self.build_proxy_agent(agent_name, state_json, &plugin_sender)
-        {
+        if let Some(plugin_agent) = self.build_proxy_agent(agent_name, state_json, &plugin_sender) {
             Ok(Agent::new(
                 self.agent_sender.clone(),
                 plugin_sender,
@@ -185,7 +185,6 @@ impl AgentFactory {
                 domain.clone(),
                 agent_name.clone(),
                 plugin_agent,
-                plugin_library,
             ))
         } else {
             Err(AgentError::InvalidIdentifier(agent_name.clone()))

@@ -1,12 +1,11 @@
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
 use crate::plugin::AgentFactory;
-use crate::{models::dao::AgentConfigDao, sensor::handle::SensorHandleMessage};
+use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use futures::future::{AbortHandle, Abortable};
 use iftem_core::{
     AgentConfigType, AgentMessage, AgentState, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
-use libloading::Library;
 use std::{
     collections::HashMap,
     string::String,
@@ -47,7 +46,6 @@ pub struct Agent {
     repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     agent_proxy: Box<dyn AgentTrait>,
     needs_update: bool,
-    library_ref: Arc<Library>, // Reference counter, to not free lib .text section
 }
 
 impl std::fmt::Debug for Agent {
@@ -70,14 +68,13 @@ impl Drop for Agent {
 /// All messages, are handled via the iac-stream
 impl Agent {
     pub fn new(
-        agent_sender: UnboundedSender<SensorHandleMessage>,
+        agent_sender: UnboundedSender<SensorMQTTCommand>,
         plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
         domain: String,
         agent_name: String,
         agent_proxy: Box<dyn AgentTrait>,
-        library_ref: Arc<Library>,
     ) -> Self {
         let repeat_abort_handle = Arc::new(RwLock::new(None));
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
@@ -101,7 +98,6 @@ impl Agent {
             abort_handle,
             repeat_abort_handle,
             agent_proxy,
-            library_ref,
             needs_update: false,
         }
     }
@@ -116,35 +112,32 @@ impl Agent {
             return Err(PluginError::AgentStateError(agent_state));
         }
 
-        // TODO: FIX RACE condition for tasks
         // TODO: Kill running tasks
-
         info!(
             APP_LOGGING,
             "Reloading agent: {} - {}", self.sensor_id, self.domain
         );
         let state_json = self.agent_proxy.deserialize().state_json;
         unsafe {
-            let (libary, proxy) = factory
+            let proxy = factory
                 .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
                 .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone(), 0))?;
-            self.library_ref = libary;
             self.agent_proxy = proxy;
         }
         self.needs_update = false;
         Ok(())
     }
 
-    pub fn on_cmd(&mut self, cmd: i64) {
+    pub fn handle_cmd(&mut self, cmd: i64) {
         info!(
             APP_LOGGING,
             "{}-{} agent cmd: {}", self.sensor_id, self.domain, cmd
         );
-        self.agent_proxy.on_cmd(cmd);
+        self.agent_proxy.handle_cmd(cmd);
     }
 
-    pub fn on_data(&mut self, data: &SensorDataMessage) {
-        self.agent_proxy.on_data(data);
+    pub fn handle_data(&mut self, data: &SensorDataMessage) {
+        self.agent_proxy.handle_data(data);
     }
 
     pub fn cmd(&self) -> i32 {
@@ -164,8 +157,8 @@ impl Agent {
         transformed
     }
 
-    pub fn on_config(&mut self, config: &HashMap<String, AgentConfigType>) -> bool {
-        self.agent_proxy.on_config(config)
+    pub fn set_config(&mut self, config: &HashMap<String, AgentConfigType>) -> bool {
+        self.agent_proxy.set_config(config)
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {
@@ -201,7 +194,7 @@ impl Agent {
     async fn dispatch_iac(
         sensor_id: i32,
         domain: String,
-        agent_sender: UnboundedSender<SensorHandleMessage>,
+        agent_sender: UnboundedSender<SensorMQTTCommand>,
         mut plugin_receiver: Receiver<AgentMessage>,
         repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
@@ -220,8 +213,9 @@ impl Agent {
                     .await;
                 }
                 AgentMessage::Command(command) => {
+                    warn!(APP_LOGGING, "Received command {:?}", command);
                     // Notify main loop over agent
-                    let mut msg = SensorHandleMessage {
+                    let mut msg = SensorMQTTCommand {
                         sensor_id: sensor_id,
                         domain: domain.clone(),
                         payload: command,
@@ -247,6 +241,7 @@ impl Agent {
         if TERMINATED.load(Ordering::Relaxed) != 0 {
             info!(APP_LOGGING, "Task wasn't started as app is cancelled");
         } else {
+            // Run as task a sender messenges are blocked otherwise
             tokio::spawn(async move {
                 let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
                 info!(
@@ -254,7 +249,8 @@ impl Agent {
                     "Spawning new task for sensor: {} - active tasks: {}", sensor_id, task_count
                 );
 
-                agent_task.build_future().await;
+                let runtime = tokio::runtime::Handle::current();
+                agent_task.build_future(runtime).await;
 
                 task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                 info!(
@@ -293,7 +289,8 @@ impl Agent {
                     loop {
                         let _ = TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-                        let is_finished = interval_task.build_future().await;
+                        let runtime = tokio::runtime::Handle::current();
+                        let is_finished = interval_task.build_future(runtime).await;
                         let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                         if task_count == 0 && TERMINATED.load(Ordering::Relaxed) != 0 {
                             std::process::exit(0);
@@ -302,7 +299,7 @@ impl Agent {
                         if is_finished {
                             break;
                         }
-                        tokio::time::delay_for(delay.into()).await;
+                        tokio::time::sleep(delay.into()).await;
                     }
 
                     info!(APP_LOGGING, "Ended repeating task for {}", sensor_id);

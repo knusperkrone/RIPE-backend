@@ -12,7 +12,7 @@ use tokio::sync::mpsc::Sender;
 
 const NAME: &str = "TestAgent";
 const VERSION_CODE: u32 = 2;
- 
+
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
 #[allow(improper_ctypes_definitions)]
@@ -70,23 +70,28 @@ struct TestFutBuilder {
 impl FutBuilder for TestFutBuilder {
     fn build_future(
         &self,
+        runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let logger = self.logger.clone();
         if self.is_oneshot {
             let oneshot_sender = self.sender.clone();
             std::boxed::Box::pin(async move {
-                if let Ok(_) = oneshot_sender.clone().send(AgentMessage::Command(1)).await {
+                let _guard = runtime.enter();
+                if let Ok(_) = oneshot_sender.clone().try_send(AgentMessage::Command(1)) {
                     info!(logger, "SENT MESSAGE");
+                } else {
+                    error!(logger, "FAILED SENDING 1");
                 }
 
                 info!(logger, "TASK IS SLEEPING");
-                delay_task_for(std::time::Duration::from_secs(5)).await;
+                iftem_core::sleep(&runtime, std::time::Duration::from_secs(10)).await;
                 info!(logger, "TASK IS AWAKE");
                 true
             })
         } else {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
+                let _guard = runtime.enter();
                 info!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
@@ -97,11 +102,11 @@ impl FutBuilder for TestFutBuilder {
 }
 
 impl AgentTrait for TestAgent {
-    fn on_data(&mut self, data: &SensorDataMessage) {
+    fn handle_data(&mut self, data: &SensorDataMessage) {
         info!(self.logger, "Received data: {:?}", data);
     }
 
-    fn on_cmd(&mut self, payload: i64) {
+    fn handle_cmd(&mut self, payload: i64) {
         let val = AgentUIDecorator::transform_cmd_slider(payload);
         if val >= 0.0 && val <= 1.0 {
             self.val = val;
@@ -125,7 +130,7 @@ impl AgentTrait for TestAgent {
     }
 
     fn state(&self) -> AgentState {
-        AgentState::Active
+        AgentState::Ready
     }
 
     fn cmd(&self) -> i32 {
@@ -138,7 +143,10 @@ impl AgentTrait for TestAgent {
         config.insert("time", ("TestDateTime", AgentConfigType::DateTime(36000)));
         config.insert(
             "slider",
-            ("TestSliderRange", AgentConfigType::IntSliderRange(0, 24, 8)),
+            (
+                "TestSliderRange",
+                AgentConfigType::IntSliderRange(SliderFormatter::Linear, 0, 24, 8),
+            ),
         );
         config.insert(
             "slider",
@@ -147,7 +155,7 @@ impl AgentTrait for TestAgent {
         config
     }
 
-    fn on_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
+    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
         let active;
         let time;
         let slider;
@@ -161,7 +169,7 @@ impl AgentTrait for TestAgent {
         } else {
             return false;
         }
-        if let AgentConfigType::IntSliderRange(_, __, val) = &values["slider"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val, _f) = &values["slider"] {
             slider = *val;
         } else {
             return false;

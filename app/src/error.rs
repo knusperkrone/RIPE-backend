@@ -26,7 +26,6 @@ impl From<diesel::result::Error> for DBError {
 
 #[derive(Debug)]
 pub enum MQTTError {
-    NoSensor(),
     PathError(std::string::String),
     PayloadError(std::string::String),
     ParseError(serde_json::error::Error),
@@ -36,7 +35,6 @@ pub enum MQTTError {
 impl fmt::Display for MQTTError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MQTTError::NoSensor() => write!(f, "No sensor found"),
             MQTTError::PathError(msg) => write!(f, "Patherror: {}", msg),
             MQTTError::PayloadError(msg) => write!(f, "Invalid payload: {}", msg),
             MQTTError::ParseError(e) => e.fmt(f),
@@ -62,7 +60,7 @@ impl From<serde_json::error::Error> for MQTTError {
 #[derive(Debug)]
 pub enum PluginError {
     CompilerMismatch(std::string::String, std::string::String),
-    Duplicate(std::string::String),
+    Duplicate(std::string::String, u32),
     LibError(libloading::Error),
     AgentStateError(iftem_core::AgentState),
 }
@@ -73,7 +71,7 @@ impl fmt::Display for PluginError {
             PluginError::CompilerMismatch(expected, actual) => {
                 write!(f, "Compiler needed {}, was {}", expected, actual)
             }
-            PluginError::Duplicate(uuid) => write!(f, "Duplicate {}", uuid),
+            PluginError::Duplicate(uuid, version) => write!(f, "Duplicate {} v{}", uuid, version),
             PluginError::LibError(e) => e.fmt(f),
             PluginError::AgentStateError(state) => write!(f, "Invalid agent state: {:?}", state),
         }

@@ -19,11 +19,11 @@ impl MockAgent {
 }
 
 impl AgentTrait for MockAgent {
-    fn on_data(&mut self, _data: &SensorDataMessage) {
+    fn handle_data(&mut self, _data: &SensorDataMessage) {
         // no-op
     }
 
-    fn on_cmd(&mut self, _payload: i64) {
+    fn handle_cmd(&mut self, _payload: i64) {
         // no-op
     }
 
@@ -54,7 +54,7 @@ impl AgentTrait for MockAgent {
         HashMap::new()
     }
 
-    fn on_config(&mut self, _: &HashMap<String, AgentConfigType>) -> bool {
+    fn set_config(&mut self, _: &HashMap<String, AgentConfigType>) -> bool {
         true
     }
 }

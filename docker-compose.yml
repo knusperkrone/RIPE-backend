@@ -2,7 +2,7 @@ version: "2"
 services:
   db:
     restart: "always"
-    image: postgres:11-alpine
+    image: postgres:13-alpine
     ports: 
       - 54321:5432
     # volumes: ./data:/var/lib/postgresql/data
@@ -21,7 +21,7 @@ services:
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem
     depends_on:
       - db
-    entrypoint: ["sh", "-c", "sleep 2 && diesel migration run"]
+    entrypoint: ["sh", "-c", "sleep 3 && diesel migration run"]
 
   threshold_plugin:
     image: docker-registry.if-lab.de/arme/iftem_backend/treshold_plugin:latest

@@ -1,64 +1,60 @@
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::ConcurrentSensorObserver;
-use actix_web::http::StatusCode;
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use dotenv::dotenv;
-use std::{env, sync::Arc};
+use std::{convert::Infallible, env, sync::Arc};
+use warp::{hyper::StatusCode, Filter};
 
-mod agent;
-mod sensor;
+mod agent_routes;
+mod sensor_routes;
 
-pub use agent::dto::*;
-pub use sensor::dto::*;
+pub use agent_routes::dto::*;
+pub use sensor_routes::dto::*;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ErrorResponseDto {
     pub error: String,
 }
 
-pub fn build_response<T: serde::Serialize>(resp: Result<T, ObserverError>) -> HttpResponse {
+pub fn build_response<T: serde::Serialize>(
+    resp: Result<T, ObserverError>,
+) -> Result<impl warp::Reply, Infallible> {
     match resp {
-        Ok(data) => HttpResponse::Ok().json(data),
+        Ok(data) => Ok(warp::reply::with_status(
+            warp::reply::json(&data),
+            StatusCode::OK,
+        )),
         Err(ObserverError::User(err)) => {
             warn!(APP_LOGGING, "{}", err);
-            HttpResponse::build(StatusCode::BAD_REQUEST).json(ErrorResponseDto {
+            let json = warp::reply::json(&ErrorResponseDto {
                 error: format!("{}", err),
-            })
+            });
+            Ok(warp::reply::with_status(json, StatusCode::BAD_REQUEST))
         }
         Err(ObserverError::Internal(err)) => {
             error!(APP_LOGGING, "{}", err);
-            HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
+            let json = warp::reply::json(&ErrorResponseDto {
+                error: "Internal Error".to_owned(),
+            });
+            Ok(warp::reply::with_status(
+                json,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ))
         }
     }
 }
 
-pub async fn dispatch_server_daemon(
-    observer: Arc<ConcurrentSensorObserver>,
-) -> std::io::Result<()> {
+pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) {
     // Set up logging
     dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=info");
-    let bind_addr = env::var("BIND_ADDR").expect("BIND_ADDR must be set");
-    let print_addr = bind_addr.clone();
+    let bind_port = env::var("BIND_PORT").expect("BIND_PORT must be set");
 
-    let local: tokio::task::LocalSet = tokio::task::LocalSet::new();
-    let sys = actix_web::rt::System::run_in_tokio("server", &local);
+    let sensor_routes = sensor_routes::routes(&observer);
+    let agent_routes = agent_routes::routes(&observer);
 
-    info!(APP_LOGGING, "Starting webserver at: {}", print_addr);
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(observer.clone()))
-            .data(web::JsonConfig::default().limit(4096))
-            .wrap(middleware::Logger::default())
-            .configure(agent::config_endpoints)
-            .configure(sensor::config_endpoints)
-    })
-    .bind(bind_addr)
-    .unwrap()
-    .disable_signals()
-    .run()
-    .await?;
-    sys.await?;
-    Ok(())
+    info!(APP_LOGGING, "Starting webserver at: 0.0.0.0:{}", bind_port);
+    warp::serve(sensor_routes.or(agent_routes))
+        .run(([0, 0, 0, 0], bind_port.parse().unwrap()))
+        .await;
 }

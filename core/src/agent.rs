@@ -18,12 +18,18 @@ pub struct AgentUI {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum AgentConfigType {
-    Switch(bool),                    // val
-    DateTime(u64),                   // val
-    IntRange(i64, i64, i64),         // lower, upper, val
-    IntSliderRange(i64, i64, i64),   // lower, upper, val
-    FloatRange(f64, f64, f64),       // lower, upper, val
-    FloatSliderRange(f64, f64, f64), // lower, upper, val
+    Switch(bool),                                     // val
+    DateTime(u64),                     // val
+    IntRange(i64, i64, i64),                          // lower, upper, val
+    IntSliderRange(SliderFormatter, i64, i64, i64),   // formatter, lower, upper, val
+    FloatRange(f64, f64, f64),                        // lower, upper, val
+    FloatSliderRange(SliderFormatter, f64, f64, f64), // formatter, lower, upper, val
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum SliderFormatter {
+    Time(u32),
+    Linear,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -44,7 +50,6 @@ impl AgentUIDecorator {
 
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone, Copy)]
 pub enum AgentState {
-    // task lifecycles
     Disabled,
     Ready,
     Executing(DateTime<Utc>),
@@ -59,12 +64,12 @@ impl Default for AgentState {
     }
 }
 
-pub trait AgentTrait: std::fmt::Debug + Send {
-    // business logic
-    fn on_data(&mut self, data: &SensorDataMessage);
+pub trait AgentTrait: std::fmt::Debug + Send + Sync {
+    // event busness logic
+    fn handle_data(&mut self, data: &SensorDataMessage);
+    fn handle_cmd(&mut self, payload: i64);
 
     // ui related
-    fn on_cmd(&mut self, payload: i64);
     fn render_ui(&self, data: &SensorDataMessage) -> AgentUI;
 
     // framework logic
@@ -74,5 +79,5 @@ pub trait AgentTrait: std::fmt::Debug + Send {
 
     // user config
     fn config(&self) -> HashMap<&str, (&str, AgentConfigType)>; // key, translation, ui
-    fn on_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool;
+    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool;
 }

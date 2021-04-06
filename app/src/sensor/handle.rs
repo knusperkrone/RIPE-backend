@@ -6,12 +6,11 @@ use iftem_core::{error::AgentError, AgentConfigType, SensorDataMessage};
 use std::{collections::HashMap, vec::Vec};
 
 #[derive(Debug)]
-pub struct SensorHandleMessage {
+pub struct SensorMQTTCommand {
     pub sensor_id: i32,
     pub domain: String,
     pub payload: i32,
 }
-
 pub struct SensorHandle {
     pub dao: SensorDao,
     pub agents: Vec<Agent>,
@@ -46,8 +45,8 @@ impl SensorHandle {
         })
     }
 
-    pub fn on_data(&mut self, data: &SensorDataMessage) {
-        self.agents.iter_mut().for_each(|a| a.on_data(data))
+    pub fn handle_data(&mut self, data: &SensorDataMessage) {
+        self.agents.iter_mut().for_each(|a| a.handle_data(data))
     }
 
     pub fn format_cmds(&self) -> Vec<i32> {
@@ -90,14 +89,18 @@ impl SensorHandle {
         }
     }
 
-    pub fn on_agent_cmd(&mut self, domain: &String, payload: i64) -> Result<(), ObserverError> {
+    pub fn handle_agent_cmd(
+        &mut self,
+        domain: &String,
+        payload: i64,
+    ) -> Result<&Agent, ObserverError> {
         for agent in self.agents.iter_mut() {
             if agent.domain() == domain {
-                agent.on_cmd(payload);
-                return Ok(());
+                agent.handle_cmd(payload);
+                return Ok(agent);
             }
         }
-        Err(DBError::SensorNotFound(self.id()).into())
+        Err(DBError::SensorNotFound(self.dao.id()).into())
     }
 
     pub fn add_agent(&mut self, agent: Agent) {
@@ -122,7 +125,10 @@ impl SensorHandle {
         None
     }
 
-    pub fn agent_config(&self, domain: &String) -> Option<HashMap<String, (String, AgentConfigType)>> {
+    pub fn agent_config(
+        &self,
+        domain: &String,
+    ) -> Option<HashMap<String, (String, AgentConfigType)>> {
         for agent in self.agents.iter() {
             if agent.domain() == domain {
                 return Some(agent.config());
@@ -131,23 +137,23 @@ impl SensorHandle {
         None
     }
 
-    pub fn on_agent_config(
+    pub fn set_agent_config(
         &mut self,
         domain: &String,
         config: HashMap<String, AgentConfigType>,
-    ) -> Result<(), ObserverError> {
+    ) -> Result<&Agent, ObserverError> {
         for agent in self.agents.iter_mut() {
             if agent.domain() == domain {
-                if !agent.on_config(&config) {
+                if !agent.set_config(&config) {
                     return Err(AgentError::InvalidConfig(
                         serde_json::to_string(&config).unwrap_or("serde_error".to_owned()),
                     )
                     .into());
                 }
-                return Ok(());
+                return Ok(agent);
             }
         }
-        Err(DBError::SensorNotFound(self.id()).into())
+        Err(DBError::SensorNotFound(self.dao.id()).into())
     }
 
     pub fn agents(&self) -> &Vec<Agent> {

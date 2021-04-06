@@ -5,6 +5,7 @@ use std::pin::Pin;
 pub trait FutBuilder: Send + Sync {
     fn build_future(
         &self,
+        runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>>;
 }
 

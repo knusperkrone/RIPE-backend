@@ -278,21 +278,21 @@ mod test {
     fn test_insert_remove_sensor() {
         let conn = establish_db_connection();
         let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
-        assert!(sensor.is_ok(), true);
+        assert!(sensor.is_ok());
 
         let deleted = delete_sensor(&conn, sensor.unwrap().id());
-        assert!(deleted.is_ok(), true);
+        assert!(deleted.is_ok());
     }
 
     #[test]
     fn test_insert_get_delete_sensor() {
         let conn = establish_db_connection();
         let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
-        assert!(sensor.is_ok(), true);
+        assert!(sensor.is_ok());
 
         assert_ne!(get_sensors(&conn).is_empty(), true);
 
         let deleted = delete_sensor(&conn, sensor.unwrap().id());
-        assert!(deleted.is_ok(), true);
+        assert!(deleted.is_ok());
     }
 }

@@ -27,11 +27,8 @@ impl AgentTrait for MockAgent {
         // no-op
     }
 
-    fn deserialize(&self) -> AgentConfig {
-        AgentConfig {
-            name: "MockAgent".to_string(),
-            state_json: "{}".to_string(),
-        }
+    fn deserialize(&self) -> String {
+        "{}".to_string()
     }
 
     fn cmd(&self) -> i32 {
@@ -50,7 +47,7 @@ impl AgentTrait for MockAgent {
         }
     }
 
-    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
         HashMap::new()
     }
 

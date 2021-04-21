@@ -1,7 +1,10 @@
-use crate::error::{DBError, ObserverError, PluginError};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
-use crate::plugin::{Agent, AgentFactory};
+use crate::plugin::{Agent, AgentFactoryTrait};
+use crate::{
+    error::{DBError, ObserverError},
+    plugin::AgentFactory,
+};
 use iftem_core::{error::AgentError, AgentConfigType, SensorDataMessage};
 use std::{collections::HashMap, vec::Vec};
 
@@ -23,10 +26,16 @@ impl SensorHandle {
         actions: &Vec<AgentConfigDao>,
         factory: &AgentFactory,
     ) -> Result<SensorHandle, AgentError> {
-        // TODO: Filter invalid!
         let mut agents: Vec<Agent> = actions
             .into_iter()
-            .map(|config| factory.restore_agent(sensor.id(), config))
+            .map(|config| {
+                factory.create_agent(
+                    sensor.id(),
+                    config.agent_impl(),
+                    config.domain(),
+                    Some(config.state_json()),
+                )
+            })
             .filter_map(Result::ok)
             .collect();
         agents.sort_by(|a, b| a.domain().cmp(b.domain()));
@@ -51,42 +60,6 @@ impl SensorHandle {
 
     pub fn format_cmds(&self) -> Vec<i32> {
         self.agents.iter().map(|a| a.cmd()).collect()
-    }
-
-    pub fn reload(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        for agent in self.agents.iter_mut() {
-            if agent.reload_agent(factory).is_err() {
-                agent.set_needs_update(true);
-                self.has_pending_update = true;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn reload_agents(&mut self, loaded_libs: &Vec<String>, factory: &AgentFactory) {
-        for agent in self.agents.iter_mut() {
-            if loaded_libs.contains(agent.agent_name()) {
-                if agent.reload_agent(factory).is_err() {
-                    agent.set_needs_update(true);
-                    self.has_pending_update = true;
-                }
-            }
-        }
-    }
-
-    pub fn reload_pending_agents(&mut self, factory: &AgentFactory) {
-        if !self.has_pending_update {
-            return;
-        }
-
-        self.has_pending_update = false;
-        for agent in self.agents.iter_mut() {
-            if agent.needs_update() {
-                if agent.reload_agent(factory).is_err() {
-                    self.has_pending_update = true;
-                }
-            }
-        }
     }
 
     pub fn handle_agent_cmd(

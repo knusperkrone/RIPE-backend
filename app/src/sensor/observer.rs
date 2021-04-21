@@ -1,4 +1,4 @@
-use crate::plugin::AgentFactory;
+use crate::plugin::{AgentFactory, AgentFactoryTrait};
 use crate::{
     error::{DBError, ObserverError},
     rest::AgentDto,
@@ -16,7 +16,7 @@ use diesel::pg::PgConnection;
 use iftem_core::{AgentConfigType, SensorDataMessage};
 use notify::{watcher, Watcher};
 use parking_lot::{Mutex, RwLock};
-use std::{collections::hash_map::Values, collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 pub struct ConcurrentSensorObserver {
@@ -32,9 +32,10 @@ impl ConcurrentSensorObserver {
     pub fn new(db_conn: PgConnection) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
-        let agent_factory = AgentFactory::new(iac_sender);
+        let agent_factory = AgentFactory::new(iac_sender.clone());
         let container = SensorCache::new();
         let client = MqttSensorClient::new(sensor_data_sender);
+
         let observer = ConcurrentSensorObserver {
             container: RwLock::new(container),
             agent_factory: Mutex::new(agent_factory),
@@ -43,8 +44,16 @@ impl ConcurrentSensorObserver {
             mqtt_client: RwLock::new(client),
             db_conn: Arc::new(Mutex::new(db_conn)),
         };
-
         Arc::new(observer)
+    }
+
+    pub fn load_plugins(&self) {
+        dotenv::dotenv().ok();
+        let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
+        let plugins_dir = std::path::Path::new(&path);
+
+        let mut agent_factory = self.agent_factory.lock();
+        agent_factory.load_new_plugins(plugins_dir);
     }
 
     /// Starts the paho-thread, registers all callbacks
@@ -110,9 +119,13 @@ impl ConcurrentSensorObserver {
     /// checks if the plugin libary files got updated
     /// Blocks caller thread in infinite loop
     pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentSensorObserver>) -> () {
+        dotenv::dotenv().ok();
         let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
+        let plugins_dir = std::path::Path::new(&path);
+
+        // watch plugin dir
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = watcher(tx, Duration::from_secs(10)).unwrap();
+        let mut watcher = watcher(tx, Duration::from_secs(5)).unwrap();
         if let Err(e) = watcher.watch(&path, notify::RecursiveMode::NonRecursive) {
             crit!(APP_LOGGING, "Cannot watch plugin dir: {}", e);
             return;
@@ -123,24 +136,8 @@ impl ConcurrentSensorObserver {
             if let Ok(_) = rx.try_recv() {
                 // Non blocking
                 info!(APP_LOGGING, "Plugin changes registered - reloading");
-                let mut factory = self.agent_factory.lock();
-                let loaded_libs;
-                unsafe {
-                    loaded_libs = factory.load_plugins();
-                }
-                if !loaded_libs.is_empty() {
-                    let factory = self.agent_factory.lock();
-                    let container = self.container.read();
-                    for sensor in container.sensors() {
-                        sensor.lock().reload_agents(&loaded_libs, &factory);
-                    }
-                }
-            } else {
-                let factory = self.agent_factory.lock();
-                let container = self.container.read();
-                for sensor in container.sensors() {
-                    sensor.lock().reload_pending_agents(&factory);
-                }
+                let mut agent_factory = self.agent_factory.lock();
+                agent_factory.load_new_plugins(plugins_dir);
             }
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
@@ -156,14 +153,14 @@ impl ConcurrentSensorObserver {
         &self,
         name: Option<String>,
     ) -> Result<SensorCredentialDto, ObserverError> {
-        // Create sensor
+        // Create sensor dao
         let key_b64 = self.generate_sensor_key();
         let conn = self.db_conn.lock();
         let sensor_dao = models::create_new_sensor(&conn, key_b64.clone(), &name)?;
         let dao_id = sensor_dao.id();
 
         // Create agents and persist
-        match self.register_sensor_dao(sensor_dao, None).await {
+        match self.register_sensor_from_dao(sensor_dao, None).await {
             Ok(_) => {
                 info!(APP_LOGGING, "Registered new sensor: {}", dao_id);
                 Ok(SensorCredentialDto {
@@ -234,35 +231,14 @@ impl ConcurrentSensorObserver {
         })
     }
 
-    pub async fn reload_sensor(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-    ) -> Result<SensorCredentialDto, ObserverError> {
-        let container = self.container.read();
-        let mut sensor = container
-            .sensor(sensor_id, &key_b64)
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-
-        let factory = self.agent_factory.lock();
-        sensor.reload(&factory)?;
-
-        info!(APP_LOGGING, "Reloaded sensor: {}", sensor_id);
-        Ok(SensorCredentialDto {
-            id: sensor_id,
-            key: key_b64,
-        })
-    }
-
     /*
      * Agent
      */
 
     pub async fn agents(&self) -> Vec<String> {
-        let container_factory = self.agent_factory.lock();
-
         info!(APP_LOGGING, "fetched active agents");
-        container_factory.agents()
+        let agent_factory = self.agent_factory.lock();
+        agent_factory.agents()
     }
 
     pub async fn register_agent(
@@ -280,7 +256,7 @@ impl ConcurrentSensorObserver {
         let factory = self.agent_factory.lock();
         let conn_owned = self.db_conn.clone();
         let conn = conn_owned.lock();
-        let agent = factory.new_agent(sensor_id, &agent_name, &domain)?;
+        let agent = factory.create_agent(sensor_id, &agent_name, &domain, None)?;
         models::create_sensor_agent(&conn, agent.deserialize())?;
         sensor.add_agent(agent);
 
@@ -386,7 +362,7 @@ impl ConcurrentSensorObserver {
             let sensor_dao = persisted_sensors.pop().unwrap();
             let agent_configs = sensor_configs.pop().unwrap();
             let restore_result = self
-                .register_sensor_dao(sensor_dao, Some(&agent_configs))
+                .register_sensor_from_dao(sensor_dao, Some(&agent_configs))
                 .await;
             match restore_result {
                 Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
@@ -395,7 +371,7 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    async fn register_sensor_dao(
+    async fn register_sensor_from_dao(
         &self,
         sensor_dao: SensorDao,
         configs: Option<&Vec<AgentConfigDao>>,
@@ -439,10 +415,6 @@ impl SensorCache {
         SensorCache {
             sensors: HashMap::new(),
         }
-    }
-
-    pub fn sensors(&self) -> Values<'_, i32, Mutex<SensorHandle>> {
-        self.sensors.values()
     }
 
     pub fn sensor_unchecked(

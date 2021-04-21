@@ -16,7 +16,7 @@ pub struct AgentUI {
     pub rendered: String, // pub config_rendered: String
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum AgentConfigType {
     Switch(bool),                                     // val
     DateTime(u64),                     // val
@@ -26,7 +26,7 @@ pub enum AgentConfigType {
     FloatSliderRange(SliderFormatter, f64, f64, f64), // formatter, lower, upper, val
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum SliderFormatter {
     Time(u32),
     Linear,
@@ -34,6 +34,7 @@ pub enum SliderFormatter {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum AgentUIDecorator {
+    Text,
     TimePane(u32),         // ui_stepsize
     Slider(f32, f32, f32), // Range, Value
 }
@@ -75,9 +76,9 @@ pub trait AgentTrait: std::fmt::Debug + Send + Sync {
     // framework logic
     fn state(&self) -> AgentState;
     fn cmd(&self) -> i32;
-    fn deserialize(&self) -> AgentConfig;
+    fn deserialize(&self) -> String;
 
     // user config
-    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)>; // key, translation, ui
+    fn config(&self) -> HashMap<String, (String, AgentConfigType)>; // key, translation, ui
     fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool;
 }

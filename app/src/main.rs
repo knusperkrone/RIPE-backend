@@ -18,13 +18,23 @@ pub async fn main() -> std::io::Result<()> {
 
     let db_conn = models::establish_db_connection();
     let sensor_arc = sensor::ConcurrentSensorObserver::new(db_conn);
-    let reveice_mqtt_loop = sensor::ConcurrentSensorObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
-    let send_mqtt_loop = sensor::ConcurrentSensorObserver::dispatch_mqtt_send_loop(sensor_arc.clone());
-    let plugin_loop = sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
+    sensor_arc.load_plugins();
+
+    let reveice_mqtt_loop =
+        sensor::ConcurrentSensorObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
+    let send_mqtt_loop =
+        sensor::ConcurrentSensorObserver::dispatch_mqtt_send_loop(sensor_arc.clone());
+    let plugin_loop =
+        sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
     let server_daemon = rest::dispatch_server_daemon(sensor_arc.clone());
     plugin::agent::register_sigint_handler();
 
     //server_daemon.await;
-    let _ = tokio::join!(reveice_mqtt_loop, send_mqtt_loop, plugin_loop, server_daemon);
+    let _ = tokio::join!(
+        reveice_mqtt_loop,
+        send_mqtt_loop,
+        plugin_loop,
+        server_daemon
+    );
     Ok(())
 }

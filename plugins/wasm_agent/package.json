@@ -1,0 +1,21 @@
+{
+  "name": "assemblyscript",
+  "version": "1.0.0",
+  "description": "wasm_test",
+  "main": "index.js",
+  "scripts": {
+    "test": "node tests",
+    "asbuild:untouched": "asc app/index.ts --target debug --exportRuntime",
+    "asbuild:optimized": "asc app/index.ts --target release --exportRuntime",
+    "asbuild": "npm run asbuild:untouched"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@assemblyscript/loader": "^0.18.23",
+    "assemblyscript-json": "^1.0.0"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.18.23"
+  }
+}

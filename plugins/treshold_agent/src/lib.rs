@@ -21,7 +21,7 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 
 #[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
-    config: Option<&std::string::String>,
+    config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {

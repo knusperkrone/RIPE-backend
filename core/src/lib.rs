@@ -19,7 +19,7 @@ pub struct PluginDeclaration {
     pub agent_version: u32,
     pub agent_name: &'static str,
     pub agent_builder: unsafe extern "C" fn(
-        config: Option<&std::string::String>,
+        config: Option<&str>,
         logger: slog::Logger,
         sender: tokio::sync::mpsc::Sender<AgentMessage>,
     ) -> Box<dyn AgentTrait>,

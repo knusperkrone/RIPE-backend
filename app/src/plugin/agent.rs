@@ -1,10 +1,8 @@
-use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
-use crate::plugin::AgentFactory;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use futures::future::{AbortHandle, Abortable};
 use iftem_core::{
-    AgentConfigType, AgentMessage, AgentState, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
+    AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
 use std::{
     collections::HashMap,
@@ -14,7 +12,7 @@ use std::{
         Arc, RwLock,
     },
 };
-use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, UnboundedSender};
 
 static TERMINATED: AtomicU32 = AtomicU32::new(0);
 static TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -40,12 +38,11 @@ pub fn register_sigint_handler() {
 pub struct Agent {
     sensor_id: i32,
     domain: String,
-    plugin_sender: Sender<AgentMessage>,
+    // plugin_sender: Sender<AgentMessage>,
     agent_name: String,
-    abort_handle: AbortHandle,
-    repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
+    iac_abort_handle: AbortHandle,
+    repeat_task_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     agent_proxy: Box<dyn AgentTrait>,
-    needs_update: bool,
 }
 
 impl std::fmt::Debug for Agent {
@@ -56,8 +53,8 @@ impl std::fmt::Debug for Agent {
 
 impl Drop for Agent {
     fn drop(&mut self) {
-        self.abort_handle.abort();
-        if let Some(repeat_handle) = self.repeat_abort_handle.write().unwrap().as_ref() {
+        self.iac_abort_handle.abort();
+        if let Some(repeat_handle) = self.repeat_task_abort_handle.write().unwrap().as_ref() {
             repeat_handle.abort();
         }
     }
@@ -69,7 +66,6 @@ impl Drop for Agent {
 impl Agent {
     pub fn new(
         agent_sender: UnboundedSender<SensorMQTTCommand>,
-        plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
         domain: String,
@@ -93,39 +89,12 @@ impl Agent {
         Agent {
             sensor_id,
             domain,
-            plugin_sender,
+            // plugin_sender,
             agent_name,
-            abort_handle,
-            repeat_abort_handle,
+            iac_abort_handle: abort_handle,
+            repeat_task_abort_handle: repeat_abort_handle,
             agent_proxy,
-            needs_update: false,
         }
-    }
-
-    pub fn reload_agent(&mut self, factory: &AgentFactory) -> Result<(), PluginError> {
-        let agent_state = self.agent_proxy.state();
-        if agent_state != AgentState::Ready && agent_state != AgentState::Disabled {
-            info!(
-                APP_LOGGING,
-                "Failed reloading active agent: {}", self.sensor_id
-            );
-            return Err(PluginError::AgentStateError(agent_state));
-        }
-
-        // TODO: Kill running tasks
-        info!(
-            APP_LOGGING,
-            "Reloading agent: {} - {}", self.sensor_id, self.domain
-        );
-        let state_json = self.agent_proxy.deserialize().state_json;
-        unsafe {
-            let proxy = factory
-                .build_proxy_agent(&self.agent_name, Some(&state_json), &self.plugin_sender)
-                .ok_or_else(|| PluginError::Duplicate(self.agent_name.clone(), 0))?;
-            self.agent_proxy = proxy;
-        }
-        self.needs_update = false;
-        Ok(())
     }
 
     pub fn handle_cmd(&mut self, cmd: i64) {
@@ -162,12 +131,12 @@ impl Agent {
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {
-        let config = self.agent_proxy.deserialize();
+        let deserialized = self.agent_proxy.deserialize();
         AgentConfigDao::new(
             self.sensor_id,
             self.domain.clone(),
-            config.name,
-            config.state_json,
+            self.agent_name.clone(),
+            deserialized,
         )
     }
 
@@ -177,14 +146,6 @@ impl Agent {
 
     pub fn domain(&self) -> &String {
         &self.domain
-    }
-
-    pub fn set_needs_update(&mut self, needs_update: bool) {
-        self.needs_update = needs_update;
-    }
-
-    pub fn needs_update(&self) -> bool {
-        self.needs_update
     }
 
     /*

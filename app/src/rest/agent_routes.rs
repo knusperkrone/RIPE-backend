@@ -241,7 +241,7 @@ mod test {
     #[tokio::test]
     async fn test_print_serialized_agent_config() {
         println!(
-            "Swich: {}",
+            "Switch: {}",
             serde_json::json!(AgentConfigType::Switch(true))
         );
         println!(

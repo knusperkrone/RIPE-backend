@@ -20,7 +20,7 @@ const DAY_MS: u32 = 86_400_000;
 
 #[allow(improper_ctypes_definitions)]
 extern "C" fn build_agent(
-    config: Option<&std::string::String>,
+    config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {

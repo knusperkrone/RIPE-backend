@@ -57,12 +57,74 @@ impl From<serde_json::error::Error> for MQTTError {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum WasmPluginError {
+    Duplicate,
+    CallError,
+    CompileError(std::string::String),
+    ContractMismatch(std::string::String),
+}
+
+impl fmt::Display for WasmPluginError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WasmPluginError::Duplicate => {
+                write!(f, "Plugin already present")
+            }
+            WasmPluginError::CallError => {
+                write!(f, "Failed calling a method")
+            }
+            WasmPluginError::CompileError(err) => {
+                write!(f, "Compiling the module failed: {}", err)
+            }
+            WasmPluginError::ContractMismatch(method_name) => {
+                write!(f, "Plugin contract not fullfilled: {}", method_name)
+            }
+        }
+    }
+}
+
+impl error::Error for WasmPluginError {}
+
+impl From<wasmer::CompileError> for WasmPluginError {
+    fn from(err: wasmer::CompileError) -> Self {
+        WasmPluginError::CompileError(format!("{:?}", err))
+    }
+}
+
+impl From<wasmer::ExportError> for WasmPluginError {
+    fn from(_: wasmer::ExportError) -> Self {
+        WasmPluginError::ContractMismatch("memory".to_owned())
+    }
+}
+
+impl From<wasmer::RuntimeError> for WasmPluginError {
+    fn from(_: wasmer::RuntimeError) -> Self {
+        WasmPluginError::CallError
+    }
+}
+
+impl From<wasmer::InstantiationError> for WasmPluginError {
+    fn from(err: wasmer::InstantiationError) -> Self {
+        match err {
+            wasmer::InstantiationError::Link(e) => {
+                WasmPluginError::ContractMismatch(format!("{}", e))
+            }
+            wasmer::InstantiationError::Start(e) => {
+                WasmPluginError::ContractMismatch(format!("{}", e))
+            }
+            wasmer::InstantiationError::HostEnvInitialization(e) => {
+                WasmPluginError::ContractMismatch(format!("{}", e))
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PluginError {
     CompilerMismatch(std::string::String, std::string::String),
     Duplicate(std::string::String, u32),
     LibError(libloading::Error),
-    AgentStateError(iftem_core::AgentState),
 }
 
 impl fmt::Display for PluginError {
@@ -73,7 +135,6 @@ impl fmt::Display for PluginError {
             }
             PluginError::Duplicate(uuid, version) => write!(f, "Duplicate {} v{}", uuid, version),
             PluginError::LibError(e) => e.fmt(f),
-            PluginError::AgentStateError(state) => write!(f, "Invalid agent state: {:?}", state),
         }
     }
 }

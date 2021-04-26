@@ -3,6 +3,10 @@ import { Date } from "as-date";
 
 export const NULL: i32 = 0;
 
+export class Tuple2<T1, T2> {
+  constructor(public val1: T1, public val2: T2) {}
+}
+
 
 function pad(n: i32): string {
   return n < 10 ? `0${n}` : `${n}`;
@@ -46,4 +50,40 @@ export function printf(values: string[]): void {
   }
   const encoded: ArrayBuffer = String.UTF8.encode(strBuffer, true);
   log(encoded);
+}
+
+export function escapeJsonString(str: string): string {
+  let buffer: string = "";
+  let savedIndex = 0;
+  for (let i = 0; i < str.length; i++) {
+    let char = str.charCodeAt(i);
+    let needsEscaping =
+      char < 0x20 || char == '"'.charCodeAt(0) || char == "\\".charCodeAt(0);
+    if (needsEscaping) {
+      buffer += (str.substring(savedIndex, i));
+      savedIndex = i + 1;
+      if (char == '"'.charCodeAt(0)) {
+        buffer += ('\\"');
+      } else if (char == "\\".charCodeAt(0)) {
+        buffer += ("\\\\");
+      } else if (char == "\b".charCodeAt(0)) {
+        buffer += ("\\b");
+      } else if (char == "\n".charCodeAt(0)) {
+        buffer += ("\\n");
+      } else if (char == "\r".charCodeAt(0)) {
+        buffer += ("\\r");
+      } else if (char == "\t".charCodeAt(0)) {
+        buffer += ("\\t");
+      } else {
+        // TODO: Implement encoding for other contol characters
+        // @ts-ignore integer does have toString
+        assert(
+          false,
+          "Unsupported control character code: " + char.toString()
+        );
+      }
+    }
+  }
+  buffer += (str.substring(savedIndex, str.length));
+  return buffer;
 }

@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::{collections::HashMap, ffi::OsStr};
 use ticker::TimerFuture;
-use tokio::sync::mpsc::{channel, Sender, UnboundedSender};
+use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 use wasmer::{
     imports, wat2wasm, Function, Instance, LazyInit, Memory, Module, NativeFunc, Store,
     WasmTypeList, WasmerEnv,
@@ -23,6 +23,7 @@ pub struct WasmerInstanceCallEnv {
     sensor_id: i32,
     agent_name: String,
     sender: Sender<AgentMessage>,
+    is_test: bool,
     #[wasmer(export)]
     memory: LazyInit<Memory>,
 }
@@ -50,16 +51,24 @@ impl AgentFactoryTrait for WasmAgentFactory {
         sensor_id: i32,
         agent_name: &str,
         domain: &str,
-        state_json: Option<&str>,
+        state_json: Option<&str>, 
+        plugin_sender: Sender<AgentMessage>,
+        plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, AgentError> {
         let module = self
             .libraries
             .get(agent_name)
             .ok_or(AgentError::InvalidIdentifier(agent_name.to_owned()))?;
 
-        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(64);
         let proxy = self
-            .build_wasm_agent(module, plugin_sender, sensor_id, agent_name, state_json)
+            .build_wasm_agent(
+                module,
+                plugin_sender,
+                sensor_id,
+                agent_name,
+                state_json,
+                false,
+            )
             .unwrap_or(Err(AgentError::InvalidConfig(
                 "Config was invalid".to_owned(),
             ))?);
@@ -134,8 +143,9 @@ impl WasmAgentFactory {
         }
 
         let module = Module::new(&self.store, bytes)?;
-        let (plugin_sender, _plugin_receiver) = channel::<AgentMessage>(4);
-        let test_agent = self.build_wasm_agent(&module, plugin_sender, 0, agent_name, None)?;
+        let (mock_sender, _mock_receiver) = channel::<AgentMessage>(64);
+        let test_agent =
+            self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
         if self.test_agent_contract(test_agent) {
             self.libraries.insert(agent_name.to_owned(), module);
             Ok(())
@@ -165,11 +175,13 @@ impl WasmAgentFactory {
         sensor_id: i32,
         agent_name: &str,
         old_state_opt: Option<&str>,
+        is_test: bool,
     ) -> Result<WasmAgent, WasmPluginError> {
         // setup wasmer env
         let env = WasmerInstanceCallEnv {
             sensor_id,
             sender,
+            is_test,
             agent_name: agent_name.to_owned(),
             memory: LazyInit::default(),
         };
@@ -195,9 +207,8 @@ impl WasmAgentFactory {
         let config = self.get_native_fn(&instance, "getConfig")?;
         let set_config = self.get_native_fn(&instance, "setConfig")?;
         let build_agent = self.get_native_fn::<i32, i32>(&instance, "buildAgent")?;
-        let mut agent = WasmAgent {
+        let agent = WasmAgent {
             instance,
-            agent_ptr: -1,
             error_indicator: Mutex::new(None),
             wasm_malloc: malloc,
             wasm_free: free,
@@ -212,7 +223,7 @@ impl WasmAgentFactory {
         };
 
         // init wasmer_agent with prev_state
-        agent.agent_ptr = if let Some(old_state) = old_state_opt {
+        if let Some(old_state) = old_state_opt {
             let alloced = agent.write(&old_state)?;
             build_agent.call(alloced.ptr)?
         } else {
@@ -296,6 +307,10 @@ mod stubs {
     }
 
     pub fn log(env: &WasmerInstanceCallEnv, ptr: i32) {
+        if !env.is_test {
+            return;
+        }
+
         if let Some(memory) = env.memory.get_ref() {
             if let Some(msg) = read_c_str(memory, ptr) {
                 info!(

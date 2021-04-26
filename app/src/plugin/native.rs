@@ -5,11 +5,11 @@ use crate::sensor::handle::SensorMQTTCommand;
 use iftem_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
 use libloading::Library;
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
-use tokio::sync::mpsc::{channel, Sender, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 
 #[derive(Debug)]
 pub struct NativeAgentFactory {
-    agent_sender: UnboundedSender<SensorMQTTCommand>,
+    iac_sender: UnboundedSender<SensorMQTTCommand>,
     libraries: HashMap<String, Arc<Library>>,
 }
 
@@ -20,14 +20,15 @@ impl AgentFactoryTrait for NativeAgentFactory {
         agent_name: &str,
         domain: &str,
         state_json: Option<&str>,
+        plugin_sender: Sender<AgentMessage>,
+        plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, AgentError> {
-        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(64);
         let native_agent =
             unsafe { self.build_native_agent(agent_name, state_json, plugin_sender) };
 
         if let Some(plugin_agent) = native_agent {
             Ok(Agent::new(
-                self.agent_sender.clone(),
+                self.iac_sender.clone(),
                 plugin_receiver,
                 sensor_id,
                 domain.clone().to_owned(),
@@ -69,9 +70,9 @@ impl AgentFactoryTrait for NativeAgentFactory {
 }
 
 impl NativeAgentFactory {
-    pub fn new(sender: UnboundedSender<SensorMQTTCommand>) -> Self {
+    pub fn new(iac_sender: UnboundedSender<SensorMQTTCommand>) -> Self {
         NativeAgentFactory {
-            agent_sender: sender,
+            iac_sender,
             libraries: HashMap::new(),
         }
     }
@@ -131,8 +132,8 @@ impl NativeAgentFactory {
                 .unwrap()
                 .read(); // Panic is impossible
 
-            let logger: &slog::Logger = once_cell::sync::Lazy::force(&APP_LOGGING);
-            let proxy = (decl.agent_builder)(state_json.to_owned(), logger.clone(), plugin_sender);
+            let logger = APP_LOGGING.clone();
+            let proxy = (decl.agent_builder)(state_json, logger, plugin_sender);
             Some(proxy)
         } else {
             None

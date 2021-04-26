@@ -27,9 +27,8 @@ pub async fn main() -> std::io::Result<()> {
     let plugin_loop =
         sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
     let server_daemon = rest::dispatch_server_daemon(sensor_arc.clone());
+    
     plugin::agent::register_sigint_handler();
-
-    //server_daemon.await;
     let _ = tokio::join!(
         reveice_mqtt_loop,
         send_mqtt_loop,

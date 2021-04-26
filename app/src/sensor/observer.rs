@@ -1,4 +1,4 @@
-use crate::plugin::{AgentFactory, AgentFactoryTrait};
+use crate::plugin::AgentFactory;
 use crate::{
     error::{DBError, ObserverError},
     rest::AgentDto,
@@ -32,7 +32,7 @@ impl ConcurrentSensorObserver {
     pub fn new(db_conn: PgConnection) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
-        let agent_factory = AgentFactory::new(iac_sender.clone());
+        let agent_factory = AgentFactory::new(iac_sender);
         let container = SensorCache::new();
         let client = MqttSensorClient::new(sensor_data_sender);
 
@@ -405,6 +405,10 @@ impl ConcurrentSensorObserver {
             .replace('#', &"_")
     }
 }
+
+/*
+ * SensorCache
+ */
 
 pub struct SensorCache {
     sensors: HashMap<i32, Mutex<SensorHandle>>,

@@ -1,91 +1,89 @@
-import { dateToString, NULL, print, ptrToString } from "./lib";
-import { JSON } from "assemblyscript-json";
-import { Date } from "as-date";
+import { NULL, print, ptrToString } from "./libwasm";
+import { JSON, JSONEncoder } from "assemblyscript-json";
+import {
+  AgentConfig,
+  AgentConfigType,
+  AgentState,
+  AgentUI,
+  AgentUIDecorator,
+} from "./libripe";
 
 /*
  * Your Agent implementation
  */
 
 class Agent {
-  private value: i32;
+  private value: i32 = 0;
+  private configValue: bool = false;
 
   constructor(oldState: JSON.Obj) {
     const val: JSON.Integer | null = oldState.getInteger("val");
-    if (val != null) {
-      this.value = 0;
+    const configVal: JSON.Bool | null = oldState.getBool("configVal");
+    if (val != null && configVal != null) {
+      this.value = val.valueOf() as i32;
+      this.configValue = configVal.valueOf();
       print("Restored old state");
     } else {
       print("Invalid old state, init new Agent");
     }
   }
 
-  handleCmd(_payload: i64): void {}
+  handleCmd(payload: i64): void {
+    this.value = payload as i32;
+  }
 
-  handleData(): void {}
+  handleData(): void {
+    // TODO:
+  }
 
   deserialize(): string {
-    return "{}";
+    let encoder = new JSONEncoder();
+    encoder.setInteger("val", this.value);
+
+    return encoder.toString();
   }
 
   getCmd(): i32 {
-    return 0;
+    return this.value;
   }
 
   getState(): AgentState {
-    return new AgentState(State.Ready);
+    return AgentState.READY();
   }
 
-  renderUI(): string {
-    return "{}";
+  renderUI(): AgentUI {
+    return new AgentUI(
+      AgentUIDecorator.SLIDER(0.0, 20.0, this.value as f32),
+      this.getState(),
+      "Hello from your WASM plugin"
+    );
   }
 
-  setConfig(configStr: string): bool {
-    return false;
+  setConfig(config: JSON.Obj): bool {
+    let keyValue: JSON.Bool | null = config.getBool("key");
+    if (keyValue == null) {
+      return false;
+    }
+    this.configValue = keyValue.valueOf() as bool;
+
+    return true;
   }
 
-  getConfig(): string {
-    return "{}";
+  getConfig(): AgentConfig {
+    let config = new AgentConfig();
+    config.insert("key", "Deine Einstellung", AgentConfigType.SWITCH(this.configValue));
+
+    return config;
   }
 }
 
 /*
- * Some shimming code
+ * Shimming code
  * Needs to be in this file, compiler will tree shake otherwise
  * DO NOT ALTER
  */
 
-let INSTANCE: Agent;
-
-enum State {
-  Disabled,
-  Ready,
-  Error,
-  Executing,
-  Stopped,
-  Forced,
-}
-
-class AgentState {
-  constructor(private state: State, private date: Date | null = null) {}
-
-  toJson(): string {
-    switch (this.state) {
-      case State.Disabled:
-        return '"Disabled"';
-      case State.Ready:
-        return '"Ready"';
-      case State.Error:
-        return '"Error"';
-      case State.Executing:
-        return `{ "Executing": ${dateToString(this.date!)} }`;
-      case State.Stopped:
-        return `{ "Stopped": ${dateToString(this.date!)} }`;
-      case State.Forced:
-        return `{ "Forced": ${dateToString(this.date!)} }`;
-    }
-    return '"Error"';
-  }
-}
+export let INSTANCE: Agent;
 
 // Forward definition - compiler will tree shake otherwise
 export function malloc(size: usize): ArrayBuffer {
@@ -100,55 +98,53 @@ export function free(ptr: usize): void {
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function handleData(agent_ptr: usize, sensor_data_ptr: usize): void {
+export function handleData(sensor_data_ptr: usize): void {
   const jsonStr = ptrToString(sensor_data_ptr);
   // TODO: transform to SensorMessageObj
   INSTANCE.handleData();
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function handleCmd(agent_ptr: usize, payload: i64): void {
+export function handleCmd(payload: i64): void {
   INSTANCE.handleCmd(payload);
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function renderUI(
-  agent_ptr: usize,
-  sensor_data_ptr: usize
-): ArrayBuffer {
+export function renderUI(sensor_data_ptr: usize): ArrayBuffer {
   const jsonStr = ptrToString(sensor_data_ptr);
   // TODO: transform to SensorDataObj
-  const ret: string = INSTANCE.renderUI();
+  const ret: string = INSTANCE.renderUI().toJson();
   return String.UTF8.encode(ret, true);
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function deserialize(agent_ptr: usize): ArrayBuffer {
+export function deserialize(): ArrayBuffer {
   const ret: string = INSTANCE.deserialize();
   return String.UTF8.encode(ret, true);
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function getState(agent_ptr: usize): ArrayBuffer {
+export function getState(): ArrayBuffer {
   const ret: AgentState = INSTANCE.getState();
   return String.UTF8.encode(ret.toJson(), false);
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function getCmd(agent_ptr: usize): i32 {
+export function getCmd(): i32 {
   return INSTANCE.getCmd();
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function getConfig(agent_ptr: usize): ArrayBuffer {
-  const ret: string = INSTANCE.getConfig();
+export function getConfig(): ArrayBuffer {
+  const ret: string = INSTANCE.getConfig().toJson();
   return String.UTF8.encode(ret, true);
 }
 
 // Forward definition - compiler will tree shake otherwise
-export function setConfig(agent_ptr: usize, config_ptr: usize): bool {
-  const configStr = ptrToString(config_ptr);
-  return INSTANCE.setConfig(configStr);
+export function setConfig(config_ptr: usize): bool {
+  const configJson = ptrToString(config_ptr);
+  let jsonObj: JSON.Obj = <JSON.Obj>JSON.parse(configJson);
+  return INSTANCE.setConfig(jsonObj);
 }
 
 // Forward definition - compiler will tree shake otherwise

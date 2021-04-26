@@ -15,37 +15,37 @@ const VERSION_CODE: u32 = 2;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
+/*
+ * Implementation
+ */
+
 #[allow(improper_ctypes_definitions)]
-extern "C" fn build_agent(
+unsafe extern "C" fn build_agent(
     _config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
 ) -> Box<dyn AgentTrait> {
-    send_payload(
-        &logger,
-        &sender,
-        AgentMessage::OneshotTask(Box::new(TestFutBuilder {
-            is_oneshot: true,
+    if let Err(e) = sender.try_send(AgentMessage::Command(0)) {
+        panic!("TestAgent - failed to send Command {}", e);
+    } else if let Err(e) = sender.try_send(AgentMessage::OneshotTask(Box::new(TestFutBuilder {
+        is_oneshot: true,
+        sender: sender.clone(),
+        logger: logger.clone(),
+        counter: Arc::new(AtomicI32::new(5)),
+    }))) {
+        panic!("TestAgent - failed to send OneshotTask {}", e);
+    } else if let Err(e) = sender.try_send(AgentMessage::RepeatedTask(
+        std::time::Duration::from_secs(1),
+        Box::new(TestFutBuilder {
+            is_oneshot: false,
             sender: sender.clone(),
             logger: logger.clone(),
-            counter: Arc::new(AtomicI32::new(5)),
-        })),
-    );
-
-    send_payload(
-        &logger,
-        &sender,
-        AgentMessage::RepeatedTask(
-            std::time::Duration::from_secs(1),
-            Box::new(TestFutBuilder {
-                is_oneshot: false,
-                sender: sender.clone(),
-                logger: logger.clone(),
-                counter: Arc::new(AtomicI32::new(2)),
-            }),
-        ),
-    );
-
+            counter: Arc::new(AtomicI32::new(2)),
+        }),
+    )) {
+        panic!("TestAgent - failed to send RepeatedTask {}", e);
+    }
+    
     Box::new(TestAgent {
         val: 0.5,
         logger: logger,
@@ -77,21 +77,26 @@ impl FutBuilder for TestFutBuilder {
             let oneshot_sender = self.sender.clone();
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
+                info!(logger, "TASK IS SLEEPING");
+                iftem_core::sleep(&runtime, std::time::Duration::from_secs(10)).await;
+                info!(logger, "TASK IS AWAKE");
+
                 if let Ok(_) = oneshot_sender.clone().try_send(AgentMessage::Command(1)) {
                     info!(logger, "SENT MESSAGE");
                 } else {
                     error!(logger, "FAILED SENDING 1");
                 }
 
-                info!(logger, "TASK IS SLEEPING");
-                iftem_core::sleep(&runtime, std::time::Duration::from_secs(10)).await;
-                info!(logger, "TASK IS AWAKE");
                 true
             })
         } else {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
+                info!(logger, "TASK IS SLEEPING");
+                iftem_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
+                info!(logger, "TASK IS AWAKE");
+
                 info!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
@@ -122,11 +127,8 @@ impl AgentTrait for TestAgent {
         }
     }
 
-    fn deserialize(&self) -> AgentConfig {
-        AgentConfig {
-            name: NAME.to_owned(),
-            state_json: "".to_owned(),
-        }
+    fn deserialize(&self) -> String {
+        "{}".to_owned()
     }
 
     fn state(&self) -> AgentState {
@@ -137,20 +139,29 @@ impl AgentTrait for TestAgent {
         CMD_INACTIVE
     }
 
-    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
-        config.insert("active", ("TestSwitch", AgentConfigType::Switch(true)));
-        config.insert("time", ("TestDateTime", AgentConfigType::DateTime(36000)));
         config.insert(
-            "slider",
+            "active".to_owned(),
+            ("TestSwitch".to_owned(), AgentConfigType::Switch(true)),
+        );
+        config.insert(
+            "time".to_owned(),
+            ("TestDateTime".to_owned(), AgentConfigType::DateTime(36000)),
+        );
+        config.insert(
+            "slider".to_owned(),
             (
-                "TestSliderRange",
-                AgentConfigType::IntSliderRange(SliderFormatter::Linear, 0, 24, 8),
+                "TestSliderRange".to_owned(),
+                AgentConfigType::IntSliderRange(0, 24, 8),
             ),
         );
         config.insert(
-            "slider",
-            ("TestSlider", AgentConfigType::IntRange(0, 1024, 42)),
+            "slider".to_owned(),
+            (
+                "TestSlider".to_owned(),
+                AgentConfigType::IntSliderRange(0, 1024, 42),
+            ),
         );
         config
     }
@@ -169,7 +180,7 @@ impl AgentTrait for TestAgent {
         } else {
             return false;
         }
-        if let AgentConfigType::IntSliderRange(_l, _u, val, _f) = &values["slider"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["slider"] {
             slider = *val;
         } else {
             return false;

@@ -65,8 +65,8 @@ impl MqttSensorClient {
 
     pub async fn connect(&self) {
         let conn_opts = ConnectOptionsBuilder::new().mqtt_version(MQTTV5).finalize();
-        if let Err(_e) = self.mqtt_client.connect(conn_opts).await {
-            //panic!("Coulnd't connect to MQTT: {}", e);
+        if let Err(e) = self.mqtt_client.connect(conn_opts).await {
+            panic!("Coulnd't connect to MQTT: {}", e);
         } else {
             info!(APP_LOGGING, "MQTT connected!");
         }

@@ -1,4 +1,21 @@
 const assert = require("assert");
 const myModule = require("..");
-assert.equal(myModule.add(1, 2), 3);
-console.log("ok");
+
+myModule.buildAgent(0);
+
+function readString(ptr) {
+    buffer = ''
+    while (true) {
+        c = new Uint8Array(myModule.memory.buffer)[ptr]
+        if (c == undefined || c == 0) {
+            break;
+        }
+        ptr++;
+        buffer += String.fromCharCode(c);
+    }
+    return buffer;
+}
+
+
+stateStr = readString(myModule.getConfig());
+console.log(stateStr);

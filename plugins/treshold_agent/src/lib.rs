@@ -19,8 +19,12 @@ const VERSION_CODE: u32 = 1;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
+/*
+ * Implementation
+ */
+
 #[allow(improper_ctypes_definitions)]
-extern "C" fn build_agent(
+unsafe extern "C" fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
@@ -182,35 +186,35 @@ impl AgentTrait for ThresholdAgent {
         0
     }
 
-    fn deserialize(&self) -> AgentConfig {
-        AgentConfig {
-            name: NAME.to_owned(),
-            state_json: serde_json::to_string(self).unwrap(),
-        }
+    fn deserialize(&self) -> String {
+        serde_json::to_string(self).unwrap()
     }
 
-    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
-        config.insert("01_active", ("Agent aktiviert", AgentConfigType::Switch(true)));
         config.insert(
-            "02_min_threshold",
+            "01_active".to_owned(),
+            ("Agent aktiviert".to_owned(), AgentConfigType::Switch(true)),
+        );
+        config.insert(
+            "02_min_threshold".to_owned(),
             (
-                "Schwellenwert",
-                AgentConfigType::IntRange(0, 100, self.min_threshold as i64),
+                "Schwellenwert".to_owned(),
+                AgentConfigType::IntSliderRange(0, 100, self.min_threshold as i64),
             ),
         );
         config.insert(
-            "03_action_duration_sec",
+            "03_action_duration_sec".to_owned(),
             (
-                "Aktivierungsdauer in Minuten",
-                AgentConfigType::IntRange(0, i64::MAX, self.action_duration_sec),
+                "Aktivierungsdauer in Minuten".to_owned(),
+                AgentConfigType::IntSliderRange(0, i64::MAX, self.action_duration_sec),
             ),
         );
         config.insert(
-            "04_action_cooldown_sec",
+            "04_action_cooldown_sec".to_owned(),
             (
-                "Cooldown in Minuten",
-                AgentConfigType::IntRange(0, i64::MAX, self.action_cooldown_sec),
+                "Cooldown in Minuten".to_owned(),
+                AgentConfigType::IntSliderRange(0, i64::MAX, self.action_cooldown_sec),
             ),
         );
         config
@@ -225,17 +229,17 @@ impl AgentTrait for ThresholdAgent {
         } else {
             return false;
         }
-        if let AgentConfigType::IntRange(_, __, val) = &values["02_min_threshold"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["02_min_threshold"] {
             min_threshold = *val;
         } else {
             return false;
         }
-        if let AgentConfigType::IntRange(_, __, val) = &values["03_action_duration_sec"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["03_action_duration_sec"] {
             action_duration_sec = *val;
         } else {
             return false;
         }
-        if let AgentConfigType::IntRange(_, __, val) = &values["04_action_cooldown_sec"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["04_action_cooldown_sec"] {
             action_cooldown_sec = *val;
         } else {
             return false;

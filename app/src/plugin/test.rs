@@ -3,15 +3,19 @@ use std::collections::HashMap;
 use chrono::Duration;
 use iftem_core::*;
 
-#[derive(std::fmt::Debug, PartialEq)]
+use super::*;
+
+#[derive(std::fmt::Debug)]
 pub struct MockAgent {
+    sender: Sender<AgentMessage>,
     pub last_action: Option<i32>,
     pub last_forced: Option<Duration>,
 }
 
 impl MockAgent {
-    pub fn new() -> Self {
+    pub fn new(sender: Sender<AgentMessage>) -> Self {
         MockAgent {
+            sender,
             last_action: None,
             last_forced: None,
         }
@@ -20,11 +24,13 @@ impl MockAgent {
 
 impl AgentTrait for MockAgent {
     fn handle_data(&mut self, _data: &SensorDataMessage) {
-        // no-op
+        //
     }
 
     fn handle_cmd(&mut self, _payload: i64) {
-        // no-op
+        if let Err(e) = self.sender.try_send(AgentMessage::Command(0)) {
+            panic!("{}", e);
+        }
     }
 
     fn deserialize(&self) -> String {
@@ -54,4 +60,19 @@ impl AgentTrait for MockAgent {
     fn set_config(&mut self, _: &HashMap<String, AgentConfigType>) -> bool {
         true
     }
+}
+
+#[tokio::test]
+async fn test_plugin_iac_channel() {
+    use tokio::sync::mpsc::unbounded_channel;
+
+    let (mqtt_sender, _mqtt_receiver) = unbounded_channel();
+    let factory = AgentFactory::new(mqtt_sender);
+
+    let mut agent = factory
+        .create_agent(1, &"MockAgent", &"TEST", None)
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    agent.handle_cmd(0);
 }

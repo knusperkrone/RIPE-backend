@@ -1,2 +1,6 @@
-export declare function sleep(ms: u64): void;
-export declare function log(msg: ArrayBuffer): void;
+export function sleep(ms: u64): void {
+
+}
+export function log(msg: ArrayBuffer): void {
+    
+}

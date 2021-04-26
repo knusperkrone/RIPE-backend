@@ -1,6 +1,8 @@
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
-use futures::future::{AbortHandle, Abortable};
+use futures::{
+    future::{AbortHandle, Abortable},
+};
 use iftem_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
@@ -38,7 +40,6 @@ pub fn register_sigint_handler() {
 pub struct Agent {
     sensor_id: i32,
     domain: String,
-    // plugin_sender: Sender<AgentMessage>,
     agent_name: String,
     iac_abort_handle: AbortHandle,
     repeat_task_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
@@ -62,10 +63,10 @@ impl Drop for Agent {
 
 /// A agent, is the lower level wrapper around a AgentTrait implementation
 /// It holds all necessary meta-information, for sending messages to the sensor
-/// All messages, are handled via the iac-stream
+/// All global messages, are handled via the with iac_sender
 impl Agent {
     pub fn new(
-        agent_sender: UnboundedSender<SensorMQTTCommand>,
+        iac_sender: UnboundedSender<SensorMQTTCommand>,
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
         domain: String,
@@ -78,7 +79,7 @@ impl Agent {
             Agent::dispatch_iac(
                 sensor_id,
                 domain.clone(),
-                agent_sender,
+                iac_sender,
                 plugin_receiver,
                 repeat_abort_handle.clone(),
             ),
@@ -155,16 +156,20 @@ impl Agent {
     async fn dispatch_iac(
         sensor_id: i32,
         domain: String,
-        agent_sender: UnboundedSender<SensorMQTTCommand>,
+        iac_sender: UnboundedSender<SensorMQTTCommand>,
         mut plugin_receiver: Receiver<AgentMessage>,
         repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
+        debug!(APP_LOGGING, "[{}][{}]Iac ready", sensor_id, domain);
+
         while let Some(payload) = plugin_receiver.recv().await {
             match payload {
                 AgentMessage::OneshotTask(agent_task_builder) => {
+                    debug!(APP_LOGGING, "[{}][{}]OneShotTask", sensor_id, domain);
                     Agent::dispatch_oneshot_task(sensor_id, agent_task_builder).await;
                 }
                 AgentMessage::RepeatedTask(delay, interval_task) => {
+                    debug!(APP_LOGGING, "[{}][{}]RepeatedTask", sensor_id, domain);
                     Agent::dispatch_repating_task(
                         sensor_id,
                         delay,
@@ -174,7 +179,7 @@ impl Agent {
                     .await;
                 }
                 AgentMessage::Command(command) => {
-                    warn!(APP_LOGGING, "Received command {:?}", command);
+                    debug!(APP_LOGGING, "Received command {:?}", command);
                     // Notify main loop over agent
                     let mut msg = SensorMQTTCommand {
                         sensor_id: sensor_id,
@@ -184,7 +189,7 @@ impl Agent {
 
                     let mut tries = 3;
                     while tries != 0 {
-                        if let Err(e) = agent_sender.send(msg) {
+                        if let Err(e) = iac_sender.send(msg) {
                             error!(APP_LOGGING, "[{}/3] Error sending payload: {}", tries, e);
                             tries -= 1;
                             msg = e.0;
@@ -239,11 +244,9 @@ impl Agent {
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let repeating_future = Abortable::new(
                 async move {
-                    info!(APP_LOGGING, "Started repeating task for {}", sensor_id);
-
                     info!(
                         APP_LOGGING,
-                        "Spawning repeating task for sensor: {} - sleep duration: {:?}",
+                        "Starting repeating task for sensor: {} - sleep duration: {:?}",
                         sensor_id,
                         delay,
                     );

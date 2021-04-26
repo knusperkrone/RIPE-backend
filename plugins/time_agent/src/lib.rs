@@ -16,10 +16,14 @@ const VERSION_CODE: u32 = 2;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
+/*
+ * Implementation
+ */
+
 const DAY_MS: u32 = 86_400_000;
 
 #[allow(improper_ctypes_definitions)]
-extern "C" fn build_agent(
+unsafe extern "C" fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
@@ -92,42 +96,42 @@ impl AgentTrait for TimeAgent {
         return self.inner.cmd();
     }
 
-    fn deserialize(&self) -> AgentConfig {
-        AgentConfig {
-            name: NAME.to_owned(),
-            state_json: serde_json::to_string(&(*self.inner)).unwrap(),
-        }
+    fn deserialize(&self) -> String {
+        serde_json::to_string(&(*self.inner)).unwrap()
     }
 
     fn state(&self) -> AgentState {
         *self.inner.last_state.read().unwrap()
     }
 
-    fn config(&self) -> HashMap<&str, (&str, AgentConfigType)> {
+    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
         config.insert(
-            "01_active",
-            ("Timeragent aktiviert", AgentConfigType::Switch(true)),
+            "01_active".to_owned(),
+            (
+                "Timeragent aktiviert".to_owned(),
+                AgentConfigType::Switch(true),
+            ),
         );
         config.insert(
-            "02_start_time",
+            "02_start_time".to_owned(),
             (
-                "Startuhrzeit  ",
-                AgentConfigType::IntSliderRange(
-                    SliderFormatter::Time(24 * 4),
+                "Startuhrzeit  ".to_owned(),
+                AgentConfigType::IntPickerRange(
                     0,
+                    24 * 4,
                     24 * 60,
                     (self.inner.duration_ms() / 1000 / 60) as i64,
                 ),
             ),
         );
         config.insert(
-            "03_slider",
+            "03_slider".to_owned(),
             (
-                "Dauer in Stunden",
-                AgentConfigType::IntSliderRange(
-                    SliderFormatter::Time(24 * 4),
+                "Dauer in Stunden".to_owned(),
+                AgentConfigType::IntPickerRange(
                     0,
+                    24 * 4,
                     24 * 60,
                     (self.inner.duration_ms() / 1000 / 60) as i64,
                 ),
@@ -146,13 +150,13 @@ impl AgentTrait for TimeAgent {
             info!(self.inner.logger, "Not active");
             return false;
         }
-        if let AgentConfigType::IntSliderRange(_f, _l, _u, val) = &values["02_start_time"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["02_start_time"] {
             time = *val;
         } else {
             info!(self.inner.logger, "No start_time");
             return false;
         }
-        if let AgentConfigType::IntSliderRange(_f, _l, _u, val) = &values["03_slider"] {
+        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["03_slider"] {
             duration = *val;
         } else {
             info!(self.inner.logger, "No slider");

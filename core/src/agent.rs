@@ -18,18 +18,12 @@ pub struct AgentUI {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum AgentConfigType {
-    Switch(bool),                                     // val
-    DateTime(u64),                     // val
-    IntRange(i64, i64, i64),                          // lower, upper, val
-    IntSliderRange(SliderFormatter, i64, i64, i64),   // formatter, lower, upper, val
-    FloatRange(f64, f64, f64),                        // lower, upper, val
-    FloatSliderRange(SliderFormatter, f64, f64, f64), // formatter, lower, upper, val
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub enum SliderFormatter {
-    Time(u32),
-    Linear,
+    Switch(bool),                         // val
+    DateTime(u64),                        // val
+    IntPickerRange(i64, i64, i64, i64),   // lower, upper, steps, val
+    IntSliderRange(i64, i64, i64),        // formatter, lower, upper, val
+    FloatPickerRange(f64, f64, f64, f64), // lower, upper, step, val
+    FloatSliderRange(f64, f64, f64),      // formatter, lower, upper, val
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -81,4 +75,85 @@ pub trait AgentTrait: std::fmt::Debug + Send + Sync {
     // user config
     fn config(&self) -> HashMap<String, (String, AgentConfigType)>; // key, translation, ui
     fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool;
+}
+
+///
+/// TEST
+///
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_print_serialized_agent_state() {
+        println!(
+            "Slider: {}",
+            serde_json::json!(AgentUIDecorator::Slider(0.0, 1.0, 0.5))
+        );
+        println!(
+            "TimePane: {}",
+            serde_json::json!(AgentUIDecorator::TimePane(60))
+        );
+
+        println!(
+            "Active: {}",
+            serde_json::json!(AgentState::Executing(Utc::now()))
+        );
+        println!(
+            "Forced: {}",
+            serde_json::json!(AgentState::Forced(Utc::now()))
+        );
+        println!("Ready: {}", serde_json::json!(AgentState::Ready));
+        println!("Default: {}", serde_json::json!(AgentState::Disabled));
+        println!("Error: {}", serde_json::json!(AgentState::Error));
+    }
+
+    #[tokio::test]
+    async fn test_print_serialized_agent_config() {
+        println!(
+            "Switch: {}",
+            serde_json::json!(AgentConfigType::Switch(true))
+        );
+        println!(
+            "Datetime: {}",
+            serde_json::json!(AgentConfigType::DateTime(0))
+        );
+        println!(
+            "IntRange: {}",
+            serde_json::json!(AgentConfigType::IntPickerRange(0, 10, 10, 5))
+        );
+        println!(
+            "IntSliderRange: {}",
+            serde_json::json!(AgentConfigType::IntSliderRange(0, 10, 5))
+        );
+        println!(
+            "FloatRange: {}",
+            serde_json::json!(AgentConfigType::FloatPickerRange(0., 10., 10.0, 5.))
+        );
+        println!(
+            "FloatSliderRange: {}",
+            serde_json::json!(AgentConfigType::FloatSliderRange(0.0, 5.0, 0.25,))
+        );
+
+        let mut map = HashMap::<String, (String, AgentConfigType)>::new();
+        map.insert(
+            "key".to_owned(),
+            ("Some Text".to_owned(), AgentConfigType::Switch(false)),
+        );
+
+        println!("Example config: {}", serde_json::json!(map))
+    }
+
+    #[tokio::test]
+    async fn test_print_serialized_agent_ui_decorator() {
+        println!("Text: {}", serde_json::json!(AgentUIDecorator::Text));
+        println!(
+            "TimePane: {}",
+            serde_json::json!(AgentUIDecorator::TimePane(5))
+        );
+        println!(
+            "Slider: {}",
+            serde_json::json!(AgentUIDecorator::Slider(0.0, 0.0, 0.0))
+        );
+    }
 }

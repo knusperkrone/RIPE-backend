@@ -206,75 +206,10 @@ pub mod dto {
 ///
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::collections::HashMap;
 
-    use super::*;
-    use chrono::Utc;
-    use iftem_core::{AgentConfigType, AgentState, AgentUIDecorator, SliderFormatter};
-
     use crate::models::establish_db_connection;
-
-    #[tokio::test]
-    async fn test_print_serialized_agent_state() {
-        println!(
-            "Slider: {}",
-            serde_json::json!(AgentUIDecorator::Slider(0.0, 1.0, 0.5))
-        );
-        println!(
-            "TimePane: {}",
-            serde_json::json!(AgentUIDecorator::TimePane(60))
-        );
-
-        println!(
-            "Active: {}",
-            serde_json::json!(AgentState::Executing(Utc::now()))
-        );
-        println!(
-            "Forced: {}",
-            serde_json::json!(AgentState::Forced(Utc::now()))
-        );
-        println!("Ready: {}", serde_json::json!(AgentState::Ready));
-        println!("Default: {}", serde_json::json!(AgentState::Disabled));
-        println!("Error: {}", serde_json::json!(AgentState::Error));
-    }
-
-    #[tokio::test]
-    async fn test_print_serialized_agent_config() {
-        println!(
-            "Switch: {}",
-            serde_json::json!(AgentConfigType::Switch(true))
-        );
-        println!(
-            "Datetime: {}",
-            serde_json::json!(AgentConfigType::DateTime(0))
-        );
-        println!(
-            "IntRange: {}",
-            serde_json::json!(AgentConfigType::IntRange(0, 10, 5))
-        );
-        println!(
-            "IntSliderRange: {}",
-            serde_json::json!(AgentConfigType::IntSliderRange(
-                SliderFormatter::Linear,
-                0,
-                10,
-                5
-            ))
-        );
-        println!(
-            "FloatRange: {}",
-            serde_json::json!(AgentConfigType::FloatRange(0., 10., 5.))
-        );
-        println!(
-            "FloatSliderRange: {}",
-            serde_json::json!(AgentConfigType::FloatSliderRange(
-                SliderFormatter::Linear,
-                0.0,
-                10.0,
-                5.0
-            ))
-        );
-    }
 
     #[tokio::test]
     async fn test_rest_agents() {

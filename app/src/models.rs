@@ -1,5 +1,5 @@
-use crate::error::DBError;
 use crate::config::CONFIG;
+use crate::error::DBError;
 use crate::logging::APP_LOGGING;
 use crate::{plugin::Agent, schema::*};
 use diesel::pg::PgConnection;

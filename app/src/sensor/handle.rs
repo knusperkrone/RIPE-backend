@@ -42,7 +42,7 @@ impl SensorHandle {
 
         debug!(
             APP_LOGGING,
-            "Sensor \"{}\" with {} agents",
+            "Loaded sensor \"{}\" with {} agents",
             sensor.name(),
             agents.len()
         );

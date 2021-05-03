@@ -51,7 +51,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
         sensor_id: i32,
         agent_name: &str,
         domain: &str,
-        state_json: Option<&str>, 
+        state_json: Option<&str>,
         plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, AgentError> {
@@ -111,11 +111,11 @@ impl AgentFactoryTrait for WasmAgentFactory {
             let res = self.load_wasm_file(bytes, agent_name);
             return match res {
                 Ok(_) => {
-                    info!(APP_LOGGING, "Loaded WASM plugin {}", filename);
+                    info!(APP_LOGGING, "Loaded wasm {}", filename);
                     Some(agent_name.to_owned())
                 }
                 Err(err) => {
-                    warn!(APP_LOGGING, "Invalid WASM plugin {:?}: {}", filename, err);
+                    warn!(APP_LOGGING, "Invalid wasm {:?}: {}", filename, err);
                     None
                 }
             };
@@ -144,8 +144,7 @@ impl WasmAgentFactory {
 
         let module = Module::new(&self.store, bytes)?;
         let (mock_sender, _mock_receiver) = channel::<AgentMessage>(64);
-        let test_agent =
-            self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
+        let test_agent = self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
         if self.test_agent_contract(test_agent) {
             self.libraries.insert(agent_name.to_owned(), module);
             Ok(())
@@ -250,10 +249,7 @@ impl WasmAgentFactory {
                 name
             ))))?
             .native::<Args, Rets>()
-            .map_err(|e| {
-                warn!(APP_LOGGING, "{}", e);
-                WasmPluginError::ContractMismatch(format!("{} - {}", name, e,))
-            })
+            .map_err(|e| WasmPluginError::ContractMismatch(format!("{} - {}", name, e,)))
     }
 
     fn read_wasm_bytes(filename: &str, ext: &OsStr) -> Result<Vec<u8>, std::io::Error> {

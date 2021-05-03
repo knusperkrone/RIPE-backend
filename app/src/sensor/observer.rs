@@ -359,7 +359,7 @@ impl ConcurrentSensorObserver {
                 .register_sensor_from_dao(sensor_dao, Some(&agent_configs))
                 .await;
             match restore_result {
-                Ok(id) => info!(APP_LOGGING, "Restored sensor {}", id),
+                Ok(id) => debug!(APP_LOGGING, "Restored sensor {}", id),
                 Err(msg) => error!(APP_LOGGING, "{}", msg),
             }
         }

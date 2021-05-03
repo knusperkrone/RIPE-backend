@@ -25,14 +25,14 @@ pub fn build_response<T: serde::Serialize>(
             StatusCode::OK,
         )),
         Err(ObserverError::User(err)) => {
-            warn!(APP_LOGGING, "{}", err);
+            warn!(APP_LOGGING, "UserRequest error: {}", err);
             let json = warp::reply::json(&ErrorResponseDto {
                 error: format!("{}", err),
             });
             Ok(warp::reply::with_status(json, StatusCode::BAD_REQUEST))
         }
         Err(ObserverError::Internal(err)) => {
-            error!(APP_LOGGING, "{}", err);
+            error!(APP_LOGGING, "InternalRequest error: {}", err);
             let json = warp::reply::json(&ErrorResponseDto {
                 error: "Internal Error".to_owned(),
             });

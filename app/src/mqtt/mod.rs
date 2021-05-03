@@ -45,7 +45,7 @@ impl MqttSensorClient {
         let topics = Self::build_topics(sensor);
         self.cli.subscribe_many(&topics, &vec![QOS, QOS]).await?;
 
-        debug!(APP_LOGGING, "[MQTT] Subscribed topics {:?}", topics);
+        debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
         Ok(())
     }
 
@@ -57,7 +57,7 @@ impl MqttSensorClient {
         let topics = Self::build_topics(sensor);
         self.cli.unsubscribe_many(&topics).await?;
 
-        debug!(APP_LOGGING, "[MQTT] Unsubscribed topics: {:?}", topics);
+        debug!(APP_LOGGING, "Unsubscribed topics: {:?}", topics);
         Ok(())
     }
 
@@ -70,7 +70,7 @@ impl MqttSensorClient {
         let mut cmds = sensor.format_cmds();
         debug!(
             APP_LOGGING,
-            "[MQTT] Send command to sensor {} - {:?}", cmd_topic, cmds
+            "Send command to sensor {} - {:?}", cmd_topic, cmds
         );
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
@@ -112,7 +112,7 @@ impl MqttSensorClient {
 
                 // propagate event to rest of the app
                 if let Err(e) = sensor_data_sender.send((sensor_id, sensor_dto)) {
-                    crit!(APP_LOGGING, "Failed sending SensorDataMessage: {}", e);
+                    crit!(APP_LOGGING, "Failed broadcast SensorDataMessage: {}", e);
                 }
                 Ok(())
             }
@@ -126,7 +126,7 @@ impl MqttSensorClient {
                 Ok(())
             }
             _ => Err(MQTTError::PathError(format!(
-                "[MQTT] Invalid endpoint: {}",
+                "Invalid endpoint: {}",
                 endpoint
             ))),
         }
@@ -147,9 +147,9 @@ impl MqttSensorClient {
         let owned_sender = sender.clone();
         cli.set_message_callback(move |_cli, msg| {
             if let Some(msg) = msg {
-                debug!(APP_LOGGING, "[MQTT] Received topic: {}", msg.topic());
+                debug!(APP_LOGGING, "Received topic: {}", msg.topic());
                 if let Err(e) = Self::on_sensor_message(&owned_sender, msg) {
-                    error!(APP_LOGGING, "[MQTT] Received message threw error: {}", e);
+                    error!(APP_LOGGING, "Received message threw error: {}", e);
                 }
             }
         });
@@ -158,7 +158,7 @@ impl MqttSensorClient {
             if let Err(e) = cli.reconnect().wait_for(Duration::from_secs(3)) {
                 error!(
                     APP_LOGGING,
-                    "[MQTT] Failed reconnected to broker due {}, resuming on other broker", e,
+                    "Failed reconnected to broker due {}, resuming on other broker", e,
                 );
 
                 // needs tu run in async(!) tokio context
@@ -167,7 +167,7 @@ impl MqttSensorClient {
                     Self::do_connect(&owned_cli).await;
                 });
             } else {
-                info!(APP_LOGGING, "[MQTT] Reconnected to previous MQTT broker");
+                info!(APP_LOGGING, "Reconnected to previous MQTT broker");
             }
         });
         cli
@@ -185,10 +185,10 @@ impl MqttSensorClient {
             if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(2)) {
                 error!(
                     APP_LOGGING,
-                    "[MQTT] Coulnd't connect to broker {} with {}", mqtt_uri[0], e
+                    "Coulnd't connect to broker {} with {}", mqtt_uri[0], e
                 );
             } else {
-                info!(APP_LOGGING, "[MQTT] connected to broker {}", mqtt_uri[0]);
+                info!(APP_LOGGING, "connected to broker {}", mqtt_uri[0]);
                 break;
             }
         }

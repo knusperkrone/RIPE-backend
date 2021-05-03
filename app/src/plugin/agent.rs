@@ -1,8 +1,6 @@
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
-use futures::{
-    future::{AbortHandle, Abortable},
-};
+use futures::future::{AbortHandle, Abortable};
 use iftem_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
@@ -32,7 +30,10 @@ pub fn register_sigint_handler() {
         if task_count == 0 {
             std::process::exit(0);
         }
-        info!(APP_LOGGING, "Waiting for {} tasks to finish", task_count);
+        info!(
+            APP_LOGGING,
+            "Waiting for {} agent tasks to finish..", task_count
+        );
     })
     .unwrap();
 }
@@ -190,7 +191,7 @@ impl Agent {
                     let mut tries = 3;
                     while tries != 0 {
                         if let Err(e) = iac_sender.send(msg) {
-                            error!(APP_LOGGING, "[{}/3] Error sending payload: {}", tries, e);
+                            error!(APP_LOGGING, "[{}/3] Failed iac send: {}", tries, e);
                             tries -= 1;
                             msg = e.0;
                         } else {
@@ -200,12 +201,13 @@ impl Agent {
                 }
             };
         }
+        // unreachable
         crit!(APP_LOGGING, "dispatch_iac endend for {}", sensor_id);
     }
 
     async fn dispatch_oneshot_task(sensor_id: i32, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) != 0 {
-            info!(APP_LOGGING, "Task wasn't started as app is cancelled");
+            info!(APP_LOGGING, "Task was declined as app recv SIGINT");
         } else {
             // Run as task a sender messenges are blocked otherwise
             tokio::spawn(async move {
@@ -266,7 +268,10 @@ impl Agent {
                         tokio::time::sleep(delay.into()).await;
                     }
 
-                    info!(APP_LOGGING, "Ended repeating task for {}", sensor_id);
+                    info!(
+                        APP_LOGGING,
+                        "Ended repeating task for sensor: {}", sensor_id
+                    );
                     let mut handle = repeat_handle_ref.write().unwrap();
                     *handle = None;
                 },
@@ -275,7 +280,10 @@ impl Agent {
             tokio::spawn(repeating_future);
             *handle = Some(abort_handle);
         } else {
-            warn!(APP_LOGGING, "Already scheduled a repeating task!");
+            warn!(
+                APP_LOGGING,
+                "Sensor {} already has a running task!", sensor_id
+            );
         }
     }
 }

@@ -56,11 +56,11 @@ impl AgentFactoryTrait for NativeAgentFactory {
             let res = unsafe { self.load_native_library(filename) };
             return match res {
                 Ok((lib_name, _version)) => {
-                    info!(APP_LOGGING, "Loaded NATIVE plugin {}", filename);
+                    info!(APP_LOGGING, "Loaded native: {}", filename);
                     Some(lib_name.to_owned())
                 }
                 Err(err) => {
-                    warn!(APP_LOGGING, "Invalid NATIVE plugin {}: {}", filename, err);
+                    warn!(APP_LOGGING, "Invalid native {}: {}", filename, err);
                     None
                 }
             };

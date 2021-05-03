@@ -133,13 +133,20 @@ pub mod dto {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::models::establish_db_connection;
+    use crate::{config::CONFIG, models::establish_db_connection};
+
+    fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
+        let mqtt_name = CONFIG.mqtt_name();
+        let plugin_path = CONFIG.plugin_dir();
+        let plugin_dir = std::path::Path::new(&plugin_path);
+        let db_conn = establish_db_connection();
+        ConcurrentSensorObserver::new(mqtt_name, plugin_dir, db_conn)
+    }
 
     #[tokio::test]
     async fn test_rest_register_sensor() {
         // Prepare
-        let db_conn = establish_db_connection();
-        let observer = ConcurrentSensorObserver::new(db_conn);
+        let observer = build_mocked_observer();
         let routes = routes(&observer);
 
         // Execute
@@ -159,8 +166,7 @@ mod test {
     #[tokio::test]
     async fn test_rest_unregister_sensor() {
         // Prepare
-        let db_conn = establish_db_connection();
-        let observer = ConcurrentSensorObserver::new(db_conn);
+        let observer = build_mocked_observer();
         let routes = routes(&observer);
         let dto = observer.register_sensor(None).await.unwrap();
 
@@ -179,8 +185,7 @@ mod test {
     #[tokio::test]
     async fn test_rest_sensor_status() {
         // Prepare
-        let db_conn = establish_db_connection();
-        let observer = ConcurrentSensorObserver::new(db_conn);
+        let observer = build_mocked_observer();
         let routes = routes(&observer);
         let register = observer.register_sensor(None).await.unwrap();
 

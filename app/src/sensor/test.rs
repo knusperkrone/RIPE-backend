@@ -1,11 +1,20 @@
+use std::sync::Arc;
+
 use super::*;
-use crate::models::establish_db_connection;
+use crate::{config::CONFIG, models::establish_db_connection};
+
+fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
+    let mqtt_name = CONFIG.mqtt_name();
+    let plugin_path = CONFIG.plugin_dir();
+    let plugin_dir = std::path::Path::new(&plugin_path);
+    let db_conn = establish_db_connection();
+    ConcurrentSensorObserver::new(mqtt_name, plugin_dir, db_conn)
+}
 
 #[tokio::test]
 async fn test_insert_sensor() {
     // prepare
-    let db_conn = establish_db_connection();
-    let observer = ConcurrentSensorObserver::new(db_conn);
+    let observer = build_mocked_observer();
 
     // Execute
     let mut results = Vec::<i32>::new();
@@ -23,8 +32,7 @@ async fn test_insert_sensor() {
 #[tokio::test]
 async fn test_unregister_sensor() {
     // prepare
-    let db_conn = establish_db_connection();
-    let observer = ConcurrentSensorObserver::new(db_conn);
+    let observer = build_mocked_observer();
     let cred = observer.register_sensor(None).await.unwrap();
 
     // execute
@@ -37,10 +45,9 @@ async fn test_unregister_sensor() {
 #[tokio::test]
 async fn test_invalid_remove_sensor() {
     // prepare
-    let db_conn = establish_db_connection();
-    let observer = ConcurrentSensorObserver::new(db_conn);
+    let observer = build_mocked_observer();
     let remove_id = -1;
-    let remove_key  = "asdase".to_owned();
+    let remove_key = "asdase".to_owned();
 
     // execute
     let res = observer.unregister_sensor(remove_id, remove_key).await;
@@ -52,8 +59,7 @@ async fn test_invalid_remove_sensor() {
 #[tokio::test]
 async fn test_sensor_status() {
     // prepare
-    let db_conn = establish_db_connection();
-    let observer = ConcurrentSensorObserver::new(db_conn);
+    let observer = build_mocked_observer();
     let sensor_res = observer.register_sensor(None).await.unwrap();
 
     // execute
@@ -68,8 +74,7 @@ async fn test_register_agent() {
     // prepare
     let domain = "TEST".to_owned();
     let agent = "MockAgent".to_owned();
-    let db_conn = establish_db_connection();
-    let observer = ConcurrentSensorObserver::new(db_conn);
+    let observer = build_mocked_observer();
     let sensor_res = observer.register_sensor(None).await.unwrap();
 
     // execute
@@ -87,8 +92,7 @@ async fn test_unregister_agent() {
     // prepare
     let domain = "TEST".to_owned();
     let agent = "MockAgent".to_owned();
-    let db_conn = establish_db_connection();
-    let observer = ConcurrentSensorObserver::new(db_conn);
+    let observer = build_mocked_observer();
     let sensor_res = observer.register_sensor(None).await.unwrap();
     observer
         .register_agent(
@@ -110,7 +114,11 @@ async fn test_unregister_agent() {
 }
 
 #[tokio::test]
-async fn test_agent_config() {}
+async fn test_agent_config() {
+    todo!()
+}
 
 #[tokio::test]
-async fn test_set_agent_config() {}
+async fn test_set_agent_config() {
+    todo!()
+}

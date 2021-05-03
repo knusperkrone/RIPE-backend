@@ -1,11 +1,10 @@
 use crate::error::DBError;
+use crate::config::CONFIG;
 use crate::logging::APP_LOGGING;
 use crate::{plugin::Agent, schema::*};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
-use std::env;
 use std::fmt::Debug;
 use std::string::String;
 
@@ -138,8 +137,7 @@ pub mod dao {
 use dao::*;
 
 pub fn establish_db_connection() -> PgConnection {
-    dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database_url = CONFIG.database_url();
     PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
 }
 

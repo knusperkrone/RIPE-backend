@@ -1,8 +1,8 @@
+use crate::config::CONFIG;
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::ConcurrentSensorObserver;
-use dotenv::dotenv;
-use std::{convert::Infallible, env, sync::Arc};
+use std::{convert::Infallible, sync::Arc};
 use warp::{hyper::StatusCode, Filter};
 
 mod agent_routes;
@@ -46,15 +46,16 @@ pub fn build_response<T: serde::Serialize>(
 
 pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) {
     // Set up logging
-    dotenv().ok();
     std::env::set_var("RUST_LOG", "actix_web=info");
-    let bind_port = env::var("BIND_PORT").expect("BIND_PORT must be set");
-
+    let server_port = CONFIG.server_port();
     let sensor_routes = sensor_routes::routes(&observer);
     let agent_routes = agent_routes::routes(&observer);
 
-    info!(APP_LOGGING, "Starting webserver at: 0.0.0.0:{}", bind_port);
+    info!(
+        APP_LOGGING,
+        "Starting webserver at: 0.0.0.0:{}", server_port
+    );
     warp::serve(sensor_routes.or(agent_routes))
-        .run(([0, 0, 0, 0], bind_port.parse().unwrap()))
+        .run(([0, 0, 0, 0], server_port.parse().unwrap()))
         .await;
 }

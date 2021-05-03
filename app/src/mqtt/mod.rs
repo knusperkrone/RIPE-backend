@@ -1,10 +1,11 @@
+use std::time::Duration;
+
+use crate::config::CONFIG;
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorHandle;
-use dotenv::dotenv;
 use iftem_core::SensorDataMessage;
 use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
-use std::env;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(test)]
@@ -13,107 +14,68 @@ mod test;
 const MQTTV5: u32 = 5;
 const QOS: i32 = 1;
 
+type MqttSender = UnboundedSender<(i32, SensorDataMessage)>;
+
 pub struct MqttSensorClient {
-    mqtt_client: AsyncClient,
+    cli: AsyncClient,
 }
 
 impl MqttSensorClient {
+    pub const TESTAMENT_TOPIC: &'static str = "ripe/master";
     pub const SENSOR_TOPIC: &'static str = "sensor";
     pub const CMD_TOPIC: &'static str = "cmd";
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    pub fn new(sensor_data_sender: UnboundedSender<(i32, SensorDataMessage)>) -> Self {
-        // Read in config and setup mqtt client
-        dotenv().ok();
-        let mqtt_name: String = env::var("MQTT_NAME").expect("MQTT_NAME must be set");
-        let mqtt_url: String = env::var("MQTT_URL").expect("MQTT_URL must be set");
-        let mqtt_port: i32 = env::var("MQTT_PORT")
-            .expect("MQTT_PORT must be set")
-            .parse()
-            .unwrap();
+    pub fn new(mqtt_name: String, sender: MqttSender) -> Self {
+        let cli = Self::create_client(mqtt_name, sender);
 
-        let mqtt_uri = format!("tcp://{}:{}", mqtt_url, mqtt_port);
-        info!(APP_LOGGING, "MQTT config: {}", mqtt_uri);
-        // Create a client to the specified host, no persistence
-        let create_opts = CreateOptionsBuilder::new()
-            .mqtt_version(MQTTV5)
-            .client_id(mqtt_name)
-            .server_uri(mqtt_uri)
-            .finalize();
-
-        let mut mqtt_client = AsyncClient::new(create_opts).unwrap();
-
-        // Setup callbacks
-        mqtt_client.set_message_callback(move |_cli, msg| {
-            if let Some(msg) = msg {
-                debug!(APP_LOGGING, "Received msg for topic: {}", msg.topic());
-                let _ = MqttSensorClient::on_sensor_message(&sensor_data_sender, msg);
-            }
-        });
-        mqtt_client.set_connection_lost_callback(move |cli| {
-            error!(APP_LOGGING, "Lost connected to MQTT");
-            if let Err(e) = cli.reconnect().wait_for(std::time::Duration::from_secs(5)) {
-                panic!("Coulnd't reconnect to mqtt: {}", e);
-            } else {
-                info!(APP_LOGGING, "Reconnected to MQTT");
-            }
-        });
-
-        MqttSensorClient { mqtt_client }
+        MqttSensorClient { cli }
     }
 
     pub async fn connect(&self) {
-        let conn_opts = ConnectOptionsBuilder::new().mqtt_version(MQTTV5).finalize();
-        if let Err(e) = self.mqtt_client.connect(conn_opts).await {
-            panic!("Coulnd't connect to MQTT: {}", e);
-        } else {
-            info!(APP_LOGGING, "MQTT connected!");
-        }
+        Self::do_connect(&self.cli).await;
     }
 
-    pub async fn subscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        if cfg!(test) && !self.mqtt_client.is_connected() {
+    pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        if cfg!(test) && !self.cli.is_connected() {
             return Ok(());
         }
 
-        let topics = MqttSensorClient::build_topics(sensor);
-        self.mqtt_client
-            .subscribe_many(&topics, &vec![QOS, QOS])
-            .await?;
+        let topics = Self::build_topics(sensor);
+        self.cli.subscribe_many(&topics, &vec![QOS, QOS]).await?;
 
-        info!(APP_LOGGING, "Subscribed topics {:?}", topics);
+        debug!(APP_LOGGING, "[MQTT] Subscribed topics {:?}", topics);
         Ok(())
     }
 
-    pub async fn unsubscribe_sensor(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        if cfg!(test) && !self.mqtt_client.is_connected() {
+    pub async fn unsubscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        if cfg!(test) && !self.cli.is_connected() {
             return Ok(());
         }
 
-        let topics = MqttSensorClient::build_topics(sensor);
-        self.mqtt_client.unsubscribe_many(&topics).await?;
+        let topics = Self::build_topics(sensor);
+        self.cli.unsubscribe_many(&topics).await?;
 
-        info!(APP_LOGGING, "Unsubscribed topics: {:?}", topics);
+        debug!(APP_LOGGING, "[MQTT] Unsubscribed topics: {:?}", topics);
         Ok(())
     }
 
-    pub async fn send_cmd(&mut self, sensor: &SensorHandle) -> Result<(), MQTTError>  {
-        if cfg!(test) && !self.mqtt_client.is_connected() {
+    pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        if cfg!(test) && !self.cli.is_connected() {
             return Ok(());
         }
 
-        let cmd_topic = MqttSensorClient::build_topic(sensor, MqttSensorClient::CMD_TOPIC);
+        let cmd_topic = Self::build_topic(sensor, Self::CMD_TOPIC);
         let mut cmds = sensor.format_cmds();
-        info!(
+        debug!(
             APP_LOGGING,
-            "Send command to sensor {} - {:?}", cmd_topic, cmds
+            "[MQTT] Send command to sensor {} - {:?}", cmd_topic, cmds
         );
-
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
-        let publ = Message::new_retained(cmd_topic, payload, QOS);
-        self.mqtt_client.publish(publ).await?;
 
+        let publ = Message::new_retained(cmd_topic, payload, QOS);
+        self.cli.publish(publ).await?;
         Ok(())
     }
 
@@ -124,43 +86,28 @@ impl MqttSensorClient {
         sensor_data_sender: &UnboundedSender<(i32, SensorDataMessage)>,
         msg: Message,
     ) -> Result<(), MQTTError> {
-        info!(APP_LOGGING, "MSG {}", msg.topic());
-
         // parse message
         let path: Vec<&str> = msg.topic().splitn(4, '/').collect();
         if path.len() != 4 {
-            // Unreachable
             return Err(MQTTError::PathError(format!(
                 "Couldn't split topic: {}",
                 msg.topic()
             )));
-        } else if path[0] != MqttSensorClient::SENSOR_TOPIC {
+        } else if path[0] != Self::SENSOR_TOPIC {
             return Err(MQTTError::PathError(format!("Invalid topic: {}", path[0])));
         }
 
-        let sensor_id: i32;
         let endpoint = path[1];
-        let _key = path[3]; // No necessary to check, as only valid paths are subscribed
-        if let Ok(parsed_id) = path[2].parse() {
-            sensor_id = parsed_id;
-        } else {
-            return Err(MQTTError::PathError(format!(
-                "Couldn't parse sensor_id: {}",
-                path[0]
-            )));
-        }
-
-        let payload: &str;
-        if let Ok(string) = std::str::from_utf8(msg.payload()) {
-            payload = string;
-        } else {
-            return Err(MQTTError::PayloadError(
-                "Couldn't decode payload".to_string(),
-            ));
-        }
+        let sensor_id: i32 = path[2].parse().or(Err(MQTTError::PathError(format!(
+            "Couldn't parse sensor_id: {}",
+            path[2]
+        ))))?;
+        let payload: &str = std::str::from_utf8(msg.payload()).or(Err(MQTTError::PayloadError(
+            "Couldn't decode payload".to_string(),
+        )))?;
 
         match endpoint {
-            MqttSensorClient::DATA_TOPIC => {
+            Self::DATA_TOPIC => {
                 let sensor_dto = serde_json::from_str::<SensorDataMessage>(payload)?;
 
                 // propagate event to rest of the app
@@ -169,17 +116,17 @@ impl MqttSensorClient {
                 }
                 Ok(())
             }
-            MqttSensorClient::LOG_TOPIC => {
+            Self::LOG_TOPIC => {
                 info!(
                     APP_LOGGING,
-                    "Log sensor[{}]: {}",
+                    "[Sensor({})] logs: {}",
                     sensor_id,
                     payload.to_string()
                 );
                 Ok(())
             }
             _ => Err(MQTTError::PathError(format!(
-                "Invalid endpoint: {}",
+                "[MQTT] Invalid endpoint: {}",
                 endpoint
             ))),
         }
@@ -189,17 +136,75 @@ impl MqttSensorClient {
      * Helpers
      */
 
+    fn create_client(mqtt_name: String, sender: MqttSender) -> AsyncClient {
+        let options = CreateOptionsBuilder::new()
+            .client_id(mqtt_name.clone())
+            .mqtt_version(MQTTV5)
+            .finalize();
+        let mut cli = AsyncClient::new(options).unwrap();
+
+        // Setup callbacks
+        let owned_sender = sender.clone();
+        cli.set_message_callback(move |_cli, msg| {
+            if let Some(msg) = msg {
+                debug!(APP_LOGGING, "[MQTT] Received topic: {}", msg.topic());
+                if let Err(e) = Self::on_sensor_message(&owned_sender, msg) {
+                    error!(APP_LOGGING, "[MQTT] Received message threw error: {}", e);
+                }
+            }
+        });
+        let rt = tokio::runtime::Handle::current();
+        cli.set_connection_lost_callback(move |cli| {
+            if let Err(e) = cli.reconnect().wait_for(Duration::from_secs(3)) {
+                error!(
+                    APP_LOGGING,
+                    "[MQTT] Failed reconnected to broker due {}, resuming on other broker", e,
+                );
+
+                // needs tu run in async(!) tokio context
+                let owned_cli = cli.clone();
+                rt.spawn(async move {
+                    Self::do_connect(&owned_cli).await;
+                });
+            } else {
+                info!(APP_LOGGING, "[MQTT] Reconnected to previous MQTT broker");
+            }
+        });
+        cli
+    }
+
+    async fn do_connect(cli: &AsyncClient) {
+        loop {
+            let mqtt_uri = vec![CONFIG.next_mqtt_broker().clone()];
+            let conn_opts = ConnectOptionsBuilder::new()
+                .server_uris(&mqtt_uri)
+                .mqtt_version(MQTTV5)
+                .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
+                .finalize();
+
+            if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(2)) {
+                error!(
+                    APP_LOGGING,
+                    "[MQTT] Coulnd't connect to broker {} with {}", mqtt_uri[0], e
+                );
+            } else {
+                info!(APP_LOGGING, "[MQTT] connected to broker {}", mqtt_uri[0]);
+                break;
+            }
+        }
+    }
+
     fn build_topics(sensor: &SensorHandle) -> Vec<String> {
         vec![
-            MqttSensorClient::build_topic(sensor, MqttSensorClient::DATA_TOPIC),
-            MqttSensorClient::build_topic(sensor, MqttSensorClient::LOG_TOPIC),
+            Self::build_topic(sensor, Self::DATA_TOPIC),
+            Self::build_topic(sensor, Self::LOG_TOPIC),
         ]
     }
 
     fn build_topic(sensor: &SensorHandle, topic: &str) -> String {
         format!(
             "{}/{}/{}/{}",
-            MqttSensorClient::SENSOR_TOPIC,
+            Self::SENSOR_TOPIC,
             topic,
             sensor.id(),
             sensor.key_b64(),

@@ -7,7 +7,7 @@ use tokio::time::timeout;
 #[tokio::test]
 async fn test_mqtt_connection() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = MqttSensorClient::new(tx);
+    let client = MqttSensorClient::new("connection_test".to_owned(), tx);
     client.connect().await;
 }
 
@@ -41,6 +41,7 @@ async fn test_send_path() {
     let result = MqttSensorClient::on_sensor_message(&tx, mocked_message);
 
     // validate
+    println!("{:?}", result);
     assert_eq!(result.is_ok(), true);
     if let Ok(Some((actual_id, actual_data))) = timeout(Duration::from_millis(10), rx.recv()).await
     {

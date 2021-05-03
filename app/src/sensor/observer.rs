@@ -1,9 +1,3 @@
-use crate::plugin::AgentFactory;
-use crate::{
-    error::{DBError, ObserverError},
-    rest::AgentDto,
-};
-
 use super::handle::{SensorHandle, SensorMQTTCommand};
 use crate::logging::APP_LOGGING;
 use crate::models::{
@@ -11,49 +5,52 @@ use crate::models::{
     dao::{AgentConfigDao, SensorDao},
 };
 use crate::mqtt::MqttSensorClient;
+use crate::plugin::AgentFactory;
 use crate::rest::{AgentStatusDto, SensorCredentialDto, SensorStatusDto};
+use crate::{
+    error::{DBError, ObserverError},
+    rest::AgentDto,
+};
 use diesel::pg::PgConnection;
 use iftem_core::{AgentConfigType, SensorDataMessage};
 use notify::{watcher, Watcher};
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 pub struct ConcurrentSensorObserver {
+    plugin_dir: std::path::PathBuf,
     container: RwLock<SensorCache>,
     agent_factory: Mutex<AgentFactory>,
     iac_receiver: Mutex<UnboundedReceiver<SensorMQTTCommand>>,
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorDataMessage)>>,
-    mqtt_client: RwLock<MqttSensorClient>,
+    mqtt_client: MqttSensorClient,
     db_conn: Arc<Mutex<PgConnection>>,
 }
 
 impl ConcurrentSensorObserver {
-    pub fn new(db_conn: PgConnection) -> Arc<Self> {
+    pub fn new(mqtt_name: String, plugin_dir: &Path, db_conn: PgConnection) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
         let agent_factory = AgentFactory::new(iac_sender);
         let container = SensorCache::new();
-        let client = MqttSensorClient::new(sensor_data_sender);
+        let mqtt_client = MqttSensorClient::new(mqtt_name, sensor_data_sender);
 
         let observer = ConcurrentSensorObserver {
+            mqtt_client,
+            plugin_dir: plugin_dir.to_owned(),
             container: RwLock::new(container),
             agent_factory: Mutex::new(agent_factory),
             iac_receiver: Mutex::new(iac_receiver),
             data_receveiver: Mutex::new(data_receiver),
-            mqtt_client: RwLock::new(client),
             db_conn: Arc::new(Mutex::new(db_conn)),
         };
         Arc::new(observer)
     }
 
     pub fn load_plugins(&self) {
-        dotenv::dotenv().ok();
-        let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
-        let plugins_dir = std::path::Path::new(&path);
-
         let mut agent_factory = self.agent_factory.lock();
-        agent_factory.load_new_plugins(plugins_dir);
+        agent_factory.load_new_plugins(self.plugin_dir.as_path());
     }
 
     /// Starts the paho-thread, registers all callbacks
@@ -68,7 +65,7 @@ impl ConcurrentSensorObserver {
         }
         let mut receiver = reveiver_res.unwrap();
 
-        self.mqtt_client.read().connect().await;
+        self.mqtt_client.connect().await;
         self.populate_agents().await; // Subscribing to persisted sensors
 
         loop {
@@ -106,8 +103,7 @@ impl ConcurrentSensorObserver {
                 let container = self.container.read();
                 let sensor_opt = container.sensor_unchecked(item.sensor_id);
                 if sensor_opt.is_some() {
-                    let mut mqtt_client = self.mqtt_client.write();
-                    if let Err(e) = mqtt_client.send_cmd(&sensor_opt.unwrap()).await {
+                    if let Err(e) = self.mqtt_client.send_cmd(&sensor_opt.unwrap()).await {
                         error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
                     }
                 }
@@ -119,25 +115,23 @@ impl ConcurrentSensorObserver {
     /// checks if the plugin libary files got updated
     /// Blocks caller thread in infinite loop
     pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentSensorObserver>) -> () {
-        dotenv::dotenv().ok();
-        let path = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
-        let plugins_dir = std::path::Path::new(&path);
+        let plugin_dir = self.plugin_dir.as_path();
 
         // watch plugin dir
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = watcher(tx, Duration::from_secs(5)).unwrap();
-        if let Err(e) = watcher.watch(&path, notify::RecursiveMode::NonRecursive) {
+        if let Err(e) = watcher.watch(&plugin_dir, notify::RecursiveMode::NonRecursive) {
             crit!(APP_LOGGING, "Cannot watch plugin dir: {}", e);
             return;
         }
 
-        info!(APP_LOGGING, "Start watching plugin dir: {}", path);
+        info!(APP_LOGGING, "Start watching plugin dir: {:?}", plugin_dir);
         loop {
             if let Ok(_) = rx.try_recv() {
                 // Non blocking
                 info!(APP_LOGGING, "Plugin changes registered - reloading");
                 let mut agent_factory = self.agent_factory.lock();
-                agent_factory.load_new_plugins(plugins_dir);
+                agent_factory.load_new_plugins(plugin_dir);
             }
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
@@ -185,7 +179,7 @@ impl ConcurrentSensorObserver {
 
         let sensor_mtx = self.container.write().remove_sensor(sensor_id, &key_b64)?;
         let sensor = sensor_mtx.lock();
-        self.mqtt_client.write().unsubscribe_sensor(&sensor).await?;
+        self.mqtt_client.unsubscribe_sensor(&sensor).await?;
 
         info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
         Ok(SensorCredentialDto {
@@ -386,9 +380,8 @@ impl ConcurrentSensorObserver {
     }
 
     async fn register_sensor_mqtt(&self, sensor: &SensorHandle) -> Result<(), ObserverError> {
-        let mut mqtt = self.mqtt_client.write();
-        mqtt.subscribe_sensor(sensor).await?;
-        if let Err(e) = mqtt.send_cmd(sensor).await {
+        self.mqtt_client.subscribe_sensor(sensor).await?;
+        if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
             error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
         }
         Ok(())

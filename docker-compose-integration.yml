@@ -1,0 +1,46 @@
+version: "3"
+services:
+  db:
+    restart: "always"
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_DB: ripe
+      POSTGRES_USER: iflab
+      POSTGRES_PASSWORD: Tischfussball
+
+  db_schema:
+    restart: "no"
+    image: clux/diesel-cli
+    volumes:
+      - ./:/volume
+    working_dir: "/volume"
+    environment:
+      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
+    depends_on:
+      - db
+    entrypoint: ["sh", "-c", "sleep 3 && diesel migration run"]
+
+  backend:
+    restart: "always"
+    image: docker-registry.if-lab.de/arme/iftem_backend:latest
+    networks:
+      - proxy
+    deploy:
+      replicas: 1
+      environment:
+      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
+      SERVER_PORT: 8080
+      MQTT_NAME: iot-master
+      MQTT_BROKERS: tcp://127.0.0.1:1883,tcp://18.196.113.35:1883
+      labels:
+        - traefik.enable=true
+        - traefik.frontend.rule=PathPrefixStrip:/$CI_PROJECT_PATH_SLUG
+        - traefik.port=8080
+        - traefik.docker.network=proxy
+        - traefik.http.middlewares.autodetect.contenttype.autodetect=false
+
+networks:
+  default:
+    external: false
+  proxy:
+    external: true

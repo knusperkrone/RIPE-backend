@@ -47,6 +47,5 @@ COPY --from=build /ripe/plugins/target/release/*.so ./plugins/
 COPY --from=build /ripe/plugins/target/release/*.wasm ./plugins/
 COPY .env-docker .env
 
-ENV RUST_LOG=info
 ENV RUST_BACKTRACE=full
 CMD ["/app/ripe"]

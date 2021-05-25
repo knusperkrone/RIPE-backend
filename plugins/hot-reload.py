@@ -2,17 +2,32 @@
 
 import os
 import time
+import sys
 import subprocess
+import threading
 
 
+def start_ripe(lock):
+    subprocess.Popen(['rm', 'target/debug/*.so*'],
+                     stderr=subprocess.PIPE).wait()
+    os.system('cargo build')
+    os.chdir('..')
 
+    lock.release()
+    stdout, stderr = subprocess.Popen(
+        ['cargo', 'run'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+
+    lines = stderr.decode('utf-8').splitlines()[-5:]
+    print('RIPE crashed')
+    print('\n'.join(lines))
+    exit(1)
 
 
 def reload_plugins():
     print('Compiling..')
     build = subprocess.Popen(['cargo', 'build'], stderr=subprocess.PIPE)
     stdout, stderr = build.communicate()
-    output = stderr.decode("utf-8")
+    output = stderr.decode('utf-8')
 
     # extract compiled plugins from build command
     updated_plugins = []
@@ -29,7 +44,7 @@ def reload_plugins():
     os.chdir('target/debug')
     libs = {}
     for entry in os.listdir('.'):
-        needle ='.so'
+        needle = '.so'
         index = entry.find(needle)
         if index != -1:
             key = entry[0:index]
@@ -43,3 +58,22 @@ def reload_plugins():
         new_name = f'{k}.so{libs[k] + 1}'
         subprocess.Popen(['cp', orig_name, new_name])
         print('updated', k)
+    os.chdir('../..')
+
+
+def main():
+    lock = threading.Semaphore(0)
+    threading.Thread(target=start_ripe, name="Ripe executor",
+                     args=(lock,)).start()
+    lock.acquire()
+    time.sleep(0.1)
+    os.chdir('plugins')
+
+    while True:
+        print('Press enter to reload')
+        i = sys.stdin.read(1)
+        reload_plugins()
+
+
+if __name__ == '__main__':
+    main()

@@ -1,7 +1,7 @@
 #1 BUILD app
 FROM rust:1.52 as build
 RUN apt-get update && \ 
-        apt-get install -y cmake
+        apt-get install -y cmake npm
 
 WORKDIR /ripe
 
@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y openssl libpq-dev
 WORKDIR /app
 COPY --from=build /ripe/app/target/release/ripe .
 COPY --from=build /ripe/plugins/target/release/*.so ./plugins/
+COPY --from=build /ripe/plugins/target/release/*.wasm ./plugins/
 COPY .env-docker .env
 
 ENV RUST_LOG=info

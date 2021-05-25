@@ -12,10 +12,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@assemblyscript/loader": "^0.18.27",
+    "@assemblyscript/loader": "^0.18.32",
+    "as-date": "^0.1.2",
     "assemblyscript-json": "^1.0.0"
   },
   "devDependencies": {
-    "assemblyscript": "^0.18.27"
+    "assemblyscript": "^0.18.32",
+    "binaryen": "^101.0.0"
   }
 }

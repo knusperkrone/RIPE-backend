@@ -179,7 +179,7 @@ fn set_agent_config(
 /// DTO
 ///
 pub mod dto {
-    use iftem_core::AgentUI;
+    use ripe_core::AgentUI;
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug)]

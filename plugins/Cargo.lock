@@ -119,7 +119,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "iftem_core"
+name = "ripe_core"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -428,7 +428,7 @@ dependencies = [
 name = "test_agent"
 version = "0.1.0"
 dependencies = [
- "iftem_core",
+ "ripe_core",
  "slog",
  "tokio",
 ]
@@ -448,7 +448,7 @@ name = "time_agent"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "iftem_core",
+ "ripe_core",
  "serde",
  "serde_json",
  "slog",
@@ -492,7 +492,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "crossbeam",
- "iftem_core",
+ "ripe_core",
  "serde",
  "serde_json",
  "slog",

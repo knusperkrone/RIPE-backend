@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::Duration;
-use iftem_core::*;
+use ripe_core::*;
 
 use super::*;
 

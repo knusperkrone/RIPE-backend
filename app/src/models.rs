@@ -4,7 +4,7 @@ use crate::logging::APP_LOGGING;
 use crate::{plugin::Agent, schema::*};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use iftem_core::SensorDataMessage;
+use ripe_core::SensorDataMessage;
 use std::fmt::Debug;
 use std::string::String;
 
@@ -95,7 +95,7 @@ pub mod dao {
     }
 
     impl NewSensorData {
-        pub fn new(sensor_id: i32, other: iftem_core::SensorDataMessage) -> Self {
+        pub fn new(sensor_id: i32, other: ripe_core::SensorDataMessage) -> Self {
             NewSensorData {
                 sensor_id: sensor_id,
                 timestamp: other.timestamp.naive_utc(),
@@ -249,7 +249,7 @@ pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError>
 pub fn insert_sensor_data(
     conn: &PgConnection,
     sensor_id: i32,
-    dto: iftem_core::SensorDataMessage,
+    dto: ripe_core::SensorDataMessage,
 ) -> Result<(), DBError> {
     let insert = NewSensorData::new(sensor_id, dto);
     diesel::insert_into(sensor_data::table)

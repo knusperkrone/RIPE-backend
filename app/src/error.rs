@@ -1,4 +1,4 @@
-use iftem_core::error::AgentError;
+use ripe_core::error::AgentError;
 use std::{error, fmt};
 
 #[derive(Debug)]

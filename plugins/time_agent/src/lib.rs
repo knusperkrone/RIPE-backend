@@ -2,7 +2,7 @@
 extern crate slog;
 
 use chrono::{DateTime, Duration, Timelike, Utc};
-use iftem_core::*;
+use ripe_core::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -75,7 +75,7 @@ impl AgentTrait for TimeAgent {
                 self.inner.stop(until);
             }
 
-            iftem_core::send_payload(
+            ripe_core::send_payload(
                 &self.inner.logger,
                 &self.inner.sender,
                 AgentMessage::Command(self.cmd()),
@@ -175,7 +175,7 @@ impl AgentTrait for TimeAgent {
 impl TimeAgent {
     fn dispatch_task(&self) {
         let task_inner = self.inner.clone();
-        iftem_core::send_payload(
+        ripe_core::send_payload(
             &self.inner.logger,
             &self.inner.sender,
             AgentMessage::RepeatedTask(
@@ -207,9 +207,9 @@ impl FutBuilder for TickerFutBuilder {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TimeAgentInner {
-    #[serde(skip, default = "iftem_core::logger_sentinel")]
+    #[serde(skip, default = "ripe_core::logger_sentinel")]
     logger: slog::Logger,
-    #[serde(skip, default = "iftem_core::sender_sentinel")]
+    #[serde(skip, default = "ripe_core::sender_sentinel")]
     sender: Sender<AgentMessage>,
     #[serde(skip, default)]
     last_state: RwLock<AgentState>,
@@ -222,8 +222,8 @@ pub struct TimeAgentInner {
 impl Default for TimeAgentInner {
     fn default() -> Self {
         TimeAgentInner {
-            logger: iftem_core::logger_sentinel(),
-            sender: iftem_core::sender_sentinel(),
+            logger: ripe_core::logger_sentinel(),
+            sender: ripe_core::sender_sentinel(),
             last_state: RwLock::new(AgentState::default()),
             last_command_mtx: Mutex::new(CMD_INACTIVE),
             start_time_ms: AtomicU32::new(0),

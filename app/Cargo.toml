@@ -1,5 +1,5 @@
 [package]
-name = "iftem"
+name = "ripe"
 version = "0.1.0"
 authors = ["Aron Metzig <aron.metzig@interface-ag.de>"]
 edition = "2018"
@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 # derived core dependencies
-iftem_core = { path = "../core" }
+ripe_core = { path = "../core" }
 chrono = { version = "*", features = ["serde"] }
 serde = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["full"] }

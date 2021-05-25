@@ -1,7 +1,7 @@
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use futures::future::{AbortHandle, Abortable};
-use iftem_core::{
+use ripe_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
 use std::{

@@ -4,7 +4,7 @@ use crate::config::CONFIG;
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorHandle;
-use iftem_core::SensorDataMessage;
+use ripe_core::SensorDataMessage;
 use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
 use tokio::sync::mpsc::UnboundedSender;
 

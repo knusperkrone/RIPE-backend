@@ -108,7 +108,7 @@ fn sensor_reload(
 ///
 pub mod dto {
     use crate::rest::AgentStatusDto;
-    use iftem_core::SensorDataMessage;
+    use ripe_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]

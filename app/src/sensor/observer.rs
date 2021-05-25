@@ -13,7 +13,7 @@ use crate::{
 };
 use chrono::Utc;
 use diesel::pg::PgConnection;
-use iftem_core::{AgentConfigType, SensorDataMessage};
+use ripe_core::{AgentConfigType, SensorDataMessage};
 use notify::{watcher, Watcher};
 use parking_lot::{Mutex, RawMutex, RwLock};
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};

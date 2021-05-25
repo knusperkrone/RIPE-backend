@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::{collections::HashMap, pin::Pin};
 
-use iftem_core::*;
+use ripe_core::*;
 use tokio::sync::mpsc::Sender;
 
 const NAME: &str = "TestAgent";
@@ -88,7 +88,7 @@ impl FutBuilder for TestFutBuilder {
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
                 info!(logger, "TASK IS SLEEPING");
-                iftem_core::sleep(&runtime, std::time::Duration::from_secs(5)).await;
+                ripe_core::sleep(&runtime, std::time::Duration::from_secs(5)).await;
                 info!(logger, "TASK IS AWAKE");
 
                 if let Ok(_) = oneshot_sender.clone().try_send(AgentMessage::Command(1)) {
@@ -103,7 +103,7 @@ impl FutBuilder for TestFutBuilder {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
-                iftem_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
+                ripe_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
                 info!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 

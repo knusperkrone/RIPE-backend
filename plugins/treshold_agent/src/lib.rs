@@ -3,7 +3,7 @@ extern crate slog;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use crossbeam::atomic::AtomicCell;
-use iftem_core::*;
+use ripe_core::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -51,9 +51,9 @@ unsafe extern "C" fn build_agent(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ThresholdAgent {
-    #[serde(skip, default = "iftem_core::logger_sentinel")]
+    #[serde(skip, default = "ripe_core::logger_sentinel")]
     logger: slog::Logger,
-    #[serde(skip, default = "iftem_core::sender_sentinel")]
+    #[serde(skip, default = "ripe_core::sender_sentinel")]
     sender: Sender<AgentMessage>,
     #[serde(skip)]
     task_cell: RwLock<ThresholdTask>,
@@ -79,8 +79,8 @@ impl PartialEq for ThresholdAgent {
 impl Default for ThresholdAgent {
     fn default() -> Self {
         ThresholdAgent {
-            logger: iftem_core::logger_sentinel(),
-            sender: iftem_core::sender_sentinel(),
+            logger: ripe_core::logger_sentinel(),
+            sender: ripe_core::sender_sentinel(),
             task_cell: RwLock::default(),
             state: AgentState::Ready.into(),
             min_threshold: 20,
@@ -287,8 +287,8 @@ impl Default for ThresholdTask {
                 aborted: Arc::new(AtomicBool::from(false)),
                 state: AtomicCell::new(AgentState::Ready),
                 until: AtomicCell::new(Utc::now()),
-                logger: iftem_core::logger_sentinel(),
-                sender: iftem_core::sender_sentinel(),
+                logger: ripe_core::logger_sentinel(),
+                sender: ripe_core::sender_sentinel(),
                 is_forced: false,
             }),
         }
@@ -316,7 +316,7 @@ impl ThresholdTask {
                 };
                 self.task_config.until.store(until);
                 self.task_config.state.store(running_state);
-                iftem_core::send_payload(&logger, &sender, AgentMessage::Command(CMD_ACTIVE));
+                ripe_core::send_payload(&logger, &sender, AgentMessage::Command(CMD_ACTIVE));
                 return;
             }
         }
@@ -375,7 +375,7 @@ impl FutBuilder for ThresholdTaskBuilder {
             };
             config.state.store(running_state);
 
-            iftem_core::send_payload(
+            ripe_core::send_payload(
                 &config.logger,
                 &config.sender,
                 AgentMessage::Command(CMD_ACTIVE),
@@ -388,11 +388,11 @@ impl FutBuilder for ThresholdTaskBuilder {
             );
 
             while Utc::now() < config.until.load() && !config.aborted.load(Ordering::Relaxed) {
-                iftem_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
+                ripe_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
             }
             // Race condition
             config.state.store(AgentState::Ready);
-            iftem_core::send_payload(
+            ripe_core::send_payload(
                 &config.logger,
                 &config.sender,
                 AgentMessage::Command(CMD_INACTIVE),

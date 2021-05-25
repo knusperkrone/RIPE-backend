@@ -2,7 +2,7 @@ use super::{Agent, AgentFactoryTrait};
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorMQTTCommand;
-use iftem_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
+use ripe_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
 use libloading::Library;
 use std::{collections::HashMap, fmt::Debug};
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
@@ -100,13 +100,13 @@ impl NativeAgentFactory {
             .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
             .read();
 
-        if decl.rustc_version != iftem_core::RUSTC_VERSION
-            || decl.core_version != iftem_core::CORE_VERSION
+        if decl.rustc_version != ripe_core::RUSTC_VERSION
+            || decl.core_version != ripe_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
             return Err(PluginError::CompilerMismatch(
                 decl.rustc_version.to_owned(),
-                iftem_core::RUSTC_VERSION.to_owned(),
+                ripe_core::RUSTC_VERSION.to_owned(),
             ));
         } else if let Some(current_lib) = self.libraries.get(decl.agent_name) {
             // Check duplicated or outdated library

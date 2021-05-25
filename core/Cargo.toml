@@ -1,5 +1,5 @@
 [package]
-name = "iftem_core"
+name = "ripe_core"
 version = "0.1.0"
 authors = ["Aron Metzig <aron.metzig@interface-ag.de>"]
 edition = "2018"

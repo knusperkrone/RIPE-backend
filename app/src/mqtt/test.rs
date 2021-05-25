@@ -1,5 +1,5 @@
 use crate::mqtt::MqttSensorClient;
-use iftem_core::SensorDataMessage;
+use ripe_core::SensorDataMessage;
 use paho_mqtt::Message;
 use std::time::Duration;
 use tokio::time::timeout;

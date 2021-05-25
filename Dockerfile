@@ -3,7 +3,7 @@ FROM rust:1.52 as build
 RUN apt-get update && \ 
         apt-get install -y cmake
 
-WORKDIR /iftem
+WORKDIR /ripe
 
 #1.1a crate mock crates
 RUN USER=root cargo new --bin app
@@ -16,11 +16,11 @@ COPY ./Cargo.lock ./core/Cargo.lock
 COPY ./core/Cargo.toml ./core/Cargo.toml
 
 #1.1c cache dependencies
-WORKDIR /iftem/app
+WORKDIR /ripe/app
 RUN cargo build --release
 
 #1.2a copy actual sources
-WORKDIR /iftem
+WORKDIR /ripe
 RUN rm ./app/src/*.rs
 RUN rm ./core/src/*.rs
 COPY ./app/src ./app/src
@@ -28,13 +28,13 @@ COPY ./core/src ./core/src
 COPY ./core/build.rs ./core/build.rs
 
 #1.2b build app for release
-WORKDIR /iftem/app
+WORKDIR /ripe/app
 RUN cargo build --release
 
 #1.3 build plugins for release
-WORKDIR /iftem
+WORKDIR /ripe
 COPY ./plugins ./plugins
-WORKDIR /iftem/plugins
+WORKDIR /ripe/plugins
 RUN cargo build --release
 
 #2 RUN
@@ -42,10 +42,10 @@ FROM debian:buster-slim
 RUN apt-get update && apt-get install -y openssl libpq-dev
 
 WORKDIR /app
-COPY --from=build /iftem/app/target/release/iftem .
-COPY --from=build /iftem/plugins/target/release/*.so ./plugins/
+COPY --from=build /ripe/app/target/release/ripe .
+COPY --from=build /ripe/plugins/target/release/*.so ./plugins/
 COPY .env-docker .env
 
 ENV RUST_LOG=info
 ENV RUST_BACKTRACE=full
-CMD ["/app/iftem"]
+CMD ["/app/ripe"]

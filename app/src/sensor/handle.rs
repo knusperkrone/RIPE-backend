@@ -5,7 +5,7 @@ use crate::{
     error::{DBError, ObserverError},
     plugin::AgentFactory,
 };
-use iftem_core::{error::AgentError, AgentConfigType, SensorDataMessage};
+use ripe_core::{error::AgentError, AgentConfigType, SensorDataMessage};
 use std::{collections::HashMap, vec::Vec};
 
 #[derive(Debug)]

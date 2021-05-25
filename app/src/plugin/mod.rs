@@ -4,7 +4,7 @@ pub mod test;
 mod native;
 mod wasm;
 
-use iftem_core::error::AgentError;
+use ripe_core::error::AgentError;
 use std::{collections::HashMap, ffi::OsString, path::Path, time::SystemTime};
 use test::MockAgent;
 
@@ -13,7 +13,7 @@ pub(crate) use native::NativeAgentFactory;
 pub(crate) use wasm::WasmAgentFactory;
 
 use crate::{logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
-use iftem_core::AgentMessage;
+use ripe_core::AgentMessage;
 use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 
 pub trait AgentFactoryTrait {
@@ -27,7 +27,7 @@ pub trait AgentFactoryTrait {
         state_json: Option<&str>,
         plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
-    ) -> Result<Agent, iftem_core::error::AgentError>;
+    ) -> Result<Agent, ripe_core::error::AgentError>;
     fn agents(&self) -> Vec<String>;
     fn load_plugin_file(
         &mut self,
@@ -106,7 +106,7 @@ impl AgentFactory {
         agent_name: &str,
         domain: &str,
         state_json: Option<&str>,
-    ) -> Result<Agent, iftem_core::error::AgentError> {
+    ) -> Result<Agent, ripe_core::error::AgentError> {
         let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(256);
         if cfg!(test) && agent_name == "MockAgent" {
             Ok(Agent::new(

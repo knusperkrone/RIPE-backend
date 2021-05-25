@@ -1,6 +1,6 @@
 use super::{stubs, WasmerMallocPtr};
 use crate::{error::WasmPluginError, logging::APP_LOGGING};
-use iftem_core::{AgentTrait, AgentUIDecorator};
+use ripe_core::{AgentTrait, AgentUIDecorator};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use wasmer::{Instance, Memory, NativeFunc};
@@ -71,7 +71,7 @@ impl std::fmt::Debug for WasmAgent {
 }
 
 impl AgentTrait for WasmAgent {
-    fn handle_data(&mut self, data: &iftem_core::SensorDataMessage) {
+    fn handle_data(&mut self, data: &ripe_core::SensorDataMessage) {
         if self.has_error() {
             return;
         }
@@ -96,12 +96,12 @@ impl AgentTrait for WasmAgent {
             .map_err(|e| self.inidicate_error(&"handle_cmd", e));
     }
 
-    fn render_ui(&self, data: &iftem_core::SensorDataMessage) -> iftem_core::AgentUI {
+    fn render_ui(&self, data: &ripe_core::SensorDataMessage) -> ripe_core::AgentUI {
         if self.has_error() {
-            return iftem_core::AgentUI {
+            return ripe_core::AgentUI {
                 decorator: AgentUIDecorator::Text,
                 rendered: "Invalid internal state".to_owned(),
-                state: iftem_core::AgentState::Error,
+                state: ripe_core::AgentState::Error,
             };
         }
         let data_json = serde_json::to_string(data).unwrap();
@@ -121,14 +121,14 @@ impl AgentTrait for WasmAgent {
             };
         }
 
-        return iftem_core::AgentUI {
+        return ripe_core::AgentUI {
             decorator: AgentUIDecorator::Text,
             rendered: "Failed serializing agent_ui".to_owned(),
-            state: iftem_core::AgentState::Error,
+            state: ripe_core::AgentState::Error,
         };
     }
 
-    fn state(&self) -> iftem_core::AgentState {
+    fn state(&self) -> ripe_core::AgentState {
         if !self.has_error() {
             if let Ok(json_ptr) = self.wasm_state.call() {
                 if let Some(json_str) = self.read(json_ptr) {
@@ -141,7 +141,7 @@ impl AgentTrait for WasmAgent {
             }
         }
         self.inidicate_error(&"state", WasmPluginError::CallError);
-        iftem_core::AgentState::Error
+        ripe_core::AgentState::Error
     }
 
     fn cmd(&self) -> i32 {
@@ -165,8 +165,8 @@ impl AgentTrait for WasmAgent {
         "{}".to_owned()
     }
 
-    fn config(&self) -> HashMap<String, (String, iftem_core::AgentConfigType)> {
-        type Map = HashMap<String, (String, iftem_core::AgentConfigType)>;
+    fn config(&self) -> HashMap<String, (String, ripe_core::AgentConfigType)> {
+        type Map = HashMap<String, (String, ripe_core::AgentConfigType)>;
         if !self.has_error() {
             if let Ok(json_ptr) = self.wasm_config.call() {
                 if let Some(json_str) = self.read(json_ptr) {
@@ -181,7 +181,7 @@ impl AgentTrait for WasmAgent {
         HashMap::new()
     }
 
-    fn set_config(&mut self, values: &HashMap<String, iftem_core::AgentConfigType>) -> bool {
+    fn set_config(&mut self, values: &HashMap<String, ripe_core::AgentConfigType>) -> bool {
         if self.has_error() {
             return false;
         }

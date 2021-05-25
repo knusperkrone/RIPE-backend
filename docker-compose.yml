@@ -6,7 +6,7 @@ services:
     ports:
       - 54321:5432
     environment:
-      POSTGRES_DB: iftem
+      POSTGRES_DB: ripe
       POSTGRES_USER: iflab
       POSTGRES_PASSWORD: Tischfussball
 
@@ -17,16 +17,16 @@ services:
       - "./:/volume"
     working_dir: "/volume"
     environment:
-      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem
+      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
     depends_on:
       - db
     entrypoint: ["sh", "-c", "sleep 3 && diesel migration run"]
 
-  backend:
+  ripe:
     restart: "always"
     image: ripe:latest
     environment:
-      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem
+      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
       SERVER_PORT: 8080
       MQTT_NAME: iot-master
       MQTT_BROKERS: tcp://127.0.0.1:1883,tcp://18.196.113.35:1883

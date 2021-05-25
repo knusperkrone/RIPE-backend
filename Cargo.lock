@@ -793,45 +793,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iftem"
-version = "0.1.0"
-dependencies = [
- "base64",
- "chrono",
- "ctrlc",
- "diesel",
- "dotenv",
- "env_logger",
- "futures",
- "iftem_core",
- "libloading 0.7.0",
- "notify",
- "once_cell",
- "paho-mqtt",
- "parking_lot",
- "rand 0.8.3",
- "serde",
- "serde_json",
- "slog",
- "sloggers",
- "tokio",
- "warp",
- "wasmer",
-]
-
-[[package]]
-name = "iftem_core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rustc_version",
- "serde",
- "serde_json",
- "slog",
- "tokio",
-]
-
-[[package]]
 name = "indexmap"
 version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1610,6 +1571,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "ripe"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "ctrlc",
+ "diesel",
+ "dotenv",
+ "env_logger",
+ "futures",
+ "libloading 0.7.0",
+ "notify",
+ "once_cell",
+ "paho-mqtt",
+ "parking_lot",
+ "rand 0.8.3",
+ "ripe_core",
+ "serde",
+ "serde_json",
+ "slog",
+ "sloggers",
+ "tokio",
+ "warp",
+ "wasmer",
+]
+
+[[package]]
+name = "ripe_core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rustc_version",
+ "serde",
+ "serde_json",
+ "slog",
+ "tokio",
 ]
 
 [[package]]

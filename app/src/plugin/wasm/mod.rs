@@ -2,7 +2,7 @@ mod agent;
 mod ticker;
 
 use crate::{error::WasmPluginError, logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
-use iftem_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
+use ripe_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
 use parking_lot::Mutex;
 use std::fs::{self, File};
 use std::io::Read;

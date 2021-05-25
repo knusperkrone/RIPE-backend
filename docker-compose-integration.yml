@@ -7,6 +7,8 @@ services:
       POSTGRES_DB: ripe
       POSTGRES_USER: iflab
       POSTGRES_PASSWORD: Tischfussball
+    networks:
+      - default
 
   db_schema:
     restart: "no"
@@ -19,11 +21,14 @@ services:
     depends_on:
       - db
     entrypoint: ["sh", "-c", "sleep 3 && diesel migration run"]
+    networks:
+      - default
 
   backend:
     restart: "always"
     image: docker-registry.if-lab.de/arme/iftem_backend:latest
     networks:
+      - default
       - proxy
     deploy:
       replicas: 1

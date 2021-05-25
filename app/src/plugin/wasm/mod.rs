@@ -46,6 +46,8 @@ pub struct WasmAgentFactory {
 }
 
 impl AgentFactoryTrait for WasmAgentFactory {
+    type Lib = Module;
+
     fn create_agent(
         &self,
         sensor_id: i32,
@@ -91,7 +93,10 @@ impl AgentFactoryTrait for WasmAgentFactory {
             .collect()
     }
 
-    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {
+    fn load_plugin_file(
+        &mut self,
+        path: &std::path::PathBuf,
+    ) -> Option<(String, Option<Self::Lib>)> {
         let ext_res = path.extension();
         let stem_res = path.file_stem();
         if ext_res.is_none() || stem_res.is_none() {
@@ -110,9 +115,9 @@ impl AgentFactoryTrait for WasmAgentFactory {
             let bytes = bytes_res.unwrap();
             let res = self.load_wasm_file(bytes, agent_name);
             return match res {
-                Ok(_) => {
+                Ok(old_module) => {
                     info!(APP_LOGGING, "Loaded wasm {}", filename);
-                    Some(agent_name.to_owned())
+                    Some((agent_name.to_owned(), old_module))
                 }
                 Err(err) => {
                     warn!(APP_LOGGING, "Invalid wasm {:?}: {}", filename, err);
@@ -137,7 +142,11 @@ impl WasmAgentFactory {
         self.libraries.contains_key(agent_name)
     }
 
-    fn load_wasm_file(&mut self, bytes: Vec<u8>, agent_name: &str) -> Result<(), WasmPluginError> {
+    fn load_wasm_file(
+        &mut self,
+        bytes: Vec<u8>,
+        agent_name: &str,
+    ) -> Result<Option<Module>, WasmPluginError> {
         if self.libraries.contains_key(agent_name) {
             return Err(WasmPluginError::Duplicate);
         }
@@ -146,8 +155,8 @@ impl WasmAgentFactory {
         let (mock_sender, _mock_receiver) = channel::<AgentMessage>(64);
         let test_agent = self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
         if self.test_agent_contract(test_agent) {
-            self.libraries.insert(agent_name.to_owned(), module);
-            Ok(())
+            let old_module = self.libraries.insert(agent_name.to_owned(), module);
+            Ok(old_module)
         } else {
             Err(WasmPluginError::ContractMismatch(
                 "Implementation".to_owned(),

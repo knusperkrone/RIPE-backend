@@ -7,6 +7,8 @@ use crate::AgentMessage;
 pub const CMD_ACTIVE: i32 = 1;
 pub const CMD_INACTIVE: i32 = 0;
 
+pub const DAY_MS: u32 = 86_400_000;
+
 /*
  * helper
  */
@@ -30,7 +32,7 @@ pub async fn sleep(runtime: &tokio::runtime::Handle, duration: std::time::Durati
     }
 }
 
-pub fn secs_to_hr(time_ms: u32) -> String {
+pub fn ms_to_hr(time_ms: u32) -> String {
     let seconds = time_ms / 1000;
     let minutes = seconds / 60;
     let hours = minutes / 60;

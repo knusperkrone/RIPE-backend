@@ -37,6 +37,14 @@ impl MqttSensorClient {
         Self::do_connect(&self.cli).await;
     }
 
+    pub fn broker(&self) -> Option<String> {
+        if self.cli.is_connected() {
+            Some(CONFIG.current_mqtt_broker())
+        } else {
+            None
+        }
+    }
+
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         if cfg!(test) && !self.cli.is_connected() {
             return Ok(());
@@ -139,6 +147,7 @@ impl MqttSensorClient {
     fn create_client(mqtt_name: String, sender: MqttSender) -> AsyncClient {
         let options = CreateOptionsBuilder::new()
             .client_id(mqtt_name.clone())
+            
             .mqtt_version(MQTTV5)
             .finalize();
         let mut cli = AsyncClient::new(options).unwrap();

@@ -1,6 +1,6 @@
 use crate::logging::APP_LOGGING;
 use crate::models::dao::{AgentConfigDao, SensorDao};
-use crate::plugin::{Agent};
+use crate::plugin::Agent;
 use crate::{
     error::{DBError, ObserverError},
     plugin::AgentFactory,
@@ -14,6 +14,7 @@ pub struct SensorMQTTCommand {
     pub domain: String,
     pub payload: i32,
 }
+
 pub struct SensorHandle {
     pub dao: SensorDao,
     pub agents: Vec<Agent>,
@@ -52,6 +53,39 @@ impl SensorHandle {
             agents,
             has_pending_update: false,
         })
+    }
+
+    pub fn update(&mut self, updated_libs: &Vec<&String>, factory: &AgentFactory) {
+        for updated_lib in updated_libs {
+            if let Some(outdated) = self
+                .agents
+                .iter_mut()
+                .find(|a| a.agent_name() == *updated_lib)
+            {
+                // update new agent
+                if let Ok(updated) = factory.create_agent(
+                    self.dao.id(),
+                    &updated_lib,
+                    outdated.domain(),
+                    Some(outdated.deserialize().state_json()),
+                ) {
+                    *outdated = updated;
+                    debug!(
+                        APP_LOGGING,
+                        "Sensor {} updated: {}",
+                        self.dao.id(),
+                        updated_lib
+                    );
+                } else {
+                    error!(
+                        APP_LOGGING,
+                        "Sensor {} failed updating: {}",
+                        self.dao.id(),
+                        updated_lib
+                    );
+                }
+            }
+        }
     }
 
     pub fn handle_data(&mut self, data: &SensorDataMessage) {

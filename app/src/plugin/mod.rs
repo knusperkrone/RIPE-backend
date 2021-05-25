@@ -5,18 +5,20 @@ mod native;
 mod wasm;
 
 use iftem_core::error::AgentError;
-use std::path::Path;
+use std::{collections::HashMap, ffi::OsString, path::Path, time::SystemTime};
 use test::MockAgent;
 
 pub use agent::Agent;
 pub(crate) use native::NativeAgentFactory;
 pub(crate) use wasm::WasmAgentFactory;
 
-use crate::sensor::handle::SensorMQTTCommand;
+use crate::{logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
 use iftem_core::AgentMessage;
 use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 
 pub trait AgentFactoryTrait {
+    type Lib;
+
     fn create_agent(
         &self,
         sensor_id: i32,
@@ -27,14 +29,21 @@ pub trait AgentFactoryTrait {
         plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, iftem_core::error::AgentError>;
     fn agents(&self) -> Vec<String>;
-    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String>;
+    fn load_plugin_file(
+        &mut self,
+        path: &std::path::PathBuf,
+    ) -> Option<(String, Option<Self::Lib>)>;
 }
 
 pub struct AgentFactory {
     sender: UnboundedSender<SensorMQTTCommand>,
     wasm_factory: WasmAgentFactory,
     native_factory: NativeAgentFactory,
+    timestamps: HashMap<OsString, SystemTime>,
 }
+
+unsafe impl Send for AgentFactory {}
+unsafe impl Sync for AgentFactory {}
 
 impl AgentFactory {
     pub fn new(iac_sender: UnboundedSender<SensorMQTTCommand>) -> Self {
@@ -42,10 +51,11 @@ impl AgentFactory {
             sender: iac_sender.clone(),
             wasm_factory: WasmAgentFactory::new(iac_sender.clone()),
             native_factory: NativeAgentFactory::new(iac_sender.clone()),
+            timestamps: HashMap::new(),
         }
     }
 
-    pub fn load_new_plugins(&mut self, dir: &Path) -> Vec<String> {
+    pub fn load_new_plugins(&mut self, dir: &Path) -> Vec<(String, Box<dyn std::any::Any>)> {
         // Read files and filter all "basename.extension"
         let entries_res = std::fs::read_dir(dir);
         if entries_res.is_err() {
@@ -57,20 +67,37 @@ impl AgentFactory {
             .into_iter()
             .filter_map(Result::ok)
             .filter_map(|entry| {
+                let modified = entry.metadata().ok()?.created().ok()?;
+                return Some((entry, modified));
+            })
+            .filter_map(|(entry, modified)| {
                 let path: std::path::PathBuf = entry.path();
-                if path.is_file() && path.extension().is_some() {
-                    Some(path)
+                if path.extension().is_some() {
+                    Some((path, modified))
                 } else {
                     None
                 }
             });
 
-        // TODO: Sensor reload
-        for entry in entries {
-            self.native_factory.load_plugin_file(&entry);
-            self.wasm_factory.load_plugin_file(&entry);
+        let mut ret: Vec<(String, Box<dyn std::any::Any>)> = Vec::new();
+        for (path, modified_time) in entries {
+            if let Some(old_time) = self.timestamps.get(path.as_os_str()) {
+                if old_time == &modified_time {
+                    debug!(APP_LOGGING, "Skipped updating {:?}", path);
+                    continue;
+                }
+            }
+            self.timestamps
+                .insert(path.as_os_str().to_owned(), modified_time);
+
+            if let Some((lib_name, old_lib)) = self.native_factory.load_plugin_file(&path) {
+                ret.push((lib_name, Box::new(old_lib)));
+            }
+            if let Some((lib_name, old_lib)) = self.wasm_factory.load_plugin_file(&path) {
+                ret.push((lib_name, Box::new(old_lib)));
+            }
         }
-        Vec::new()
+        ret
     }
 
     pub fn create_agent(

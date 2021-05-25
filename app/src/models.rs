@@ -64,6 +64,10 @@ pub mod dao {
             }
         }
 
+        pub fn sensor_id(&self) -> i32 {
+            self.sensor_id
+        }
+
         pub fn domain(&self) -> &String {
             &self.domain
         }
@@ -196,6 +200,19 @@ pub fn create_sensor_agent(
     Ok(config_daos)
 }
 
+pub fn update_sensor_agent(conn: &PgConnection, update: &AgentConfigDao) -> Result<(), DBError> {
+    use crate::schema::agent_configs::dsl::*;
+    diesel::update(
+        agent_configs
+            .filter(sensor_id.eq(update.sensor_id()))
+            .filter(domain.eq(update.domain())),
+    )
+    .set(state_json.eq(update.state_json()))
+    .execute(conn)?;
+
+    Ok(())
+}
+
 pub fn delete_sensor_agent(
     conn: &PgConnection,
     remove_id: i32,
@@ -252,6 +269,25 @@ pub fn get_latest_sensor_data(
         .inner_join(sensors::table)
         .filter(sensor_id.eq(search_sensor_id))
         .filter(dsl_key_b64.eq(search_key_b64))
+        .order(timestamp.desc())
+        .limit(1)
+        .load(conn)?;
+
+    if let Some((data, _)) = result.pop() {
+        Ok(Some(data.into()))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn get_latest_sensor_data_unchecked(
+    conn: &PgConnection,
+    search_sensor_id: i32,
+) -> Result<Option<SensorDataDao>, DBError> {
+    use crate::schema::sensor_data::dsl::*;
+    let mut result: Vec<(SensorDataDao, SensorDao)> = sensor_data
+        .inner_join(sensors::table)
+        .filter(sensor_id.eq(search_sensor_id))
         .order(timestamp.desc())
         .limit(1)
         .load(conn)?;

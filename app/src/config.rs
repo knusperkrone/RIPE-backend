@@ -1,9 +1,9 @@
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use std::env;
 
 pub struct Config {
-    inner: Mutex<InnerConfig>,
+    inner: RwLock<InnerConfig>,
 }
 
 struct InnerConfig {
@@ -17,30 +17,34 @@ struct InnerConfig {
 
 impl Config {
     pub fn database_url(&self) -> String {
-        let inner = self.inner.lock();
+        let inner = self.inner.read();
         inner.database_url.clone()
     }
 
+    pub fn current_mqtt_broker(&self) -> String {
+        let inner = self.inner.read();
+        inner.mqtt_brokers[inner.mqtt_index].clone()
+    }
+
     pub fn next_mqtt_broker(&self) -> String {
-        let mut inner = self.inner.lock();
-        let ret = inner.mqtt_brokers[inner.mqtt_index].clone();
+        let mut inner = self.inner.write();
         inner.mqtt_index = (inner.mqtt_index + 1) % inner.mqtt_brokers.len();
 
-        ret
+        inner.mqtt_brokers[inner.mqtt_index].clone()
     }
 
     pub fn mqtt_name(&self) -> String {
-        let inner = self.inner.lock();
+        let inner = self.inner.read();
         inner.mqtt_name.clone()
     }
 
     pub fn plugin_dir(&self) -> String {
-        let inner = self.inner.lock();
+        let inner = self.inner.read();
         inner.plugin_dir.clone()
     }
 
     pub fn server_port(&self) -> String {
-        let inner = self.inner.lock();
+        let inner = self.inner.read();
         inner.server_port.clone()
     }
 }
@@ -63,7 +67,7 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
     }
 
     Config {
-        inner: Mutex::new(InnerConfig {
+        inner: RwLock::new(InnerConfig {
             database_url,
             mqtt_brokers,
             mqtt_name,

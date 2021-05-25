@@ -81,7 +81,7 @@ impl Agent {
                 sensor_id,
                 domain.clone(),
                 iac_sender,
-                plugin_receiver,
+                plugin_receiver, 
                 repeat_abort_handle.clone(),
             ),
             abort_registration,
@@ -91,7 +91,6 @@ impl Agent {
         Agent {
             sensor_id,
             domain,
-            // plugin_sender,
             agent_name,
             iac_abort_handle: abort_handle,
             repeat_task_abort_handle: repeat_abort_handle,

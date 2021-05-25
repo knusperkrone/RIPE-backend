@@ -3,9 +3,8 @@ services:
   db:
     restart: "always"
     image: postgres:13-alpine
-    ports: 
+    ports:
       - 54321:5432
-    # volumes: ./data:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: iftem
       POSTGRES_USER: iflab
@@ -23,25 +22,17 @@ services:
       - db
     entrypoint: ["sh", "-c", "sleep 3 && diesel migration run"]
 
-  threshold_plugin:
-    image: docker-registry.if-lab.de/arme/iftem_backend/treshold_plugin:latest
-    volumes:
-      - ./plugins:/out
-
   backend:
     restart: "always"
-    image: docker-registry.if-lab.de/arme/iftem_backend:latest
+    image: ripe:latest
     environment:
-      BIND_ADDR: 0.0.0.0:8000
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/iftem
-      MQTT_URL: mqtt_broker
-      MQTT_PORT: 1883
-      MQTT_NAME: iftem-master
-      PLUGIN_DIR: /plugins
+      SERVER_PORT: 8080
+      MQTT_NAME: iot-master
+      MQTT_BROKERS: tcp://127.0.0.1:1883,tcp://18.196.113.35:1883
     volumes:
       - ./plugins:/plugins
     ports:
-      - 8000:8000
+      - 8080:8080
     depends_on:
       - db_schema
-      - threshold_plugin

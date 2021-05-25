@@ -120,6 +120,7 @@ pub mod dto {
     pub struct SensorCredentialDto {
         pub id: i32,
         pub key: String,
+        pub broker: Option<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -127,6 +128,7 @@ pub mod dto {
         pub name: String,
         pub data: SensorDataMessage,
         pub agents: Vec<AgentStatusDto>,
+        pub broker: Option<String>,
     }
 }
 

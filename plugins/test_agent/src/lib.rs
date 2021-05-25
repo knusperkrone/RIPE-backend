@@ -45,11 +45,16 @@ unsafe extern "C" fn build_agent(
     )) {
         panic!("TestAgent - failed to send RepeatedTask {}", e);
     }
-    
+
     Box::new(TestAgent {
         val: 0.5,
         logger: logger,
         sender: sender,
+        config_active: true,
+        config_daytime_ms: 0,
+        config_time_slider_hour: 0,
+        config_time_slider_min: 0,
+        config_int_slider: 0,
     })
 }
 
@@ -58,6 +63,11 @@ struct TestAgent {
     val: f32,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
+    config_active: bool,
+    config_daytime_ms: u64,
+    config_time_slider_hour: i64,
+    config_time_slider_min: i64,
+    config_int_slider: i64,
 }
 
 struct TestFutBuilder {
@@ -78,7 +88,7 @@ impl FutBuilder for TestFutBuilder {
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
                 info!(logger, "TASK IS SLEEPING");
-                iftem_core::sleep(&runtime, std::time::Duration::from_secs(10)).await;
+                iftem_core::sleep(&runtime, std::time::Duration::from_secs(5)).await;
                 info!(logger, "TASK IS AWAKE");
 
                 if let Ok(_) = oneshot_sender.clone().try_send(AgentMessage::Command(1)) {
@@ -93,10 +103,7 @@ impl FutBuilder for TestFutBuilder {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
-                info!(logger, "TASK IS SLEEPING");
                 iftem_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
-                info!(logger, "TASK IS AWAKE");
-
                 info!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
@@ -122,7 +129,7 @@ impl AgentTrait for TestAgent {
     fn render_ui(&self, _data: &SensorDataMessage) -> AgentUI {
         AgentUI {
             decorator: AgentUIDecorator::Slider(0.0, 1.0, self.val),
-            rendered: "TEXT".to_owned(),
+            rendered: "Server rendered text".to_owned(),
             state: self.state(),
         }
     }
@@ -142,25 +149,48 @@ impl AgentTrait for TestAgent {
     fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
         config.insert(
-            "active".to_owned(),
-            ("TestSwitch".to_owned(), AgentConfigType::Switch(true)),
-        );
-        config.insert(
-            "time".to_owned(),
-            ("TestDateTime".to_owned(), AgentConfigType::DateTime(36000)),
-        );
-        config.insert(
-            "slider".to_owned(),
+            "01_active".to_owned(),
             (
-                "TestSliderRange".to_owned(),
-                AgentConfigType::IntSliderRange(0, 24, 8),
+                "TestSwitch".to_owned(),
+                AgentConfigType::Switch(self.config_active),
             ),
         );
         config.insert(
-            "slider".to_owned(),
+            "02_day_time".to_owned(),
             (
-                "TestSlider".to_owned(),
-                AgentConfigType::IntSliderRange(0, 1024, 42),
+                "TestDateTime".to_owned(),
+                AgentConfigType::DayTime(self.config_daytime_ms),
+            ),
+        );
+        config.insert(
+            "03_time_slider_hour".to_owned(),
+            (
+                "TimeSlider in Hours".to_owned(),
+                AgentConfigType::TimeSlider(
+                    0,
+                    DAY_MS as i64,
+                    self.config_time_slider_hour,
+                    24 * 12,
+                ),
+            ),
+        );
+        config.insert(
+            "04_time_slider_minute".to_owned(),
+            (
+                "TimeSlider in Minutes".to_owned(),
+                AgentConfigType::TimeSlider(
+                    0,
+                    (DAY_MS / 24) as i64,
+                    self.config_time_slider_min,
+                    120,
+                ),
+            ),
+        );
+        config.insert(
+            "05_int_slider".to_owned(),
+            (
+                "IntSlider".to_owned(),
+                AgentConfigType::IntSlider(0, 1024, self.config_int_slider),
             ),
         );
         config
@@ -168,27 +198,49 @@ impl AgentTrait for TestAgent {
 
     fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
         let active;
-        let time;
-        let slider;
-        if let AgentConfigType::Switch(val) = &values["active"] {
+        let daytime_ms;
+        let time_slider_hour;
+        let time_slider_min;
+        let int_slider;
+        if let AgentConfigType::Switch(val) = &values["01_active"] {
             active = *val;
         } else {
             return false;
         }
-        if let AgentConfigType::DateTime(val) = &values["time"] {
-            time = *val;
+        if let AgentConfigType::DayTime(val) = &values["02_day_time"] {
+            daytime_ms = *val;
         } else {
             return false;
         }
-        if let AgentConfigType::IntSliderRange(_l, _u, val) = &values["slider"] {
-            slider = *val;
+        if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["03_time_slider_hour"] {
+            time_slider_hour = *val;
+        } else {
+            return false;
+        }
+        if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["04_time_slider_minute"] {
+            time_slider_min = *val;
+        } else {
+            return false;
+        }
+        if let AgentConfigType::IntSlider(_l, _u, val) = &values["05_int_slider"] {
+            int_slider = *val;
         } else {
             return false;
         }
 
+        self.config_active = active;
+        self.config_daytime_ms = daytime_ms;
+        self.config_time_slider_hour = time_slider_hour;
+        self.config_time_slider_min = time_slider_min;
+        self.config_int_slider = int_slider;
         info!(
             self.logger,
-            "Set config: {}, {}, {:?}", active, time, slider
+            "Set config: {}, {}, {}, {}, {}",
+            active,
+            daytime_ms,
+            time_slider_hour,
+            time_slider_min,
+            int_slider
         );
         true
     }

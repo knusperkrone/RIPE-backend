@@ -18,12 +18,10 @@ pub struct AgentUI {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum AgentConfigType {
-    Switch(bool),                         // val
-    DateTime(u64),                        // val
-    IntPickerRange(i64, i64, i64, i64),   // lower, upper, steps, val
-    IntSliderRange(i64, i64, i64),        // formatter, lower, upper, val
-    FloatPickerRange(f64, f64, f64, f64), // lower, upper, step, val
-    FloatSliderRange(f64, f64, f64),      // formatter, lower, upper, val
+    Switch(bool),                   // val
+    DayTime(u64),                   // ms_of_day
+    TimeSlider(i64, i64, i64, i64), // lower_ms, upper_ms, val_ms, stepsize_ms
+    IntSlider(i64, i64, i64),       // lower, upper, val
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -35,7 +33,7 @@ pub enum AgentUIDecorator {
 
 impl AgentUIDecorator {
     pub fn transform_cmd_timepane(payload: i64) -> Option<DateTime<Utc>> {
-        Utc::now().checked_add_signed(Duration::seconds(payload))
+        Utc::now().checked_add_signed(Duration::seconds(payload.abs()))
     }
 
     pub fn transform_cmd_slider(payload: i64) -> f32 {
@@ -115,24 +113,16 @@ mod test {
             serde_json::json!(AgentConfigType::Switch(true))
         );
         println!(
-            "Datetime: {}",
-            serde_json::json!(AgentConfigType::DateTime(0))
+            "DayTime: {}",
+            serde_json::json!(AgentConfigType::DayTime(0))
         );
         println!(
-            "IntRange: {}",
-            serde_json::json!(AgentConfigType::IntPickerRange(0, 10, 10, 5))
+            "TimeSliderRange: {}",
+            serde_json::json!(AgentConfigType::TimeSlider(0, 3600, 0, 10))
         );
         println!(
             "IntSliderRange: {}",
-            serde_json::json!(AgentConfigType::IntSliderRange(0, 10, 5))
-        );
-        println!(
-            "FloatRange: {}",
-            serde_json::json!(AgentConfigType::FloatPickerRange(0., 10., 10.0, 5.))
-        );
-        println!(
-            "FloatSliderRange: {}",
-            serde_json::json!(AgentConfigType::FloatSliderRange(0.0, 5.0, 0.25,))
+            serde_json::json!(AgentConfigType::IntSlider(0, 5, 3))
         );
 
         let mut map = HashMap::<String, (String, AgentConfigType)>::new();

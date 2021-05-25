@@ -33,7 +33,10 @@ build-application:
   variables:
     DOCKERFILE_PATH: "Dockerfile  --cache=true"
 
-build-treshold-plugin:
-  <<: *prepare-docker-build
-  script:
-    - /kaniko/executor --build-arg PLUGIN=treshold_plugin --context $CI_PROJECT_DIR/$BASE_DIR --dockerfile $CI_PROJECT_DIR/$BASE_DIR/Dockerfile.treshold_plugin --cache=true --destination $CI_REGISTRY_IMAGE$IMAGE_SUFFIX:$CI_COMMIT_REF_SLUG --destination $CI_REGISTRY_IMAGE$IMAGE_SUFFIX/treshold_plugin:latest
+deploy-integration:
+  stage: integration
+  extends: .deploy-integration
+  dependencies:
+    - build-application
+  only:
+    - master

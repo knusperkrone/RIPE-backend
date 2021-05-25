@@ -28,10 +28,10 @@ services:
     deploy:
       replicas: 1
       environment:
-      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
-      SERVER_PORT: 8080
-      MQTT_NAME: iot-master
-      MQTT_BROKERS: tcp://127.0.0.1:1883,tcp://18.196.113.35:1883
+        DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
+        SERVER_PORT: 8080
+        MQTT_NAME: iot-master
+        MQTT_BROKERS: tcp://127.0.0.1:1883,tcp://18.196.113.35:1883
       labels:
         - traefik.enable=true
         - traefik.frontend.rule=PathPrefixStrip:/$CI_PROJECT_PATH_SLUG

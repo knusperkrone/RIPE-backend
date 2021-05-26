@@ -74,12 +74,6 @@ impl AgentTrait for TimeAgent {
                 debug!(self.inner.logger, "Time agent received stop");
                 self.inner.stop(until);
             }
-
-            ripe_core::send_payload(
-                &self.inner.logger,
-                &self.inner.sender,
-                AgentMessage::Command(self.cmd()),
-            );
         } else {
             error!(self.inner.logger, "Invalid payload!");
         }
@@ -301,18 +295,19 @@ impl TimeAgentInner {
 
     fn set_state(&self, mut last_cmd_guard: MutexGuard<i32>, state: AgentState) {
         let last_cmd = *last_cmd_guard;
-        *last_cmd_guard = match state {
+        let curr_cmd = match state {
             AgentState::Executing(_) | AgentState::Forced(_) => CMD_ACTIVE,
             _ => CMD_INACTIVE,
         };
         *self.last_state.write().unwrap() = state;
 
-        if last_cmd != *last_cmd_guard {
+        if last_cmd != curr_cmd {
+            *last_cmd_guard = curr_cmd;
             send_payload(
                 &self.logger,
                 &self.sender,
-                AgentMessage::Command(CMD_ACTIVE),
-            );
+                AgentMessage::Command(curr_cmd),
+            );    
         }
     }
 

@@ -21,11 +21,10 @@ pub async fn main() -> std::io::Result<()> {
     plugin::agent::register_sigint_handler();
 
     // Init Observer service
-    let mqtt_name = CONFIG.mqtt_name();
     let plugin_path = CONFIG.plugin_dir();
     let plugin_dir = std::path::Path::new(&plugin_path);
     let db_conn = models::establish_db_connection();
-    let sensor_arc = sensor::ConcurrentSensorObserver::new(mqtt_name, plugin_dir, db_conn);
+    let sensor_arc = sensor::ConcurrentSensorObserver::new(plugin_dir, db_conn);
     sensor_arc.init().await;
 
     // Prepare daemon tasks for current-thread

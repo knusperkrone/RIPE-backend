@@ -9,7 +9,6 @@ pub struct Config {
 struct InnerConfig {
     database_url: String,
     mqtt_brokers: Vec<String>,
-    mqtt_name: String,
     plugin_dir: String,
     server_port: String,
     mqtt_index: usize,
@@ -33,11 +32,6 @@ impl Config {
         inner.mqtt_brokers[inner.mqtt_index].clone()
     }
 
-    pub fn mqtt_name(&self) -> String {
-        let inner = self.inner.read();
-        inner.mqtt_name.clone()
-    }
-
     pub fn plugin_dir(&self) -> String {
         let inner = self.inner.read();
         inner.plugin_dir.clone()
@@ -58,7 +52,6 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
         .split(",")
         .map(|s| s.trim().to_owned())
         .collect();
-    let mqtt_name: String = env::var("MQTT_NAME").expect("MQTT_NAME must be set");
     let plugin_dir = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
     let server_port = env::var("SERVER_PORT").expect("SERVER_PORT must be set");
 
@@ -70,7 +63,6 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
         inner: RwLock::new(InnerConfig {
             database_url,
             mqtt_brokers,
-            mqtt_name,
             plugin_dir,
             server_port,
             mqtt_index: 0,

@@ -30,12 +30,12 @@ pub struct ConcurrentSensorObserver {
 }
 
 impl ConcurrentSensorObserver {
-    pub fn new(mqtt_name: String, plugin_dir: &Path, db_conn: PgConnection) -> Arc<Self> {
+    pub fn new(plugin_dir: &Path, db_conn: PgConnection) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
         let agent_factory = AgentFactory::new(iac_sender);
         let container = SensorCache::new();
-        let mqtt_client = MqttSensorClient::new(mqtt_name, sensor_data_sender);
+        let mqtt_client = MqttSensorClient::new(sensor_data_sender);
 
         let observer = ConcurrentSensorObserver {
             mqtt_client,

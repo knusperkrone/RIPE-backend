@@ -138,11 +138,10 @@ mod test {
     use crate::{config::CONFIG, models::establish_db_connection};
 
     fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
-        let mqtt_name = CONFIG.mqtt_name();
         let plugin_path = CONFIG.plugin_dir();
         let plugin_dir = std::path::Path::new(&plugin_path);
         let db_conn = establish_db_connection();
-        ConcurrentSensorObserver::new(mqtt_name, plugin_dir, db_conn)
+        ConcurrentSensorObserver::new(plugin_dir, db_conn)
     }
 
     #[tokio::test]

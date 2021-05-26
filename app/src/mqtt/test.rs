@@ -1,13 +1,13 @@
-use crate::mqtt::MqttSensorClient;
-use ripe_core::SensorDataMessage;
+use crate::mqtt::{MqttSensorClient, MqttSensorClientInner};
 use paho_mqtt::Message;
+use ripe_core::SensorDataMessage;
 use std::time::Duration;
 use tokio::time::timeout;
 
 #[tokio::test]
 async fn test_mqtt_connection() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = MqttSensorClient::new("connection_test".to_owned(), tx);
+    let client = MqttSensorClient::new(tx);
     client.connect().await;
 }
 
@@ -20,7 +20,7 @@ async fn test_invalid_mqtt_path() {
     let mocked_message = Message::new("sensor/data/0".to_string(), vec![], 1);
 
     // validate
-    let result = MqttSensorClient::on_sensor_message(&tx, mocked_message);
+    let result = MqttSensorClientInner::on_sensor_message(&tx, mocked_message);
     assert_ne!(result.is_ok(), true);
 }
 
@@ -38,7 +38,7 @@ async fn test_send_path() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     // execute
-    let result = MqttSensorClient::on_sensor_message(&tx, mocked_message);
+    let result = MqttSensorClientInner::on_sensor_message(&tx, mocked_message);
 
     // validate
     println!("{:?}", result);

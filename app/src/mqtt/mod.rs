@@ -1,44 +1,113 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::CONFIG;
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorHandle;
-use ripe_core::SensorDataMessage;
 use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
+use parking_lot::RwLock;
+use ripe_core::SensorDataMessage;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(test)]
 mod test;
 
-const MQTTV5: u32 = 5;
 const QOS: i32 = 1;
 
 type MqttSender = UnboundedSender<(i32, SensorDataMessage)>;
 
 pub struct MqttSensorClient {
-    cli: AsyncClient,
+    inner: Arc<MqttSensorClientInner>,
+}
+
+struct MqttSensorClientInner {
+    cli: RwLock<AsyncClient>,
+    sender: MqttSender,
 }
 
 impl MqttSensorClient {
+    pub fn new(sender: MqttSender) -> Self {
+        let cli = MqttSensorClientInner::create_client();
+        MqttSensorClient {
+            inner: Arc::new(MqttSensorClientInner {
+                cli: RwLock::new(cli),
+                sender,
+            }),
+        }
+    }
+    pub async fn connect(&self) {
+        MqttSensorClientInner::connect(&self.inner)
+    }
+
+    pub fn broker(&self) -> Option<String> {
+        self.inner.broker()
+    }
+
+    pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        self.inner.subscribe_sensor(sensor).await
+    }
+
+    pub async fn unsubscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        self.inner.unsubscribe_sensor(sensor).await
+    }
+
+    pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
+        self.inner.send_cmd(sensor).await
+    }
+}
+
+impl MqttSensorClientInner {
     pub const TESTAMENT_TOPIC: &'static str = "ripe/master";
     pub const SENSOR_TOPIC: &'static str = "sensor";
     pub const CMD_TOPIC: &'static str = "cmd";
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    pub fn new(mqtt_name: String, sender: MqttSender) -> Self {
-        let cli = Self::create_client(mqtt_name, sender);
+    pub fn connect(self: &Arc<MqttSensorClientInner>) {
+        let mut connect_cli = self.cli.write();
 
-        MqttSensorClient { cli }
-    }
+        // Message callback
+        let connect_self = self.clone();
+        connect_cli.set_message_callback(move |_cli, msg| {
+            if let Some(msg) = msg {
+                debug!(APP_LOGGING, "Received topic: {}", msg.topic());
+                if let Err(e) = Self::on_sensor_message(&connect_self.sender, msg) {
+                    error!(APP_LOGGING, "Received message threw error: {}", e);
+                }
+            }
+        });
 
-    pub async fn connect(&self) {
-        Self::do_connect(&self.cli).await;
+        // Disconnect callback
+        let rt = tokio::runtime::Handle::current();
+        let disconnect_self = self.clone();
+        connect_cli.set_connection_lost_callback(move |callback_cli| {
+            error!(APP_LOGGING, "Lost connection to MQTT broker");
+            if let Err(e) = callback_cli.reconnect().wait_for(Duration::from_secs(3)) {
+                let future_self = disconnect_self.clone();
+                rt.spawn_blocking(move || {
+                    {
+                        // create a new instance due an internal double free error
+                        let mut cli = future_self.cli.write();
+                        *cli = Self::create_client(); // needs async context
+                    }
+
+                    error!(
+                        APP_LOGGING,
+                        "Failed reconnected to broker due {}, resuming on other broker", e,
+                    );
+                    MqttSensorClientInner::connect(&future_self); // needs async context
+                });
+            } else {
+                info!(APP_LOGGING, "Reconnected to previous MQTT broker");
+            }
+        });
+
+        Self::do_connect(&connect_cli);
     }
 
     pub fn broker(&self) -> Option<String> {
-        if self.cli.is_connected() {
+        if self.cli.read().is_connected() {
             Some(CONFIG.current_mqtt_broker())
         } else {
             None
@@ -46,31 +115,34 @@ impl MqttSensorClient {
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        if cfg!(test) && !self.cli.is_connected() {
+        let cli = self.cli.read();
+        if cfg!(test) && !cli.is_connected() {
             return Ok(());
         }
 
         let topics = Self::build_topics(sensor);
-        self.cli.subscribe_many(&topics, &vec![QOS, QOS]).await?;
+        cli.subscribe_many(&topics, &vec![QOS, QOS]).await?;
 
         debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
         Ok(())
     }
 
     pub async fn unsubscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        if cfg!(test) && !self.cli.is_connected() {
+        let cli = self.cli.read();
+        if cfg!(test) && !cli.is_connected() {
             return Ok(());
         }
 
         let topics = Self::build_topics(sensor);
-        self.cli.unsubscribe_many(&topics).await?;
+        cli.unsubscribe_many(&topics).await?;
 
         debug!(APP_LOGGING, "Unsubscribed topics: {:?}", topics);
         Ok(())
     }
 
     pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        if cfg!(test) && !self.cli.is_connected() {
+        let cli = self.cli.read();
+        if cfg!(test) && !cli.is_connected() {
             return Ok(());
         }
 
@@ -83,7 +155,7 @@ impl MqttSensorClient {
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
         let publ = Message::new_retained(cmd_topic, payload, QOS);
-        self.cli.publish(publ).await?;
+        cli.publish(publ).await?;
         Ok(())
     }
 
@@ -144,53 +216,22 @@ impl MqttSensorClient {
      * Helpers
      */
 
-    fn create_client(mqtt_name: String, sender: MqttSender) -> AsyncClient {
-        let options = CreateOptionsBuilder::new()
-            .client_id(mqtt_name.clone())
-            
-            .mqtt_version(MQTTV5)
-            .finalize();
-        let mut cli = AsyncClient::new(options).unwrap();
-
-        // Setup callbacks
-        let owned_sender = sender.clone();
-        cli.set_message_callback(move |_cli, msg| {
-            if let Some(msg) = msg {
-                debug!(APP_LOGGING, "Received topic: {}", msg.topic());
-                if let Err(e) = Self::on_sensor_message(&owned_sender, msg) {
-                    error!(APP_LOGGING, "Received message threw error: {}", e);
-                }
-            }
-        });
-        let rt = tokio::runtime::Handle::current();
-        cli.set_connection_lost_callback(move |cli| {
-            if let Err(e) = cli.reconnect().wait_for(Duration::from_secs(3)) {
-                error!(
-                    APP_LOGGING,
-                    "Failed reconnected to broker due {}, resuming on other broker", e,
-                );
-
-                // needs tu run in async(!) tokio context
-                let owned_cli = cli.clone();
-                rt.spawn(async move {
-                    Self::do_connect(&owned_cli).await;
-                });
-            } else {
-                info!(APP_LOGGING, "Reconnected to previous MQTT broker");
-            }
-        });
-        cli
+    fn create_client() -> AsyncClient {
+        CreateOptionsBuilder::new().create_client().unwrap()
     }
 
-    async fn do_connect(cli: &AsyncClient) {
+    fn do_connect(
+        cli: &parking_lot::lock_api::RwLockWriteGuard<'_, parking_lot::RawRwLock, AsyncClient>,
+    ) {
+        info!(APP_LOGGING, "Connecting to MQTT");
         loop {
             let mqtt_uri = vec![CONFIG.next_mqtt_broker().clone()];
             let conn_opts = ConnectOptionsBuilder::new()
                 .server_uris(&mqtt_uri)
-                .mqtt_version(MQTTV5)
                 .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
                 .finalize();
 
+            info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri[0]);
             if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(2)) {
                 error!(
                     APP_LOGGING,

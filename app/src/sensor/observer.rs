@@ -13,9 +13,9 @@ use crate::{
 };
 use chrono::Utc;
 use diesel::pg::PgConnection;
-use ripe_core::{AgentConfigType, SensorDataMessage};
 use notify::{watcher, Watcher};
 use parking_lot::{Mutex, RawMutex, RwLock};
+use ripe_core::{AgentConfigType, SensorDataMessage};
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
@@ -236,7 +236,7 @@ impl ConcurrentSensorObserver {
             })
             .collect();
 
-        info!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
+        debug!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
         Ok(SensorStatusDto {
             name: sensor.name().clone(),
             data: data,

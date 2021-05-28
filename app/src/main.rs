@@ -1,9 +1,14 @@
+use diesel::PgConnection;
+use logging::APP_LOGGING;
+
 use crate::config::CONFIG;
 
 #[macro_use]
 extern crate diesel;
 #[macro_use]
 extern crate slog;
+#[macro_use]
+extern crate diesel_migrations;
 
 mod config;
 mod error;
@@ -15,6 +20,21 @@ mod rest;
 mod schema;
 mod sensor;
 
+diesel_migrations::embed_migrations!();
+
+fn connect_db() -> PgConnection {
+    for i in 0..15 {
+        if let Some(db_conn) = models::establish_db_connection() {
+            if let Ok(_) = embedded_migrations::run(&db_conn) {
+                return db_conn;
+            }
+        }
+        error!(APP_LOGGING, "Couldn't connect to db [{}/15]", i);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    panic!("No db connection etablished");
+}
+
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -23,7 +43,7 @@ pub async fn main() -> std::io::Result<()> {
     // Init Observer service
     let plugin_path = CONFIG.plugin_dir();
     let plugin_dir = std::path::Path::new(&plugin_path);
-    let db_conn = models::establish_db_connection();
+    let db_conn = connect_db();
     let sensor_arc = sensor::ConcurrentSensorObserver::new(plugin_dir, db_conn);
     sensor_arc.init().await;
 

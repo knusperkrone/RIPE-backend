@@ -12,23 +12,6 @@ services:
       POSTGRES_USER: iflab
       POSTGRES_PASSWORD: Tischfussball
 
-  db_schema:
-    restart: "no"
-    image: clux/diesel-cli
-    volumes:
-      - ./:/volume
-    working_dir: "/volume"
-    environment:
-      DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
-    depends_on:
-      - db
-    entrypoint:
-      [
-        "sh",
-        "-c",
-        "while sleep 2; do $$(diesel migration run); if [ $$? -eq 0 ]; then echo 'Migration done' && exit 0; fi ; done",
-      ]
-
   ripe:
     restart: "always"
     image: docker-registry.if-lab.de/arme/iftem_backend:latest
@@ -39,6 +22,4 @@ services:
     volumes:
       - ./plugins:/plugins
     ports:
-      - 8080:8080
-    depends_on:
-      - db_schema
+      - 8080:8080    

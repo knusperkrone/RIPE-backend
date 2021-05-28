@@ -8,6 +8,8 @@ use ripe_core::SensorDataMessage;
 use std::fmt::Debug;
 use std::string::String;
 
+extern crate diesel_migrations;
+
 pub mod dao {
     use super::*;
     use chrono::{DateTime, NaiveDateTime, Utc};
@@ -140,9 +142,9 @@ pub mod dao {
 
 use dao::*;
 
-pub fn establish_db_connection() -> PgConnection {
+pub fn establish_db_connection() -> Option<PgConnection> {
     let database_url = CONFIG.database_url();
-    PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
+    PgConnection::establish(&database_url).ok()
 }
 
 pub(crate) fn check_schema(conn: &PgConnection) -> Result<(), DBError> {
@@ -316,7 +318,7 @@ mod test {
 
     #[test]
     fn test_insert_remove_sensor() {
-        let conn = establish_db_connection();
+        let conn = establish_db_connection().unwrap();
         let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
         assert!(sensor.is_ok());
 
@@ -326,7 +328,7 @@ mod test {
 
     #[test]
     fn test_insert_get_delete_sensor() {
-        let conn = establish_db_connection();
+        let conn = establish_db_connection().unwrap();
         let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
         assert!(sensor.is_ok());
 

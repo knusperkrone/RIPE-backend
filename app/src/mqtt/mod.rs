@@ -217,17 +217,25 @@ impl MqttSensorClientInner {
      */
 
     fn create_client() -> AsyncClient {
+        if let Err(_) = tokio::runtime::Handle::try_current() {
+            panic!("PahoMqtt needs async context here");
+        }
+
         CreateOptionsBuilder::new().create_client().unwrap()
     }
 
     fn do_connect(
         cli: &parking_lot::lock_api::RwLockWriteGuard<'_, parking_lot::RawRwLock, AsyncClient>,
     ) {
-        info!(APP_LOGGING, "Connecting to MQTT");
+        if let Err(_) = tokio::runtime::Handle::try_current() {
+            panic!("PahoMqtt needs async context here");
+        }
+
         loop {
             let mqtt_uri = vec![CONFIG.next_mqtt_broker().clone()];
             let conn_opts = ConnectOptionsBuilder::new()
                 .server_uris(&mqtt_uri)
+                .keep_alive_interval(Duration::from_secs(3))
                 .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
                 .finalize();
 

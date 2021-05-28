@@ -30,11 +30,21 @@ pub async fn main() -> std::io::Result<()> {
     // Prepare daemon tasks for current-thread
     let reveice_mqtt_loop =
         sensor::ConcurrentSensorObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
-    let send_mqtt_loop =
-        sensor::ConcurrentSensorObserver::dispatch_mqtt_send_loop(sensor_arc.clone());
+    let iac_loop = sensor::ConcurrentSensorObserver::dispatch_iac_loop(sensor_arc.clone());
     let plugin_loop =
         sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
 
+    // Single-thread runtime for mqtt-requests
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        // Await mqtt requests in multithread runtime
+        runtime.block_on(reveice_mqtt_loop);
+    });
+    // Multi-thread runtime for rest-requests
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -43,7 +53,7 @@ pub async fn main() -> std::io::Result<()> {
         // Await server requests in multithread runtime
         runtime.block_on(rest::dispatch_server_daemon(sensor_arc));
     });
-    // Await mqtt requestes and plugin updates in single-thread runtime
-    let _ = tokio::join!(reveice_mqtt_loop, send_mqtt_loop, plugin_loop);
+    // Single-thread runtime for local plugin changes and iac events
+    let _ = tokio::join!(iac_loop, plugin_loop);
     Ok(())
 }

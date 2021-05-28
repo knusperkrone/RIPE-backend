@@ -91,7 +91,7 @@ impl ConcurrentSensorObserver {
     /// Dispatches the inter-agent-communication (iac) stream
     /// Each agent sends it's mqtt command over this channel
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_mqtt_send_loop(self: Arc<ConcurrentSensorObserver>) -> () {
+    pub async fn dispatch_iac_loop(self: Arc<ConcurrentSensorObserver>) -> () {
         let receiver_res = self.iac_receiver.try_lock();
         if receiver_res.is_none() {
             error!(APP_LOGGING, "dispatch_mqtt_send_loop() already called!");

@@ -6,6 +6,7 @@ use std::{convert::Infallible, sync::Arc};
 use warp::{hyper::StatusCode, Filter};
 
 mod agent_routes;
+mod metric_routes;
 mod sensor_routes;
 
 pub use agent_routes::dto::*;
@@ -49,13 +50,14 @@ pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) {
     std::env::set_var("RUST_LOG", "actix_web=info");
     let server_port = CONFIG.server_port();
     let sensor_routes = sensor_routes::routes(&observer);
+    let metric_routes = metric_routes::routes(&observer);
     let agent_routes = agent_routes::routes(&observer);
 
     info!(
         APP_LOGGING,
         "Starting webserver at: 0.0.0.0:{}", server_port
     );
-    warp::serve(sensor_routes.or(agent_routes))
+    warp::serve(sensor_routes.or(metric_routes).or(agent_routes))
         .run(([0, 0, 0, 0], server_port.parse().unwrap()))
         .await;
 }

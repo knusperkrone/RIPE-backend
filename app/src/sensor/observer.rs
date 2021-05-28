@@ -165,6 +165,24 @@ impl ConcurrentSensorObserver {
  */
 
 impl ConcurrentSensorObserver {
+    pub async fn check_db(&self) -> String {
+        let db_conn = self.db_conn.lock();
+        if let Err(err) = models::check_schema(&db_conn) {
+            format!("{}", err)
+        } else {
+            "healthy".to_owned()
+        }
+    }
+
+    pub fn mqtt_broker(&self) -> Option<String> {
+        self.mqtt_client.broker()
+    }
+
+    pub async fn sensor_count(&self) -> usize {
+        let container = self.container.read();
+        container.len()
+    }
+
     pub async fn register_sensor(
         &self,
         name: Option<String>,
@@ -436,6 +454,10 @@ impl SensorCache {
         SensorCache {
             sensors: HashMap::new(),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.sensors.len()
     }
 
     pub fn sensors(

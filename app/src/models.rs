@@ -145,6 +145,12 @@ pub fn establish_db_connection() -> PgConnection {
     PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
 }
 
+pub(crate) fn check_schema(conn: &PgConnection) -> Result<(), DBError> {
+    use crate::schema::sensors::dsl::*;
+    sensors.limit(1).load::<SensorDao>(conn)?;
+    Ok(())
+}
+
 pub fn get_sensors(conn: &PgConnection) -> Vec<SensorDao> {
     use crate::schema::sensors::dsl::*;
     match sensors.load(conn) {

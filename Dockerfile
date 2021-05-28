@@ -27,8 +27,11 @@ COPY ./app/src ./app/src
 COPY ./core/src ./core/src
 COPY ./core/build.rs ./core/build.rs
 
-#1.2b build app for release
+#1.2b copy migrations
 WORKDIR /ripe/app
+COPY migrations ./migrations
+
+#1.2c build app for release
 RUN cargo build --release
 
 #1.3 build plugins for release

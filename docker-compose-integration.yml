@@ -20,7 +20,7 @@ services:
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
     depends_on:
       - db
-    entrypoint: ["sh", "-c", "sleep 3 && diesel migration run"]
+    entrypoint: ["sh", "-c", "until $$(diesel migration run); do sleep 1; done" ]
     networks:
       - default
 

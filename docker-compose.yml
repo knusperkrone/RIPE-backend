@@ -5,8 +5,8 @@ services:
     image: postgres:13-alpine
     ports:
       - 54321:5432
-    #volumes: 
-      #- /data/:/var/lib/postgresql/data
+    #volumes:
+    #- /data/:/var/lib/postgresql/data
     environment:
       POSTGRES_DB: ripe
       POSTGRES_USER: iflab
@@ -22,11 +22,16 @@ services:
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
     depends_on:
       - db
-    entrypoint: ["sh", "-c", "until $$(diesel migration run); do sleep 1; done" ]
+    entrypoint:
+      [
+        "sh",
+        "-c",
+        "while sleep 2; do $$(diesel migration run); if [ $$? -eq 0 ]; then echo 'Migration done' && exit 0; fi ; done",
+      ]
 
   ripe:
     restart: "always"
-    image: ripe:latest
+    image: docker-registry.if-lab.de/arme/iftem_backend:latest
     environment:
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
       SERVER_PORT: 8080

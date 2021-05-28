@@ -20,13 +20,20 @@ services:
       DATABASE_URL: postgres://iflab:Tischfussball@db:5432/ripe
     depends_on:
       - db
-    entrypoint: ["sh", "-c", "until $$(diesel migration run); do sleep 1; done" ]
+    entrypoint:
+      [
+        "sh",
+        "-c",
+        "while sleep 2; do $$(diesel migration run); if [ $$? -eq 0 ]; then echo 'Migration done' && exit 0; fi ; done",
+      ]
     networks:
       - default
 
   backend:
-    restart: "always"
+    restart: "no"
     image: docker-registry.if-lab.de/arme/iftem_backend:latest
+    depends_on:
+      - db_schema
     networks:
       - default
       - proxy
@@ -38,6 +45,7 @@ services:
         - traefik.port=8080
         - traefik.docker.network=proxy
         - traefik.http.middlewares.autodetect.contenttype.autodetect=false
+    command: ["sh", "-c", "while :;do sleep 1 && /app/ripe; done"]
 
 networks:
   default:

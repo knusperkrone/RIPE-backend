@@ -430,14 +430,14 @@ impl ConcurrentSensorObserver {
     }
 
     fn generate_sensor_key(&self) -> String {
-        let mut buffer = Vec::with_capacity(6);
-        for _ in 0..6 {
-            buffer.push(rand::random::<u8>());
-        }
-        base64::encode(buffer)
-            .replace('/', &"-")
-            .replace('+', &"_")
-            .replace('#', &"_")
+        use rand::distributions::Alphanumeric;
+        use rand::{thread_rng, Rng};
+        let mut rng = thread_rng();
+        std::iter::repeat(())
+            .map(|()| rng.sample(Alphanumeric))
+            .map(char::from)
+            .take(6)
+            .collect()
     }
 }
 

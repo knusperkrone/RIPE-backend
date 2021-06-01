@@ -26,6 +26,7 @@ fn connect_db() -> PgConnection {
     for i in 0..15 {
         if let Some(db_conn) = models::establish_db_connection() {
             if let Ok(_) = embedded_migrations::run(&db_conn) {
+                info!(APP_LOGGING, "Run migrations");
                 return db_conn;
             }
         }

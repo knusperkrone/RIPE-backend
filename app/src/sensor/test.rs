@@ -6,7 +6,7 @@ use crate::{config::CONFIG, models::establish_db_connection};
 fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
     let plugin_path = CONFIG.plugin_dir();
     let plugin_dir = std::path::Path::new(&plugin_path);
-    let db_conn = establish_db_connection();
+    let db_conn = establish_db_connection().unwrap();
     ConcurrentSensorObserver::new(plugin_dir, db_conn)
 }
 

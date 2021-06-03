@@ -2,10 +2,11 @@ mod agent;
 mod ticker;
 
 use crate::{error::WasmPluginError, logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
-use ripe_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
 use parking_lot::Mutex;
+use ripe_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
 use std::fs::{self, File};
 use std::io::Read;
+use std::sync::Arc;
 use std::{collections::HashMap, ffi::OsStr};
 use ticker::TimerFuture;
 use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
@@ -16,7 +17,7 @@ use wasmer::{
 
 use self::agent::WasmAgent;
 
-use super::{Agent, AgentFactoryTrait};
+use super::{Agent, AgentFactoryTrait, AgentLib};
 
 #[derive(WasmerEnv, Clone)]
 pub struct WasmerInstanceCallEnv {
@@ -41,13 +42,11 @@ impl<'a> Drop for WasmerMallocPtr<'a> {
 
 pub struct WasmAgentFactory {
     store: Store,
-    libraries: HashMap<String, Module>, // <agent_name, Module>
+    libraries: HashMap<String, Arc<Module>>, // <agent_name, Module>
     agent_sender: UnboundedSender<SensorMQTTCommand>,
 }
 
 impl AgentFactoryTrait for WasmAgentFactory {
-    type Lib = Module;
-
     fn create_agent(
         &self,
         sensor_id: i32,
@@ -80,6 +79,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
             plugin_receiver,
             sensor_id,
             domain.to_owned(),
+            AgentLib(module.clone()),
             agent_name.to_string(),
             Box::new(proxy),
         ))
@@ -93,10 +93,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
             .collect()
     }
 
-    fn load_plugin_file(
-        &mut self,
-        path: &std::path::PathBuf,
-    ) -> Option<(String, Option<Self::Lib>)> {
+    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {
         let ext_res = path.extension();
         let stem_res = path.file_stem();
         if ext_res.is_none() || stem_res.is_none() {
@@ -113,11 +110,10 @@ impl AgentFactoryTrait for WasmAgentFactory {
             }
 
             let bytes = bytes_res.unwrap();
-            let res = self.load_wasm_file(bytes, agent_name);
-            return match res {
-                Ok(old_module) => {
+            return match self.load_wasm_file(bytes, agent_name) {
+                Ok(_) => {
                     info!(APP_LOGGING, "Loaded wasm {}", filename);
-                    Some((agent_name.to_owned(), old_module))
+                    Some(agent_name.to_owned())
                 }
                 Err(err) => {
                     warn!(APP_LOGGING, "Invalid wasm {:?}: {}", filename, err);
@@ -142,11 +138,7 @@ impl WasmAgentFactory {
         self.libraries.contains_key(agent_name)
     }
 
-    fn load_wasm_file(
-        &mut self,
-        bytes: Vec<u8>,
-        agent_name: &str,
-    ) -> Result<Option<Module>, WasmPluginError> {
+    fn load_wasm_file(&mut self, bytes: Vec<u8>, agent_name: &str) -> Result<(), WasmPluginError> {
         if self.libraries.contains_key(agent_name) {
             return Err(WasmPluginError::Duplicate);
         }
@@ -155,8 +147,9 @@ impl WasmAgentFactory {
         let (mock_sender, _mock_receiver) = channel::<AgentMessage>(64);
         let test_agent = self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
         if self.test_agent_contract(test_agent) {
-            let old_module = self.libraries.insert(agent_name.to_owned(), module);
-            Ok(old_module)
+            self.libraries
+                .insert(agent_name.to_owned(), Arc::new(module));
+            Ok(())
         } else {
             Err(WasmPluginError::ContractMismatch(
                 "Implementation".to_owned(),

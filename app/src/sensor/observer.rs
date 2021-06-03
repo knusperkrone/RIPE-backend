@@ -131,9 +131,8 @@ impl ConcurrentSensorObserver {
         loop {
             if let Ok(_) = rx.try_recv() {
                 let mut agent_factory = self.agent_factory.write();
-                let loaded_libs = agent_factory.load_new_plugins(plugin_dir);
-                if !loaded_libs.is_empty() {
-                    let lib_names = loaded_libs.iter().map(|e| &e.0).collect::<Vec<_>>();
+                let lib_names = agent_factory.load_new_plugins(plugin_dir);
+                if !lib_names.is_empty() {
                     info!(APP_LOGGING, "Updating plugins {:?}", lib_names);
 
                     let now = Utc::now();

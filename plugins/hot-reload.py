@@ -1,4 +1,4 @@
-# /usr/bin/python
+#! /usr/bin/python3
 
 import os
 import time
@@ -14,12 +14,8 @@ def start_ripe(lock):
     os.chdir('..')
 
     lock.release()
-    stdout, stderr = subprocess.Popen(
-        ['cargo', 'run'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-
-    lines = stderr.decode('utf-8').splitlines()[-5:]
+    os.system('cargo run')
     print('RIPE crashed')
-    print('\n'.join(lines))
     exit(1)
 
 

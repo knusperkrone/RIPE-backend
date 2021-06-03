@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod test;
 
+mod abortable;
 mod native;
 mod wasm;
 
@@ -16,9 +17,12 @@ use crate::{logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
 use ripe_core::AgentMessage;
 use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 
-pub trait AgentFactoryTrait {
-    type Lib;
+#[derive(Clone)]
+pub struct AgentLib(std::sync::Arc<dyn std::any::Any>);
+unsafe impl Send for AgentLib {}
+unsafe impl Sync for AgentLib {}
 
+pub trait AgentFactoryTrait {
     fn create_agent(
         &self,
         sensor_id: i32,
@@ -29,10 +33,7 @@ pub trait AgentFactoryTrait {
         plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, ripe_core::error::AgentError>;
     fn agents(&self) -> Vec<String>;
-    fn load_plugin_file(
-        &mut self,
-        path: &std::path::PathBuf,
-    ) -> Option<(String, Option<Self::Lib>)>;
+    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String>;
 }
 
 pub struct AgentFactory {
@@ -41,9 +42,6 @@ pub struct AgentFactory {
     native_factory: NativeAgentFactory,
     timestamps: HashMap<OsString, SystemTime>,
 }
-
-unsafe impl Send for AgentFactory {}
-unsafe impl Sync for AgentFactory {}
 
 impl AgentFactory {
     pub fn new(iac_sender: UnboundedSender<SensorMQTTCommand>) -> Self {
@@ -55,7 +53,7 @@ impl AgentFactory {
         }
     }
 
-    pub fn load_new_plugins(&mut self, dir: &Path) -> Vec<(String, Box<dyn std::any::Any>)> {
+    pub fn load_new_plugins(&mut self, dir: &Path) -> Vec<String> {
         // Read files and filter all "basename.extension"
         let entries_res = std::fs::read_dir(dir);
         if entries_res.is_err() {
@@ -79,7 +77,7 @@ impl AgentFactory {
                 }
             });
 
-        let mut ret: Vec<(String, Box<dyn std::any::Any>)> = Vec::new();
+        let mut ret: Vec<String> = Vec::new();
         for (path, modified_time) in entries {
             if let Some(old_time) = self.timestamps.get(path.as_os_str()) {
                 if old_time == &modified_time {
@@ -90,11 +88,11 @@ impl AgentFactory {
             self.timestamps
                 .insert(path.as_os_str().to_owned(), modified_time);
 
-            if let Some((lib_name, old_lib)) = self.native_factory.load_plugin_file(&path) {
-                ret.push((lib_name, Box::new(old_lib)));
+            if let Some(lib_name) = self.native_factory.load_plugin_file(&path) {
+                ret.push(lib_name)
             }
-            if let Some((lib_name, old_lib)) = self.wasm_factory.load_plugin_file(&path) {
-                ret.push((lib_name, Box::new(old_lib)));
+            if let Some(lib_name) = self.wasm_factory.load_plugin_file(&path) {
+                ret.push(lib_name)
             }
         }
         ret
@@ -114,6 +112,7 @@ impl AgentFactory {
                 plugin_receiver,
                 sensor_id,
                 domain.to_owned(),
+                AgentLib(std::sync::Arc::new(0)),
                 agent_name.to_owned(),
                 Box::new(MockAgent::new(plugin_sender)),
             ))

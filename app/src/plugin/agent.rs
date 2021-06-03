@@ -1,6 +1,8 @@
+use super::abortable::{AbortHandle, Abortable};
+use super::AgentLib;
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
-use futures::future::{AbortHandle, Abortable};
+use parking_lot::Mutex;
 use ripe_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
@@ -38,27 +40,50 @@ pub fn register_sigint_handler() {
     .unwrap();
 }
 
+/*
+ * Agent impl
+ */
+
+static MAX_TASK_COUNT: usize = 5;
+
 pub struct Agent {
+    inner: Arc<AgentInner>,
+    agent_proxy: Box<dyn AgentTrait>,
+}
+
+pub struct AgentInner {
     sensor_id: i32,
     domain: String,
     agent_name: String,
+    agent_lib: AgentLib,
     iac_abort_handle: AbortHandle,
-    repeat_task_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
-    agent_proxy: Box<dyn AgentTrait>,
+    repeat_task_handle: RwLock<Option<AbortHandle>>,
+    task_handles: Mutex<Vec<AbortHandle>>,
+}
+
+impl Drop for AgentInner {
+    fn drop(&mut self) {
+        self.iac_abort_handle.abort();
+        // stop tasks
+        if let Some(repeat_handle) = self.repeat_task_handle.write().unwrap().as_ref() {
+            repeat_handle.abort();
+        }
+        let mut handles = self.task_handles.lock();
+        for handle in handles.drain(..) {
+            handle.abort();
+        }
+
+        debug!(
+            APP_LOGGING,
+            "Lib references {}",
+            Arc::strong_count(&self.agent_lib.0)
+        );
+    }
 }
 
 impl std::fmt::Debug for Agent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         write!(f, "{:?}", self.agent_proxy)
-    }
-}
-
-impl Drop for Agent {
-    fn drop(&mut self) {
-        self.iac_abort_handle.abort();
-        if let Some(repeat_handle) = self.repeat_task_abort_handle.write().unwrap().as_ref() {
-            repeat_handle.abort();
-        }
     }
 }
 
@@ -71,37 +96,36 @@ impl Agent {
         plugin_receiver: Receiver<AgentMessage>,
         sensor_id: i32,
         domain: String,
+        agent_lib: AgentLib,
         agent_name: String,
         agent_proxy: Box<dyn AgentTrait>,
     ) -> Self {
-        let repeat_abort_handle = Arc::new(RwLock::new(None));
+        let task_handles = Mutex::new(Vec::new());
+        let repeat_task_handle = RwLock::new(None);
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        let inner = Arc::new(AgentInner {
+            sensor_id,
+            domain,
+            agent_name,
+            agent_lib,
+            iac_abort_handle: abort_handle,
+            repeat_task_handle,
+            task_handles,
+        });
+
         let ipc_future = Abortable::new(
-            Agent::dispatch_iac(
-                sensor_id,
-                domain.clone(),
-                iac_sender,
-                plugin_receiver, 
-                repeat_abort_handle.clone(),
-            ),
+            Agent::dispatch_iac(inner.clone(), iac_sender, plugin_receiver),
             abort_registration,
         );
         tokio::spawn(async move { ipc_future.await });
 
-        Agent {
-            sensor_id,
-            domain,
-            agent_name,
-            iac_abort_handle: abort_handle,
-            repeat_task_abort_handle: repeat_abort_handle,
-            agent_proxy,
-        }
+        Agent { inner, agent_proxy }
     }
 
     pub fn handle_cmd(&mut self, cmd: i64) {
         info!(
             APP_LOGGING,
-            "{}-{} agent cmd: {}", self.sensor_id, self.domain, cmd
+            "{}-{} agent cmd: {}", self.inner.sensor_id, self.inner.domain, cmd
         );
         self.agent_proxy.handle_cmd(cmd);
     }
@@ -134,19 +158,19 @@ impl Agent {
     pub fn deserialize(&self) -> AgentConfigDao {
         let deserialized = self.agent_proxy.deserialize();
         AgentConfigDao::new(
-            self.sensor_id,
-            self.domain.clone(),
-            self.agent_name.clone(),
+            self.inner.sensor_id,
+            self.inner.domain.clone(),
+            self.inner.agent_name.clone(),
             deserialized,
         )
     }
 
     pub fn agent_name(&self) -> &String {
-        &self.agent_name
+        &self.inner.agent_name
     }
 
     pub fn domain(&self) -> &String {
-        &self.domain
+        &self.inner.domain
     }
 
     /*
@@ -154,36 +178,37 @@ impl Agent {
      */
 
     async fn dispatch_iac(
-        sensor_id: i32,
-        domain: String,
+        agent: Arc<AgentInner>,
         iac_sender: UnboundedSender<SensorMQTTCommand>,
         mut plugin_receiver: Receiver<AgentMessage>,
-        repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
-        debug!(APP_LOGGING, "[{}][{}]Iac ready", sensor_id, domain);
+        debug!(
+            APP_LOGGING,
+            "[{}][{}]Iac ready", agent.sensor_id, agent.domain
+        );
 
         while let Some(payload) = plugin_receiver.recv().await {
             match payload {
                 AgentMessage::OneshotTask(agent_task_builder) => {
-                    debug!(APP_LOGGING, "[{}][{}]OneShotTask", sensor_id, domain);
-                    Agent::dispatch_oneshot_task(sensor_id, agent_task_builder).await;
+                    debug!(
+                        APP_LOGGING,
+                        "[{}][{}]OneShotTask", agent.sensor_id, agent.domain
+                    );
+                    Agent::dispatch_oneshot_task(agent.clone(), agent_task_builder).await;
                 }
                 AgentMessage::RepeatedTask(delay, interval_task) => {
-                    debug!(APP_LOGGING, "[{}][{}]RepeatedTask", sensor_id, domain);
-                    Agent::dispatch_repating_task(
-                        sensor_id,
-                        delay,
-                        interval_task,
-                        repeat_abort_handle.clone(),
-                    )
-                    .await;
+                    debug!(
+                        APP_LOGGING,
+                        "[{}][{}]RepeatedTask", agent.sensor_id, agent.domain
+                    );
+                    Agent::dispatch_repating_task(agent.clone(), delay, interval_task).await;
                 }
                 AgentMessage::Command(command) => {
                     debug!(APP_LOGGING, "Received command {:?}", command);
                     // Notify main loop over agent
                     let mut msg = SensorMQTTCommand {
-                        sensor_id: sensor_id,
-                        domain: domain.clone(),
+                        sensor_id: agent.sensor_id,
+                        domain: agent.domain.clone(),
                         payload: command,
                     };
 
@@ -201,46 +226,75 @@ impl Agent {
             };
         }
         // unreachable
-        crit!(APP_LOGGING, "dispatch_iac endend for {}", sensor_id);
+        crit!(APP_LOGGING, "dispatch_iac endend for {}", agent.sensor_id);
     }
 
-    async fn dispatch_oneshot_task(sensor_id: i32, agent_task: Box<dyn FutBuilder>) {
+    async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) != 0 {
             info!(APP_LOGGING, "Task was declined as app recv SIGINT");
+        } else if agent.task_handles.lock().len() > MAX_TASK_COUNT {
+            info!(APP_LOGGING, "Task was declined due too many running tasks");
         } else {
             // Run as task a sender messenges are blocked otherwise
+            let (abort_handle, abort_registration) = AbortHandle::new_pair();
+            let abortable_agent = agent.clone();
+            let task_future = Abortable::new(
+                async move {
+                    let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+                    info!(
+                        APP_LOGGING,
+                        "Spawning new task for sensor: {} - active tasks: {}",
+                        agent.sensor_id,
+                        task_count
+                    );
+
+                    let runtime = tokio::runtime::Handle::current();
+                    agent_task.build_future(runtime).await;
+
+                    task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
+                    info!(
+                        APP_LOGGING,
+                        "Ended new oneshot task for sensor: {} - active tasks: {}",
+                        agent.sensor_id,
+                        task_count
+                    );
+                    if TERMINATED.load(Ordering::Relaxed) != 0 && task_count == 0 {
+                        std::process::exit(0);
+                    }
+                },
+                abort_registration,
+            );
+
+            // Start abortable task, safe handle and remove handle after completion
+            let future_agent = abortable_agent.clone();
             tokio::spawn(async move {
-                let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-                info!(
-                    APP_LOGGING,
-                    "Spawning new task for sensor: {} - active tasks: {}", sensor_id, task_count
-                );
+                {
+                    let mut handles = future_agent.task_handles.lock();
+                    handles.push(abort_handle);
+                }
+                let _ = task_future.await;
 
-                let runtime = tokio::runtime::Handle::current();
-                agent_task.build_future(runtime).await;
-
-                task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-                info!(
-                    APP_LOGGING,
-                    "Ended new oneshot task for sensor: {} - active tasks: {}",
-                    sensor_id,
-                    task_count
-                );
-                if TERMINATED.load(Ordering::Relaxed) != 0 && task_count == 0 {
-                    std::process::exit(0);
+                // remove all aborted handles from the list
+                let mut handles = future_agent.task_handles.lock();
+                let mut i = 0;
+                while i < handles.len() {
+                    if handles[i].is_aborted() {
+                        handles.remove(i);
+                    } else {
+                        i += 1;
+                    }
                 }
             });
         }
     }
 
     async fn dispatch_repating_task(
-        sensor_id: i32,
+        agent: Arc<AgentInner>,
         delay: std::time::Duration,
         interval_task: Box<dyn FutBuilder>,
-        repeat_abort_handle: Arc<RwLock<Option<AbortHandle>>>,
     ) {
-        let repeat_handle_ref = repeat_abort_handle.clone();
-        let mut handle = repeat_abort_handle.write().unwrap();
+        let repeat_agent = agent.clone();
+        let mut handle = agent.repeat_task_handle.write().unwrap();
         if handle.is_none() {
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let repeating_future = Abortable::new(
@@ -248,7 +302,7 @@ impl Agent {
                     info!(
                         APP_LOGGING,
                         "Starting repeating task for sensor: {} - sleep duration: {:?}",
-                        sensor_id,
+                        repeat_agent.sensor_id,
                         delay,
                     );
                     loop {
@@ -269,9 +323,9 @@ impl Agent {
 
                     info!(
                         APP_LOGGING,
-                        "Ended repeating task for sensor: {}", sensor_id
+                        "Ended repeating task for sensor: {}", repeat_agent.sensor_id
                     );
-                    let mut handle = repeat_handle_ref.write().unwrap();
+                    let mut handle = repeat_agent.repeat_task_handle.write().unwrap();
                     *handle = None;
                 },
                 abort_registration,
@@ -281,7 +335,7 @@ impl Agent {
         } else {
             warn!(
                 APP_LOGGING,
-                "Sensor {} already has a running task!", sensor_id
+                "Sensor {} already has a running task!", agent.sensor_id
             );
         }
     }

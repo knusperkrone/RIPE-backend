@@ -1,21 +1,21 @@
+use super::AgentLib;
 use super::{Agent, AgentFactoryTrait};
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorMQTTCommand;
-use ripe_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
 use libloading::Library;
+use ripe_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
+use std::sync::Arc;
 use std::{collections::HashMap, fmt::Debug};
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 
 #[derive(Debug)]
 pub struct NativeAgentFactory {
     iac_sender: UnboundedSender<SensorMQTTCommand>,
-    libraries: HashMap<String, Library>,
+    libraries: HashMap<String, Arc<Library>>,
 }
 
 impl AgentFactoryTrait for NativeAgentFactory {
-    type Lib = Library;
-
     fn create_agent(
         &self,
         sensor_id: i32,
@@ -29,12 +29,13 @@ impl AgentFactoryTrait for NativeAgentFactory {
         let native_agent =
             unsafe { self.build_native_agent(agent_name, state_json, plugin_sender) };
 
-        if let Some(plugin_agent) = native_agent {
+        if let Some((plugin_agent, lib)) = native_agent {
             Ok(Agent::new(
                 self.iac_sender.clone(),
                 plugin_receiver,
                 sensor_id,
                 domain.to_owned(),
+                AgentLib(lib),
                 agent_name.to_owned(),
                 plugin_agent,
             ))
@@ -47,10 +48,7 @@ impl AgentFactoryTrait for NativeAgentFactory {
         self.libraries.keys().map(|name| name.clone()).collect()
     }
 
-    fn load_plugin_file(
-        &mut self,
-        path: &std::path::PathBuf,
-    ) -> Option<(String, Option<Self::Lib>)> {
+    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {
         let ext_res = path.extension();
         if ext_res.is_none() {
             return None;
@@ -62,9 +60,9 @@ impl AgentFactoryTrait for NativeAgentFactory {
             // UNSAFE: load and check native lib
             let res = unsafe { self.load_native_library(filename) };
             return match res {
-                Ok((lib_name, _version, old_lib)) => {
+                Ok((lib_name, _version)) => {
                     info!(APP_LOGGING, "Loaded native: {}", filename);
-                    Some((lib_name.to_owned(), old_lib))
+                    Some(lib_name.to_owned())
                 }
                 Err(err) => {
                     warn!(APP_LOGGING, "Invalid native {}: {}", filename, err);
@@ -91,7 +89,7 @@ impl NativeAgentFactory {
     unsafe fn load_native_library(
         &mut self,
         library_path: &str,
-    ) -> Result<(String, u32, Option<Library>), PluginError> {
+    ) -> Result<(String, u32), PluginError> {
         // load the library into memory
         let library = Library::new(library_path)?;
 
@@ -122,8 +120,9 @@ impl NativeAgentFactory {
             }
         }
 
-        let old_lib = self.libraries.insert(decl.agent_name.to_owned(), library);
-        return Ok((decl.agent_name.to_owned(), decl.agent_version, old_lib));
+        self.libraries
+            .insert(decl.agent_name.to_owned(), Arc::new(library));
+        return Ok((decl.agent_name.to_owned(), decl.agent_version));
     }
 
     unsafe fn build_native_agent(
@@ -131,7 +130,7 @@ impl NativeAgentFactory {
         agent_name: &str,
         state_json: Option<&str>,
         plugin_sender: Sender<AgentMessage>,
-    ) -> Option<Box<dyn AgentTrait>> {
+    ) -> Option<(Box<dyn AgentTrait>, Arc<Library>)> {
         if let Some(library) = self.libraries.get(agent_name) {
             let decl = library
                 .get::<*mut PluginDeclaration>(b"plugin_declaration\0")
@@ -140,7 +139,7 @@ impl NativeAgentFactory {
 
             let logger = APP_LOGGING.clone();
             let proxy = (decl.agent_builder)(state_json, logger, plugin_sender);
-            Some(proxy)
+            Some((proxy, library.clone()))
         } else {
             None
         }

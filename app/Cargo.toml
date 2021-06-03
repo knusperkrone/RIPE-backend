@@ -16,6 +16,8 @@ tokio = { version = "*", features = ["full"] }
 parking_lot = { version = "*", features = ["send_guard"] } 
 slog = "*" 
 libloading = "*"
+futures-core = "*"
+pin-project-lite = "*"
 
 base64 = "0.13"
 ctrlc = "3.1"

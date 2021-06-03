@@ -55,12 +55,12 @@ impl SensorHandle {
         })
     }
 
-    pub fn update(&mut self, updated_libs: &Vec<&String>, factory: &AgentFactory) {
+    pub fn update(&mut self, updated_libs: &Vec<String>, factory: &AgentFactory) {
         for updated_lib in updated_libs {
             if let Some(outdated) = self
                 .agents
                 .iter_mut()
-                .find(|a| a.agent_name() == *updated_lib)
+                .find(|a| a.agent_name() == updated_lib)
             {
                 // update new agent
                 if let Ok(updated) = factory.create_agent(

@@ -18,7 +18,12 @@ static MIGRATOR: Migrator = sqlx::migrate!(); // defaults to "./migrations"
 
 async fn connect_db() -> sqlx::PgPool {
     for i in 0..15 {
-        if let Some(db_conn) = models::establish_db_connection().await {
+        if let Ok(Some(db_conn)) = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            models::establish_db_connection(),
+        )
+        .await
+        {
             if let Ok(_) = MIGRATOR.run(&db_conn).await {
                 info!(APP_LOGGING, "Run migrations");
                 return db_conn;

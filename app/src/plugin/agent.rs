@@ -1,4 +1,5 @@
 use super::abortable::{AbortHandle, Abortable};
+use super::logging::PLUGIN_LOGGING;
 use super::AgentLib;
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
@@ -191,20 +192,20 @@ impl Agent {
             match payload {
                 AgentMessage::OneshotTask(agent_task_builder) => {
                     debug!(
-                        APP_LOGGING,
+                        PLUGIN_LOGGING,
                         "[{}][{}]OneShotTask", agent.sensor_id, agent.domain
                     );
                     Agent::dispatch_oneshot_task(agent.clone(), agent_task_builder).await;
                 }
                 AgentMessage::RepeatedTask(delay, interval_task) => {
                     debug!(
-                        APP_LOGGING,
+                        PLUGIN_LOGGING,
                         "[{}][{}]RepeatedTask", agent.sensor_id, agent.domain
                     );
                     Agent::dispatch_repating_task(agent.clone(), delay, interval_task).await;
                 }
                 AgentMessage::Command(command) => {
-                    debug!(APP_LOGGING, "Received command {:?}", command);
+                    debug!(PLUGIN_LOGGING, "Received command {:?}", command);
                     // Notify main loop over agent
                     let mut msg = SensorMQTTCommand {
                         sensor_id: agent.sensor_id,
@@ -231,9 +232,12 @@ impl Agent {
 
     async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) != 0 {
-            info!(APP_LOGGING, "Task was declined as app recv SIGINT");
+            info!(PLUGIN_LOGGING, "Task was declined as app recv SIGINT");
         } else if agent.task_handles.lock().len() > MAX_TASK_COUNT {
-            info!(APP_LOGGING, "Task was declined due too many running tasks");
+            info!(
+                PLUGIN_LOGGING,
+                "Task was declined due too many running tasks"
+            );
         } else {
             // Run as task a sender messenges are blocked otherwise
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
@@ -241,8 +245,8 @@ impl Agent {
             let task_future = Abortable::new(
                 async move {
                     let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-                    info!(
-                        APP_LOGGING,
+                    debug!(
+                        PLUGIN_LOGGING,
                         "Spawning new task for sensor: {} - active tasks: {}",
                         agent.sensor_id,
                         task_count
@@ -252,8 +256,8 @@ impl Agent {
                     agent_task.build_future(runtime).await;
 
                     task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-                    info!(
-                        APP_LOGGING,
+                    debug!(
+                        PLUGIN_LOGGING,
                         "Ended new oneshot task for sensor: {} - active tasks: {}",
                         agent.sensor_id,
                         task_count
@@ -299,8 +303,8 @@ impl Agent {
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let repeating_future = Abortable::new(
                 async move {
-                    info!(
-                        APP_LOGGING,
+                    debug!(
+                        PLUGIN_LOGGING,
                         "Starting repeating task for sensor: {} - sleep duration: {:?}",
                         repeat_agent.sensor_id,
                         delay,
@@ -321,8 +325,8 @@ impl Agent {
                         tokio::time::sleep(delay.into()).await;
                     }
 
-                    info!(
-                        APP_LOGGING,
+                    debug!(
+                        PLUGIN_LOGGING,
                         "Ended repeating task for sensor: {}", repeat_agent.sensor_id
                     );
                     let mut handle = repeat_agent.repeat_task_handle.write().unwrap();

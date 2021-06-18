@@ -32,7 +32,7 @@ unsafe extern "C" fn build_agent(
     let mut agent: ThresholdAgent = ThresholdAgent::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdAgent>(&config_json) {
-            info!(logger, "Restored {} from config", NAME);
+            debug!(logger, "Restored {} from config", NAME);
             agent = deserialized;
         } else {
             warn!(
@@ -41,7 +41,7 @@ unsafe extern "C" fn build_agent(
             );
         }
     } else {
-        info!(logger, "Created new {}", NAME);
+        debug!(logger, "Created new {}", NAME);
     }
 
     agent.logger = logger;

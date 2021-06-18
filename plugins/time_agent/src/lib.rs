@@ -32,7 +32,7 @@ unsafe extern "C" fn build_agent(
     let mut inner_agent = TimeAgentInner::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<TimeAgentInner>(&config_json) {
-            info!(logger, "Restored {} from config", NAME);
+            debug!(logger, "Restored {} from config", NAME);
             inner_agent = deserialized;
         } else {
             warn!(

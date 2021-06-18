@@ -1,4 +1,5 @@
 use super::AgentLib;
+use super::logging::PLUGIN_LOGGING;
 use super::{Agent, AgentFactoryTrait};
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
@@ -137,7 +138,7 @@ impl NativeAgentFactory {
                 .unwrap()
                 .read(); // Panic is impossible
 
-            let logger = APP_LOGGING.clone();
+            let logger = PLUGIN_LOGGING.clone();
             let proxy = (decl.agent_builder)(state_json, logger, plugin_sender);
             Some((proxy, library.clone()))
         } else {

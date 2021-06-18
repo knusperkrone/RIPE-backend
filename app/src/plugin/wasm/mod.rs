@@ -274,6 +274,8 @@ impl WasmAgentFactory {
 }
 
 mod stubs {
+    use crate::plugin::logging::PLUGIN_LOGGING;
+
     use super::*;
 
     pub fn abort(
@@ -287,7 +289,7 @@ mod stubs {
             let msg = read_c_str(memory, msg_ptr).unwrap_or_default();
             let filename = read_c_str(memory, filename_ptr).unwrap_or_default();
             error!(
-                APP_LOGGING,
+                PLUGIN_LOGGING,
                 "sensor[{}][{}] ABORT with {} at {}:{}:{}",
                 env.sensor_id,
                 env.agent_name,
@@ -298,7 +300,7 @@ mod stubs {
             );
         } else {
             error!(
-                APP_LOGGING,
+                PLUGIN_LOGGING,
                 "sensor[{}][{}] ABORT without memory!", env.sensor_id, env.agent_name,
             );
         }
@@ -311,19 +313,19 @@ mod stubs {
 
         if let Some(memory) = env.memory.get_ref() {
             if let Some(msg) = read_c_str(memory, ptr) {
-                info!(
-                    APP_LOGGING,
+                debug!(
+                    PLUGIN_LOGGING,
                     "sensor[{}][{}] log: {}", env.sensor_id, env.agent_name, msg
                 );
             } else {
                 warn!(
-                    APP_LOGGING,
+                    PLUGIN_LOGGING,
                     "sensor[{}][{}] invalid msg buffer!", env.sensor_id, env.agent_name
                 );
             }
         } else {
             error!(
-                APP_LOGGING,
+                PLUGIN_LOGGING,
                 "sensor[{}][{}] LOG without memory!", env.sensor_id, env.agent_name,
             );
         }
@@ -331,7 +333,7 @@ mod stubs {
 
     pub fn sleep(env: &WasmerInstanceCallEnv, ms: u64) {
         debug!(
-            APP_LOGGING,
+            PLUGIN_LOGGING,
             "sensor[{}][{}] sleep for {}", env.sensor_id, env.agent_name, ms
         );
         futures::executor::block_on(async move {

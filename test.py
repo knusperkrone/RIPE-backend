@@ -13,10 +13,13 @@ def main():
     print(f"Registered sensor {sensor_id} {sensor_key}")
     r = re.post(f'{BASE_URL}/agent/{sensor_id}/{sensor_key}',
                 json={"domain": "01_Licht", "agent_name": "TimeAgent"})
+    print("TimeAgent")
     r = re.post(f'{BASE_URL}/agent/{sensor_id}/{sensor_key}',
                 json={"domain": "02_Wasser", "agent_name": "ThresholdAgent"})
+    print("TestAgent")
     r = re.post(f'{BASE_URL}/agent/{sensor_id}/{sensor_key}',
                 json={"domain": "03_Test", "agent_name": "TestAgent"})
+    print("WasmAgent")
     r = re.post(f'{BASE_URL}/agent/{sensor_id}/{sensor_key}',
                 json={"domain": "03_wasm", "agent_name": "untouched"})
 

@@ -1,28 +1,13 @@
 use crate::config::CONFIG;
 use crate::error::DBError;
-use crate::logging::APP_LOGGING;
-use crate::{plugin::Agent, schema::*};
-use diesel::pg::PgConnection;
-use diesel::prelude::*;
-use ripe_core::SensorDataMessage;
-use std::fmt::Debug;
+use crate::plugin::Agent;
 use std::string::String;
 
-extern crate diesel_migrations;
-
 pub mod dao {
-    use super::*;
     use chrono::{DateTime, NaiveDateTime, Utc};
+    use ripe_core::SensorDataMessage;
 
-    #[derive(Insertable)]
-    #[table_name = "sensors"]
-    pub(super) struct NewSensor {
-        pub name: String,
-        pub key_b64: String,
-    }
-
-    #[derive(Identifiable, Queryable, PartialEq, Debug)]
-    #[table_name = "sensors"]
+    #[derive(sqlx::FromRow)]
     pub struct SensorDao {
         id: i32,
         key_b64: String,
@@ -30,10 +15,6 @@ pub mod dao {
     }
 
     impl SensorDao {
-        pub fn new(id: i32, key_b64: String, name: String) -> Self {
-            SensorDao { id, key_b64, name }
-        }
-
         pub fn id(&self) -> i32 {
             self.id
         }
@@ -47,13 +28,12 @@ pub mod dao {
         }
     }
 
-    #[derive(Insertable, Queryable, PartialEq, Debug)]
-    #[table_name = "agent_configs"]
+    #[derive(sqlx::FromRow)]
     pub struct AgentConfigDao {
-        sensor_id: i32,
-        domain: String,
-        agent_impl: String,
-        state_json: String,
+        pub(crate) sensor_id: i32,
+        pub(crate) domain: String,
+        pub(crate) agent_impl: String,
+        pub(crate) state_json: String,
     }
 
     impl AgentConfigDao {
@@ -83,39 +63,10 @@ pub mod dao {
         }
     }
 
-    #[derive(Insertable)]
-    #[table_name = "sensor_data"]
-    pub struct NewSensorData {
-        sensor_id: i32,
-        timestamp: NaiveDateTime,
-        battery: Option<f64>,
-        moisture: Option<f64>,
-        temperature: Option<f64>,
-        carbon: Option<i32>,
-        conductivity: Option<i32>,
-        light: Option<i32>,
-    }
-
-    impl NewSensorData {
-        pub fn new(sensor_id: i32, other: ripe_core::SensorDataMessage) -> Self {
-            NewSensorData {
-                sensor_id: sensor_id,
-                timestamp: other.timestamp.naive_utc(),
-                battery: other.battery,
-                moisture: other.moisture,
-                temperature: other.temperature,
-                carbon: other.carbon,
-                conductivity: other.conductivity,
-                light: other.light,
-            }
-        }
-    }
-
-    #[derive(Identifiable, Queryable, PartialEq, Debug)]
-    #[table_name = "sensor_data"]
+    #[derive(sqlx::FromRow)]
     pub struct SensorDataDao {
-        id: i32,
-        sensor_id: i32,
+        //id: i32,
+        //sensor_id: i32,
         timestamp: NaiveDateTime,
         battery: Option<f64>,
         moisture: Option<f64>,
@@ -142,199 +93,281 @@ pub mod dao {
 
 use dao::*;
 
-pub fn establish_db_connection() -> Option<PgConnection> {
+pub async fn establish_db_connection() -> Option<sqlx::PgPool> {
     let database_url = CONFIG.database_url();
-    PgConnection::establish(&database_url).ok()
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .ok()
 }
 
-pub(crate) fn check_schema(conn: &PgConnection) -> Result<(), DBError> {
-    use crate::schema::sensors::dsl::*;
-    sensors.limit(1).load::<SensorDao>(conn)?;
+pub(crate) async fn check_schema(conn: &sqlx::PgPool) -> Result<(), DBError> {
+    sqlx::query("SELECT * FROM sensors LIMIT 1")
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
-pub fn get_sensors(conn: &PgConnection) -> Vec<SensorDao> {
-    use crate::schema::sensors::dsl::*;
-    match sensors.load(conn) {
-        Ok(result) => result,
-        Err(msg) => {
-            error!(APP_LOGGING, "Coulnd't find sensors: {}", msg);
-            Vec::new()
-        }
-    }
-}
-
-pub fn get_agent_config(conn: &PgConnection, sensor_dao: &SensorDao) -> Vec<AgentConfigDao> {
-    use crate::schema::agent_configs::dsl::*;
-    match agent_configs
-        .filter(sensor_id.eq(sensor_dao.id()))
-        .order(domain.asc())
-        .load::<AgentConfigDao>(conn)
-    {
-        Ok(result) => result,
-        Err(msg) => {
-            error!(APP_LOGGING, "Coulnd't find sensors: {}", msg);
-            Vec::new()
-        }
-    }
-}
-
-pub fn create_new_sensor(
-    conn: &PgConnection,
+/// CREATE sensors
+pub async fn create_new_sensor(
+    conn: &sqlx::PgPool,
     key_b64: String,
     name_opt: &Option<String>,
 ) -> Result<SensorDao, DBError> {
-    let name = name_opt.clone().unwrap_or_else(|| {
-        use crate::schema::sensors::dsl::*;
-        let count = sensors.count().get_result::<i64>(conn).unwrap_or(0) + 1;
-        // Not thread safe - but also not critical
-        format!("Sensor {}", count)
-    });
+    let name: String;
+    if let Some(opt_name) = name_opt {
+        name = opt_name.clone();
+    } else {
+        // generate name from current sensor count
+        let rows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sensors")
+            .fetch_one(conn)
+            .await?;
+        name = format!("Sensor {}", &rows.0);
+    }
 
-    let new_sensor = NewSensor { name, key_b64 };
-    let sensor_dao: SensorDao = diesel::insert_into(sensors::table)
-        .values(&new_sensor)
-        .get_result(conn)?;
-    Ok(sensor_dao)
-}
-
-pub fn create_sensor_agent(
-    conn: &PgConnection,
-    configs: AgentConfigDao,
-) -> Result<Vec<AgentConfigDao>, DBError> {
-    let config_daos: Vec<AgentConfigDao> = diesel::insert_into(agent_configs::table)
-        .values(configs)
-        .get_results(conn)?;
-    Ok(config_daos)
-}
-
-pub fn update_sensor_agent(conn: &PgConnection, update: &AgentConfigDao) -> Result<(), DBError> {
-    use crate::schema::agent_configs::dsl::*;
-    diesel::update(
-        agent_configs
-            .filter(sensor_id.eq(update.sensor_id()))
-            .filter(domain.eq(update.domain())),
+    Ok(sqlx::query_as::<_, SensorDao>(
+        "INSERT INTO sensors (key_b64, name) VALUES ($1, $2) RETURNING *",
     )
-    .set(state_json.eq(update.state_json()))
-    .execute(conn)?;
+    .bind(key_b64)
+    .bind(name)
+    .fetch_one(conn)
+    .await?)
+}
 
+/// READ sensors
+pub async fn get_sensors(conn: &sqlx::PgPool) -> Result<Vec<SensorDao>, DBError> {
+    Ok(sqlx::query_as::<_, SensorDao>("SELECT * FROM sensors")
+        .fetch_all(conn)
+        .await?)
+}
+
+/// DELETE agent_config/sensors
+pub async fn delete_sensor(conn: &sqlx::PgPool, remove_id: i32) -> Result<(), DBError> {
+    sqlx::query("DELETE FROM agent_configs WHERE sensor_id = $1")
+        .bind(remove_id)
+        .execute(conn)
+        .await?;
+    sqlx::query("DELETE FROM sensors WHERE id = $1")
+        .bind(remove_id)
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
-pub fn delete_sensor_agent(
-    conn: &PgConnection,
+/// CREATE agent_configs
+pub async fn create_agent_config(
+    conn: &sqlx::PgPool,
+    config: &AgentConfigDao,
+) -> Result<(), DBError> {
+    sqlx::query(
+        r#"INSERT INTO agent_configs
+                (sensor_id, domain, agent_impl, state_json)
+                VALUES ($1, $2, $3, $4)"#,
+    )
+    .bind(config.sensor_id())
+    .bind(config.domain())
+    .bind(config.agent_impl())
+    .bind(config.state_json())
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+// READ agent_config
+pub async fn get_agent_config(
+    conn: &sqlx::PgPool,
+    sensor_dao: &SensorDao,
+) -> Result<Vec<AgentConfigDao>, DBError> {
+    Ok(sqlx::query_as::<_, AgentConfigDao>(
+        "SELECT * FROM agent_configs WHERE sensor_id = $1 ORDER BY domain ASC",
+    )
+    .bind(sensor_dao.id())
+    .fetch_all(conn)
+    .await?)
+}
+
+// UPDATE agent_config
+pub async fn update_agent_config(
+    conn: &sqlx::PgPool,
+    update: &AgentConfigDao,
+) -> Result<(), DBError> {
+    sqlx::query("UPDATE agent_configs SET state_json = $1 WHERE sensor_id = $2 AND domain = $3")
+        .bind(update.state_json())
+        .bind(update.sensor_id())
+        .bind(update.domain())
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// DELETE agent_configs
+pub async fn delete_sensor_agent(
+    conn: &sqlx::PgPool,
     remove_id: i32,
     agent: Agent,
 ) -> Result<(), DBError> {
-    use crate::schema::agent_configs::dsl::*;
-    diesel::delete(
-        agent_configs
-            .filter(sensor_id.eq(remove_id))
-            .filter(agent_impl.eq(agent.agent_name()))
-            .filter(domain.eq(agent.domain())),
+    sqlx::query(
+        "DELETE FROM agent_configs WHERE sensor_id = $1 AND agent_impl = $2 AND domain = $3",
     )
-    .execute(conn)?;
-
+    .bind(remove_id)
+    .bind(agent.agent_name())
+    .bind(agent.domain())
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
-pub fn delete_sensor(conn: &PgConnection, remove_id: i32) -> Result<(), DBError> {
-    // Delete config
-    {
-        use crate::schema::agent_configs::dsl::*;
-        diesel::delete(agent_configs.filter(sensor_id.eq(remove_id))).execute(conn)?;
-    }
-    // Delete sensor
-    use crate::schema::sensors::dsl::*;
-    let count = diesel::delete(sensors.filter(id.eq(remove_id))).execute(conn)?;
-    if count == 0 {
-        Err(DBError::SensorNotFound(remove_id))
-    } else {
-        Ok(())
-    }
-}
-
-pub fn insert_sensor_data(
-    conn: &PgConnection,
+pub async fn insert_sensor_data(
+    conn: &sqlx::PgPool,
     sensor_id: i32,
     dto: ripe_core::SensorDataMessage,
 ) -> Result<(), DBError> {
-    let insert = NewSensorData::new(sensor_id, dto);
-    diesel::insert_into(sensor_data::table)
-        .values(insert)
-        .execute(conn)?;
+    sqlx::query(
+        r#"INSERT INTO sensor_data
+                (sensor_id, timestamp, battery, moisture, temperature, carbon, conductivity, light)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+    )
+    .bind(sensor_id)
+    .bind(dto.timestamp)
+    .bind(dto.battery)
+    .bind(dto.moisture)
+    .bind(dto.temperature)
+    .bind(dto.carbon)
+    .bind(dto.conductivity)
+    .bind(dto.light)
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
-pub fn get_latest_sensor_data(
-    conn: &PgConnection,
+pub async fn get_latest_sensor_data(
+    conn: &sqlx::PgPool,
     search_sensor_id: i32,
     search_key_b64: &String,
 ) -> Result<Option<SensorDataDao>, DBError> {
-    use crate::schema::sensor_data::dsl::*;
-    use crate::schema::sensors::dsl::key_b64 as dsl_key_b64;
-    let mut result: Vec<(SensorDataDao, SensorDao)> = sensor_data
-        .inner_join(sensors::table)
-        .filter(sensor_id.eq(search_sensor_id))
-        .filter(dsl_key_b64.eq(search_key_b64))
-        .order(timestamp.desc())
-        .limit(1)
-        .load(conn)?;
-
-    if let Some((data, _)) = result.pop() {
-        Ok(Some(data.into()))
-    } else {
-        Ok(None)
-    }
+    Ok(sqlx::query_as::<_, SensorDataDao>(
+        r#"SELECT * FROM sensor_data 
+                    JOIN sensors ON (sensor_data.sensor_id = sensors.id)
+                WHERE sensors.id = $1 AND sensors.key_b64 = $2"#,
+    )
+    .bind(search_sensor_id)
+    .bind(search_key_b64)
+    .fetch_optional(conn)
+    .await?)
 }
 
-pub fn get_latest_sensor_data_unchecked(
-    conn: &PgConnection,
+pub async fn get_latest_sensor_data_unchecked(
+    conn: &sqlx::PgPool,
     search_sensor_id: i32,
 ) -> Result<Option<SensorDataDao>, DBError> {
-    use crate::schema::sensor_data::dsl::*;
-    let mut result: Vec<(SensorDataDao, SensorDao)> = sensor_data
-        .inner_join(sensors::table)
-        .filter(sensor_id.eq(search_sensor_id))
-        .order(timestamp.desc())
-        .limit(1)
-        .load(conn)?;
-
-    if let Some((data, _)) = result.pop() {
-        Ok(Some(data.into()))
-    } else {
-        Ok(None)
-    }
+    Ok(sqlx::query_as::<_, SensorDataDao>(
+        r#"SELECT * FROM sensor_data 
+                    JOIN sensors ON (sensor_data.sensor_id = sensors.id)
+                WHERE sensors.id = $1"#,
+    )
+    .bind(search_sensor_id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 #[cfg(test)]
 mod test {
+    use ripe_core::SensorDataMessage;
+
     use super::*;
 
-    #[test]
-    fn test_db_connection() {
-        establish_db_connection();
+    #[tokio::test]
+    async fn test_db_connection() {
+        establish_db_connection().await;
     }
 
-    #[test]
-    fn test_insert_remove_sensor() {
-        let conn = establish_db_connection().unwrap();
-        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
-        assert!(sensor.is_ok());
+    #[tokio::test]
+    async fn crud_sensors() {
+        let conn = establish_db_connection().await.unwrap();
 
-        let deleted = delete_sensor(&conn, sensor.unwrap().id());
-        assert!(deleted.is_ok());
+        // create
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+            .await
+            .unwrap();
+
+        // read
+        assert_ne!(get_sensors(&conn).await.unwrap().is_empty(), true);
+
+        // delete
+        delete_sensor(&conn, sensor.id()).await.unwrap();
     }
 
-    #[test]
-    fn test_insert_get_delete_sensor() {
-        let conn = establish_db_connection().unwrap();
-        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None);
-        assert!(sensor.is_ok());
+    #[tokio::test]
+    async fn crud_agent_configs() {
+        let conn = establish_db_connection().await.unwrap();
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+            .await
+            .unwrap();
+        let mut dao = AgentConfigDao {
+            sensor_id: sensor.id(),
+            state_json: "{}".to_owned(),
+            domain: "test_domain".to_owned(),
+            agent_impl: "agent_impl".to_owned(),
+        };
 
-        assert_ne!(get_sensors(&conn).is_empty(), true);
+        // create
+        create_agent_config(&conn, &dao).await.unwrap();
 
-        let deleted = delete_sensor(&conn, sensor.unwrap().id());
-        assert!(deleted.is_ok());
+        // read
+        let mut actual_config = get_agent_config(&conn, &sensor)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(dao.sensor_id(), actual_config.sensor_id());
+        assert_eq!(dao.domain(), actual_config.domain());
+        assert_eq!(dao.state_json(), actual_config.state_json());
+        assert_eq!(dao.agent_impl(), actual_config.agent_impl());
+
+        // update
+        dao.state_json = "{\"key\": true}".to_owned();
+        update_agent_config(&conn, &dao).await.unwrap();
+        actual_config = get_agent_config(&conn, &sensor)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(dao.sensor_id(), actual_config.sensor_id());
+        assert_eq!(dao.domain(), actual_config.domain());
+        assert_eq!(dao.state_json(), actual_config.state_json());
+        assert_eq!(dao.agent_impl(), actual_config.agent_impl());
+
+        // delete
+        delete_sensor(&conn, sensor.id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn crud_sensor_data() {
+        let conn = establish_db_connection().await.unwrap();
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+            .await
+            .unwrap();
+
+        // create
+        insert_sensor_data(
+            &conn,
+            sensor.id(),
+            SensorDataMessage {
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        // read
+        get_latest_sensor_data(&conn, sensor.id(), sensor.key_b64())
+            .await
+            .unwrap()
+            .unwrap();
+        get_latest_sensor_data_unchecked(&conn, sensor.id())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

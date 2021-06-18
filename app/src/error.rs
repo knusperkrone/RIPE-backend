@@ -3,7 +3,7 @@ use std::{error, fmt};
 
 #[derive(Debug)]
 pub enum DBError {
-    DieselError(diesel::result::Error),
+    SQLError(sqlx::Error),
     SensorNotFound(i32),
 }
 
@@ -11,16 +11,16 @@ impl fmt::Display for DBError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             DBError::SensorNotFound(id) => write!(f, "Did not found sensor: {}", id),
-            DBError::DieselError(e) => e.fmt(f),
+            DBError::SQLError(e) => e.fmt(f),
         }
     }
 }
 
 impl error::Error for DBError {}
 
-impl From<diesel::result::Error> for DBError {
-    fn from(err: diesel::result::Error) -> Self {
-        DBError::DieselError(err)
+impl From<sqlx::Error> for DBError {
+    fn from(err: sqlx::Error) -> Self {
+        DBError::SQLError(err)
     }
 }
 
@@ -152,6 +152,7 @@ pub enum ObserverError {
     User(Box<dyn error::Error>),
     Internal(Box<dyn error::Error>),
 }
+unsafe impl Send for ObserverError {}
 
 impl fmt::Display for ObserverError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -168,7 +169,7 @@ impl From<DBError> for ObserverError {
     fn from(err: DBError) -> Self {
         match err {
             DBError::SensorNotFound(_) => ObserverError::User(Box::from(err)),
-            DBError::DieselError(_) => ObserverError::Internal(Box::from(err)),
+            DBError::SQLError(_) => ObserverError::Internal(Box::from(err)),
         }
     }
 }

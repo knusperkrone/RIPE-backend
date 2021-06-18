@@ -3,17 +3,17 @@ use std::sync::Arc;
 use super::*;
 use crate::{config::CONFIG, models::establish_db_connection};
 
-fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
+async fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
     let plugin_path = CONFIG.plugin_dir();
     let plugin_dir = std::path::Path::new(&plugin_path);
-    let db_conn = establish_db_connection().unwrap();
+    let db_conn = establish_db_connection().await.unwrap();
     ConcurrentSensorObserver::new(plugin_dir, db_conn)
 }
 
 #[tokio::test]
 async fn test_insert_sensor() {
     // prepare
-    let observer = build_mocked_observer();
+    let observer = build_mocked_observer().await;
 
     // Execute
     let mut results = Vec::<i32>::new();
@@ -31,7 +31,7 @@ async fn test_insert_sensor() {
 #[tokio::test]
 async fn test_unregister_sensor() {
     // prepare
-    let observer = build_mocked_observer();
+    let observer = build_mocked_observer().await;
     let cred = observer.register_sensor(None).await.unwrap();
 
     // execute
@@ -44,7 +44,7 @@ async fn test_unregister_sensor() {
 #[tokio::test]
 async fn test_invalid_remove_sensor() {
     // prepare
-    let observer = build_mocked_observer();
+    let observer = build_mocked_observer().await;
     let remove_id = -1;
     let remove_key = "asdase".to_owned();
 
@@ -58,7 +58,7 @@ async fn test_invalid_remove_sensor() {
 #[tokio::test]
 async fn test_sensor_status() {
     // prepare
-    let observer = build_mocked_observer();
+    let observer = build_mocked_observer().await;
     let sensor_res = observer.register_sensor(None).await.unwrap();
 
     // execute
@@ -73,7 +73,7 @@ async fn test_register_agent() {
     // prepare
     let domain = "TEST".to_owned();
     let agent = "MockAgent".to_owned();
-    let observer = build_mocked_observer();
+    let observer = build_mocked_observer().await;
     let sensor_res = observer.register_sensor(None).await.unwrap();
 
     // execute
@@ -91,7 +91,7 @@ async fn test_unregister_agent() {
     // prepare
     let domain = "TEST".to_owned();
     let agent = "MockAgent".to_owned();
-    let observer = build_mocked_observer();
+    let observer = build_mocked_observer().await;
     let sensor_res = observer.register_sensor(None).await.unwrap();
     observer
         .register_agent(

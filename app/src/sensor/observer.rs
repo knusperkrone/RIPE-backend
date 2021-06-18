@@ -12,10 +12,10 @@ use crate::{
     rest::AgentDto,
 };
 use chrono::Utc;
-use diesel::pg::PgConnection;
 use notify::{watcher, Watcher};
 use parking_lot::{Mutex, RawMutex, RwLock};
 use ripe_core::{AgentConfigType, SensorDataMessage};
+use sqlx::PgPool;
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
@@ -26,11 +26,11 @@ pub struct ConcurrentSensorObserver {
     iac_receiver: Mutex<UnboundedReceiver<SensorMQTTCommand>>,
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorDataMessage)>>,
     mqtt_client: MqttSensorClient,
-    db_conn: Arc<Mutex<PgConnection>>,
+    db_conn: Arc<PgPool>,
 }
 
 impl ConcurrentSensorObserver {
-    pub fn new(plugin_dir: &Path, db_conn: PgConnection) -> Arc<Self> {
+    pub fn new(plugin_dir: &Path, db_conn: PgPool) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
         let agent_factory = AgentFactory::new(iac_sender);
@@ -44,7 +44,7 @@ impl ConcurrentSensorObserver {
             agent_factory: RwLock::new(agent_factory),
             iac_receiver: Mutex::new(iac_receiver),
             data_receveiver: Mutex::new(data_receiver),
-            db_conn: Arc::new(Mutex::new(db_conn)),
+            db_conn: Arc::new(db_conn),
         };
         Arc::new(observer)
     }
@@ -52,7 +52,10 @@ impl ConcurrentSensorObserver {
     pub async fn init(&self) {
         self.load_plugins();
         self.mqtt_client.connect().await;
-        self.populate_agents().await;
+        if let Err(e) = self.populate_agents().await {
+            crit!(APP_LOGGING, "{}", e);
+            panic!();
+        }
     }
 
     pub fn load_plugins(&self) {
@@ -81,7 +84,7 @@ impl ConcurrentSensorObserver {
                     warn!(APP_LOGGING, "Sensor not found: {}", sensor_id);
                     break;
                 }
-                if let Err(e) = models::insert_sensor_data(&self.db_conn.lock(), sensor_id, data) {
+                if let Err(e) = models::insert_sensor_data(&self.db_conn, sensor_id, data).await {
                     error!(APP_LOGGING, "Failed persiting sensor data: {}", e);
                 }
             }
@@ -129,7 +132,7 @@ impl ConcurrentSensorObserver {
 
         info!(APP_LOGGING, "Start watching plugin dir: {:?}", plugin_dir);
         loop {
-            if let Ok(_) = rx.try_recv() {
+            if rx.try_recv().is_ok() {
                 let mut agent_factory = self.agent_factory.write();
                 let lib_names = agent_factory.load_new_plugins(plugin_dir);
                 if !lib_names.is_empty() {
@@ -137,13 +140,14 @@ impl ConcurrentSensorObserver {
 
                     let now = Utc::now();
                     let container = self.container.write();
-                    let conn = self.db_conn.lock();
+
                     for sensor_mtx in container.sensors() {
                         let mut sensor = sensor_mtx.lock();
                         sensor.update(&lib_names, &agent_factory);
 
                         if let Ok(Some(data)) =
-                            models::get_latest_sensor_data_unchecked(&conn, sensor.id())
+                            models::get_latest_sensor_data_unchecked(&self.db_conn, sensor.id())
+                                .await
                         {
                             let casted: SensorDataMessage = data.into();
                             if (casted.timestamp - now) < chrono::Duration::minutes(60) {
@@ -165,8 +169,7 @@ impl ConcurrentSensorObserver {
 
 impl ConcurrentSensorObserver {
     pub async fn check_db(&self) -> String {
-        let db_conn = self.db_conn.lock();
-        if let Err(err) = models::check_schema(&db_conn) {
+        if let Err(err) = models::check_schema(&self.db_conn).await {
             format!("{}", err)
         } else {
             "healthy".to_owned()
@@ -188,8 +191,7 @@ impl ConcurrentSensorObserver {
     ) -> Result<SensorCredentialDto, ObserverError> {
         // Create sensor dao
         let key = self.generate_sensor_key();
-        let conn = self.db_conn.lock();
-        let sensor_dao = models::create_new_sensor(&conn, key.clone(), &name)?;
+        let sensor_dao = models::create_new_sensor(&self.db_conn, key.clone(), &name).await?;
         let dao_id = sensor_dao.id();
 
         // Create agents and persist
@@ -200,7 +202,7 @@ impl ConcurrentSensorObserver {
                 Ok(SensorCredentialDto { id, key, broker })
             }
             Err(err) => {
-                models::delete_sensor(&conn, dao_id)?; // Fallback delete
+                models::delete_sensor(&self.db_conn, dao_id).await?; // Fallback delete
                 Err(ObserverError::from(err))
             }
         }
@@ -211,7 +213,7 @@ impl ConcurrentSensorObserver {
         sensor_id: i32,
         key_b64: String,
     ) -> Result<SensorCredentialDto, ObserverError> {
-        models::delete_sensor(&self.db_conn.lock(), sensor_id)?;
+        models::delete_sensor(&self.db_conn, sensor_id).await?;
 
         let sensor_mtx = self.container.write().remove_sensor(sensor_id, &key_b64)?;
         let sensor = sensor_mtx.lock();
@@ -237,8 +239,7 @@ impl ConcurrentSensorObserver {
             .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
 
         // Get sensor data
-        let data = match models::get_latest_sensor_data(&self.db_conn.lock(), sensor_id, &key_b64)?
-        {
+        let data = match models::get_latest_sensor_data(&self.db_conn, sensor_id, &key_b64).await? {
             Some(dao) => dao.into(),
             None => SensorDataMessage::default(),
         };
@@ -285,7 +286,7 @@ impl ConcurrentSensorObserver {
 
         let factory = self.agent_factory.read();
         let agent = factory.create_agent(sensor_id, &agent_name, &domain, None)?;
-        models::create_sensor_agent(&self.db_conn.lock(), agent.deserialize())?;
+        models::create_agent_config(&self.db_conn, &agent.deserialize()).await?;
 
         sensor.add_agent(agent);
 
@@ -311,7 +312,7 @@ impl ConcurrentSensorObserver {
         let agent = sensor
             .remove_agent(&agent_name, &domain)
             .ok_or(DBError::SensorNotFound(sensor_id))?;
-        models::delete_sensor_agent(&self.db_conn.lock(), sensor.id(), agent)?;
+        models::delete_sensor_agent(&self.db_conn, sensor.id(), agent).await?;
 
         info!(
             APP_LOGGING,
@@ -368,7 +369,7 @@ impl ConcurrentSensorObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         let agent = sensor.set_agent_config(&domain, config)?;
-        models::update_sensor_agent(&self.db_conn.lock(), &agent.deserialize())?;
+        models::update_agent_config(&self.db_conn, &agent.deserialize()).await?;
         Ok(AgentDto {
             domain,
             agent_name: agent.agent_name().clone(),
@@ -379,14 +380,17 @@ impl ConcurrentSensorObserver {
      * Helpers
      */
 
-    async fn populate_agents(&self) {
-        let conn = self.db_conn.lock();
-        let sensor_daos = models::get_sensors(&conn).into_iter().map(|sensor_dao| {
-            let configs = models::get_agent_config(&conn, &sensor_dao);
-            (sensor_dao, configs)
-        });
+    async fn populate_agents(&self) -> Result<(), DBError> {
+        // TODO: Stream
+        let mut sensor_daos = Vec::new();
+        for sensor_dao in models::get_sensors(&self.db_conn).await? {
+            let agent_configs = models::get_agent_config(&self.db_conn, &sensor_dao)
+                .await
+                .unwrap();
+            sensor_daos.push((sensor_dao, agent_configs));
+        }
 
-        let mut count = 0;
+        let mut count: usize = 0;
         let agent_factory = self.agent_factory.read();
         for (sensor_dao, agent_configs) in sensor_daos {
             let restore_result = self
@@ -401,6 +405,7 @@ impl ConcurrentSensorObserver {
             }
         }
         info!(APP_LOGGING, "Restored {} sensors", count);
+        Ok(())
     }
 
     async fn observe_sensor(

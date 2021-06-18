@@ -1,3 +1,5 @@
+-- Add migration script here
+-- Add migration script here
 CREATE TABLE sensors
 (
     id SERIAL PRIMARY KEY,
@@ -26,6 +28,3 @@ CREATE TABLE sensor_data
     conductivity INT,
     light INT
 );
-/*
-
-*/

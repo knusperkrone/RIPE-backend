@@ -211,17 +211,17 @@ mod test {
 
     use crate::{config::CONFIG, models::establish_db_connection};
 
-    fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
+    async fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
         let plugin_path = CONFIG.plugin_dir();
         let plugin_dir = std::path::Path::new(&plugin_path);
-        let db_conn = establish_db_connection().unwrap();
+        let db_conn = establish_db_connection().await.unwrap();
         ConcurrentSensorObserver::new(plugin_dir, db_conn)
     }
 
     #[tokio::test]
     async fn test_rest_agents() {
         // Prepare
-        let observer = build_mocked_observer();
+        let observer = build_mocked_observer().await;
         let routes = routes(&observer);
 
         // Execute
@@ -248,7 +248,7 @@ mod test {
     #[tokio::test]
     async fn test_rest_register_agent() {
         // Prepare
-        let observer = build_mocked_observer();
+        let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         let routes = routes(&observer).recover(handle_rejection);
 
@@ -273,7 +273,7 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer();
+        let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
             .register_agent(
@@ -304,7 +304,7 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer();
+        let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
             .register_agent(
@@ -338,7 +338,7 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer();
+        let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
             .register_agent(
@@ -371,7 +371,7 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer();
+        let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
             .register_agent(

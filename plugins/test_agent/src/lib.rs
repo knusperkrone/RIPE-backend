@@ -87,12 +87,12 @@ impl FutBuilder for TestFutBuilder {
             let oneshot_sender = self.sender.clone();
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
-                info!(logger, "TASK IS SLEEPING");
+                debug!(logger, "TASK IS SLEEPING");
                 ripe_core::sleep(&runtime, std::time::Duration::from_secs(5)).await;
-                info!(logger, "TASK IS AWAKE");
+                debug!(logger, "TASK IS AWAKE");
 
                 if let Ok(_) = oneshot_sender.clone().try_send(AgentMessage::Command(1)) {
-                    info!(logger, "SENT MESSAGE");
+                    debug!(logger, "SENT MESSAGE");
                 } else {
                     error!(logger, "FAILED SENDING 1");
                 }
@@ -104,7 +104,7 @@ impl FutBuilder for TestFutBuilder {
             std::boxed::Box::pin(async move {
                 let _guard = runtime.enter();
                 ripe_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
-                info!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
+                debug!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
                 i == 0

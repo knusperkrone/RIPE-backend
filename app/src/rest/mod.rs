@@ -2,6 +2,8 @@ use crate::config::CONFIG;
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::ConcurrentSensorObserver;
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::{convert::Infallible, sync::Arc};
 use warp::{hyper::StatusCode, Filter};
 
@@ -57,7 +59,8 @@ pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) {
         APP_LOGGING,
         "Starting webserver at: 0.0.0.0:{}", server_port
     );
+    let addr = IpAddr::from_str("::0").unwrap();
     warp::serve(sensor_routes.or(metric_routes).or(agent_routes))
-        .run(([0, 0, 0, 0], server_port.parse().unwrap()))
+        .run((addr, server_port.parse().unwrap()))
         .await;
 }

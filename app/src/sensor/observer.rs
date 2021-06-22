@@ -390,6 +390,7 @@ impl ConcurrentSensorObserver {
             sensor_daos.push((sensor_dao, agent_configs));
         }
 
+        let start = Utc::now();
         let mut count: usize = 0;
         let agent_factory = self.agent_factory.read();
         for (sensor_dao, agent_configs) in sensor_daos {
@@ -404,7 +405,8 @@ impl ConcurrentSensorObserver {
                 Err(msg) => error!(APP_LOGGING, "{}", msg),
             }
         }
-        info!(APP_LOGGING, "Restored {} sensors", count);
+        let duration = Utc::now() - start;
+        info!(APP_LOGGING, "Restored {} sensors in {} ms", count, duration.num_milliseconds());
         Ok(())
     }
 

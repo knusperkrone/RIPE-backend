@@ -12,6 +12,7 @@ use crate::{
     rest::AgentDto,
 };
 use chrono::Utc;
+use chrono_tz::Tz;
 use notify::{watcher, Watcher};
 use parking_lot::{Mutex, RawMutex, RwLock};
 use ripe_core::{AgentConfigType, SensorDataMessage};
@@ -231,6 +232,7 @@ impl ConcurrentSensorObserver {
         &self,
         sensor_id: i32,
         key_b64: String,
+        timezone: Tz,
     ) -> Result<SensorStatusDto, ObserverError> {
         // Cummulate and render sensors
         let container = self.container.read();
@@ -250,7 +252,7 @@ impl ConcurrentSensorObserver {
             .map(|a| AgentStatusDto {
                 domain: a.domain().clone(),
                 agent_name: a.agent_name().clone(),
-                ui: a.render_ui(&data),
+                ui: a.render_ui(&data, timezone),
             })
             .collect();
 
@@ -345,6 +347,7 @@ impl ConcurrentSensorObserver {
         sensor_id: i32,
         key_b64: String,
         domain: String,
+        timezone: Tz,
     ) -> Result<HashMap<String, (String, AgentConfigType)>, ObserverError> {
         let container = self.container.read();
         let sensor = container
@@ -352,7 +355,7 @@ impl ConcurrentSensorObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         Ok(sensor
-            .agent_config(&domain)
+            .agent_config(&domain, timezone)
             .ok_or(DBError::SensorNotFound(sensor_id))?)
     }
 
@@ -362,13 +365,14 @@ impl ConcurrentSensorObserver {
         key_b64: String,
         domain: String,
         config: HashMap<String, AgentConfigType>,
+        timezone: Tz,
     ) -> Result<AgentDto, ObserverError> {
         let container = self.container.write();
         let mut sensor = container
             .sensor(sensor_id, &key_b64)
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
-        let agent = sensor.set_agent_config(&domain, config)?;
+        let agent = sensor.set_agent_config(&domain, config, timezone)?;
         models::update_agent_config(&self.db_conn, &agent.deserialize()).await?;
         Ok(AgentDto {
             domain,

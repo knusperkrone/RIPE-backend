@@ -19,7 +19,7 @@ static MIGRATOR: Migrator = sqlx::migrate!(); // defaults to "./migrations"
 async fn connect_db() -> sqlx::PgPool {
     for i in 0..15 {
         if let Ok(Some(db_conn)) = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(250),
             models::establish_db_connection(),
         )
         .await
@@ -62,8 +62,8 @@ pub async fn main() -> std::io::Result<()> {
             .build()
             .unwrap();
         // Await server requests in multithread runtime
-        let _ = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| std::process::exit(-1)));
+        //let _ = std::panic::take_hook();
+        //std::panic::set_hook(Box::new(|_| std::process::exit(-1)));
         runtime.block_on(rest::dispatch_server_daemon(sensor_arc));
     });
     // Single-thread runtime for local plugin changes and iac events

@@ -2,6 +2,7 @@
 extern crate slog;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono_tz::Tz;
 use crossbeam::atomic::AtomicCell;
 use ripe_core::*;
 use serde::{Deserialize, Serialize};
@@ -145,7 +146,7 @@ impl AgentTrait for ThresholdAgent {
         }
     }
 
-    fn render_ui(&self, _data: &SensorDataMessage) -> AgentUI {
+    fn render_ui(&self, _data: &SensorDataMessage, _timezone: Tz) -> AgentUI {
         let rendered: String;
         if let Some(last_action) = self.last_action {
             let delta: Duration = Utc::now() - last_action;
@@ -159,7 +160,7 @@ impl AgentTrait for ThresholdAgent {
                 );
             }
         } else {
-            rendered = "Noch keine Aktion.".to_owned();
+            rendered = "Noch keine Aktion".to_owned();
         }
 
         AgentUI {
@@ -189,7 +190,7 @@ impl AgentTrait for ThresholdAgent {
         serde_json::to_string(self).unwrap()
     }
 
-    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
+    fn config(&self, _timezone: Tz) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
         config.insert(
             "01_active".to_owned(),
@@ -224,7 +225,7 @@ impl AgentTrait for ThresholdAgent {
         config
     }
 
-    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
+    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>, _timezone: Tz) -> bool {
         let min_threshold;
         let action_duration_ms;
         let action_cooldown_ms;

@@ -1,5 +1,6 @@
 use super::{stubs, WasmerMallocPtr};
 use crate::{error::WasmPluginError, logging::APP_LOGGING};
+use chrono_tz::Tz;
 use ripe_core::{AgentTrait, AgentUIDecorator};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -96,7 +97,7 @@ impl AgentTrait for WasmAgent {
             .map_err(|e| self.inidicate_error(&"handle_cmd", e));
     }
 
-    fn render_ui(&self, data: &ripe_core::SensorDataMessage) -> ripe_core::AgentUI {
+    fn render_ui(&self, data: &ripe_core::SensorDataMessage, _timezone: Tz) -> ripe_core::AgentUI {
         if self.has_error() {
             return ripe_core::AgentUI {
                 decorator: AgentUIDecorator::Text,
@@ -165,7 +166,7 @@ impl AgentTrait for WasmAgent {
         "{}".to_owned()
     }
 
-    fn config(&self) -> HashMap<String, (String, ripe_core::AgentConfigType)> {
+    fn config(&self, _timezone: Tz) -> HashMap<String, (String, ripe_core::AgentConfigType)> {
         type Map = HashMap<String, (String, ripe_core::AgentConfigType)>;
         if !self.has_error() {
             if let Ok(json_ptr) = self.wasm_config.call() {
@@ -181,7 +182,7 @@ impl AgentTrait for WasmAgent {
         HashMap::new()
     }
 
-    fn set_config(&mut self, values: &HashMap<String, ripe_core::AgentConfigType>) -> bool {
+    fn set_config(&mut self, values: &HashMap<String, ripe_core::AgentConfigType>, _timezone: Tz) -> bool {
         if self.has_error() {
             return false;
         }

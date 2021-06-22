@@ -1,7 +1,8 @@
 #[macro_use]
 extern crate slog;
 
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::{DateTime, Duration, Offset, Timelike, Utc};
+use chrono_tz::Tz;
 use ripe_core::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -57,6 +58,44 @@ pub struct TimeAgent {
     inner: Arc<TimeAgentInner>,
 }
 
+impl TimeAgent {
+    fn ms_add_offset(&self, ms: u32, tz: Tz) -> u32 {
+        let offset_ms = Utc::now()
+            .with_timezone(&tz)
+            .offset()
+            .fix()
+            .utc_minus_local()
+            * 1000;
+
+        let added = ms as i32 - offset_ms;
+        if added < 0 {
+            (DAY_MS as i32 + added) as u32
+        } else if added > DAY_MS as i32 {
+            (added - DAY_MS as i32) as u32
+        } else {
+            added as u32
+        }
+    }
+
+    fn ms_clear_offset(&self, ms: u32, tz: Tz) -> u32 {
+        let offset_ms = Utc::now()
+            .with_timezone(&tz)
+            .offset()
+            .fix()
+            .utc_minus_local()
+            * 1000;
+
+        let added = ms as i32 + offset_ms;
+        if added < 0 {
+            (DAY_MS as i32 + added) as u32
+        } else if added > DAY_MS as i32 {
+            (added - DAY_MS as i32) as u32
+        } else {
+            added as u32
+        }
+    }
+}
+
 impl AgentTrait for TimeAgent {
     fn handle_data(&mut self, _data: &SensorDataMessage) {
         // no-op
@@ -79,14 +118,16 @@ impl AgentTrait for TimeAgent {
         }
     }
 
-    fn render_ui(&self, _: &SensorDataMessage) -> AgentUI {
+    fn render_ui(&self, _: &SensorDataMessage, timezone: Tz) -> AgentUI {
+        let start_time_ms = self.ms_add_offset(self.inner.start_time_ms(), timezone);
+        let end_time_ms = self.ms_add_offset(self.inner.end_time_ms(), timezone);
         AgentUI {
             decorator: AgentUIDecorator::TimePane(60),
             state: self.state(),
             rendered: format!(
-                "Von {} - {} UTC",
-                ms_to_hr(self.inner.start_time_ms()),
-                ms_to_hr(self.inner.end_time_ms())
+                "Von {} - {}",
+                ms_to_hr(start_time_ms as u32),
+                ms_to_hr(end_time_ms as u32),
             ),
         }
     }
@@ -103,7 +144,7 @@ impl AgentTrait for TimeAgent {
         *self.inner.last_state.read().unwrap()
     }
 
-    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
+    fn config(&self, timezone: Tz) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
         config.insert(
             "01_active".to_owned(),
@@ -115,8 +156,10 @@ impl AgentTrait for TimeAgent {
         config.insert(
             "02_start_time".to_owned(),
             (
-                "Startuhrzeit  ".to_owned(),
-                AgentConfigType::DayTime(self.inner.start_time_ms() as u64),
+                format!("Startuhrzeit ({})", timezone),
+                AgentConfigType::DayTime(
+                    self.ms_add_offset(self.inner.start_time_ms(), timezone) as u64
+                ),
             ),
         );
         config.insert(
@@ -134,7 +177,7 @@ impl AgentTrait for TimeAgent {
         config
     }
 
-    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
+    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>, timezone: Tz) -> bool {
         let active;
         let time;
         let duration;
@@ -145,7 +188,7 @@ impl AgentTrait for TimeAgent {
             return false;
         }
         if let AgentConfigType::DayTime(val) = &values["02_start_time"] {
-            time = *val;
+            time = self.ms_clear_offset(*val as u32, timezone);
         } else {
             error!(self.inner.logger, "No start_time");
             return false;
@@ -303,11 +346,7 @@ impl TimeAgentInner {
 
         if last_cmd != curr_cmd {
             *last_cmd_guard = curr_cmd;
-            send_payload(
-                &self.logger,
-                &self.sender,
-                AgentMessage::Command(curr_cmd),
-            );    
+            send_payload(&self.logger, &self.sender, AgentMessage::Command(curr_cmd));
         }
     }
 

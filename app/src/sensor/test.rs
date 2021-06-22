@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use chrono_tz::UTC;
+
 use super::*;
 use crate::{config::CONFIG, models::establish_db_connection};
 
@@ -62,7 +64,7 @@ async fn test_sensor_status() {
     let sensor_res = observer.register_sensor(None).await.unwrap();
 
     // execute
-    let res = observer.sensor_status(sensor_res.id, sensor_res.key).await;
+    let res = observer.sensor_status(sensor_res.id, sensor_res.key, UTC).await;
 
     // validate
     assert!(res.is_ok());

@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 ripe_core = { path = "../../core" }
 chrono = "*"
+chrono-tz = "*"
 serde= "*"
 slog = "*"
 tokio = "*"

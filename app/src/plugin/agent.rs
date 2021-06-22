@@ -3,6 +3,7 @@ use super::logging::PLUGIN_LOGGING;
 use super::AgentLib;
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
+use chrono_tz::Tz;
 use parking_lot::Mutex;
 use ripe_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
@@ -139,12 +140,12 @@ impl Agent {
         self.agent_proxy.cmd()
     }
 
-    pub fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
-        self.agent_proxy.render_ui(data)
+    pub fn render_ui(&self, data: &SensorDataMessage, timezone: Tz) -> AgentUI {
+        self.agent_proxy.render_ui(data, timezone)
     }
 
-    pub fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
-        let mut config = self.agent_proxy.config();
+    pub fn config(&self, timezone: Tz) -> HashMap<String, (String, AgentConfigType)> {
+        let mut config = self.agent_proxy.config(timezone);
         let mut transformed = HashMap::with_capacity(config.len());
         for (k, (v0, v1)) in config.drain() {
             transformed.insert(k.to_owned(), (v0.to_owned(), v1));
@@ -152,8 +153,8 @@ impl Agent {
         transformed
     }
 
-    pub fn set_config(&mut self, config: &HashMap<String, AgentConfigType>) -> bool {
-        self.agent_proxy.set_config(config)
+    pub fn set_config(&mut self, config: &HashMap<String, AgentConfigType>, timezone: Tz) -> bool {
+        self.agent_proxy.set_config(config, timezone)
     }
 
     pub fn deserialize(&self) -> AgentConfigDao {

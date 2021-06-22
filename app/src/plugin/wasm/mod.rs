@@ -159,11 +159,11 @@ impl WasmAgentFactory {
 
     fn test_agent_contract(&self, mut agent: WasmAgent) -> bool {
         agent.cmd();
-        agent.config();
+        agent.config(chrono_tz::UTC);
         agent.deserialize();
         agent.handle_cmd(0);
         agent.handle_data(&SensorDataMessage::default());
-        agent.render_ui(&SensorDataMessage::default());
+        agent.render_ui(&SensorDataMessage::default(), chrono_tz::UTC);
         agent.state();
 
         !agent.has_error()

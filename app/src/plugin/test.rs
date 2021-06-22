@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::Duration;
+use chrono_tz::Tz;
 use ripe_core::*;
 
 use super::*;
@@ -45,19 +46,22 @@ impl AgentTrait for MockAgent {
         AgentState::Ready
     }
 
-    fn render_ui(&self, data: &SensorDataMessage) -> AgentUI {
+    fn render_ui(&self, data: &SensorDataMessage, timezone: Tz) -> AgentUI {
         AgentUI {
             decorator: AgentUIDecorator::Slider(0.0, 1.0, 0.5),
-            rendered: format!("Last tested at {}", data.timestamp),
+            rendered: format!(
+                "Last tested at {} with timezone {}",
+                data.timestamp, timezone
+            ),
             state: AgentState::default(),
         }
     }
 
-    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
+    fn config(&self, _timezone: Tz) -> HashMap<String, (String, AgentConfigType)> {
         HashMap::new()
     }
 
-    fn set_config(&mut self, _: &HashMap<String, AgentConfigType>) -> bool {
+    fn set_config(&mut self, _: &HashMap<String, AgentConfigType>, _timezone: Tz) -> bool {
         true
     }
 }

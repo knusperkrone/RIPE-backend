@@ -1,5 +1,7 @@
 use super::build_response;
 use crate::sensor::ConcurrentSensorObserver;
+use chrono_tz::Tz;
+use chrono_tz::UTC;
 use std::sync::Arc;
 use warp::Filter;
 
@@ -127,18 +129,22 @@ fn on_agent_cmd(
 fn agent_config(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let opt_timezone = warp::header::optional::<String>("X-TZ");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
+        .and(opt_timezone)
         .and(warp::path!(
             "api" / "agent" / i32 / String / String / "config"
         ))
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
+             tz_opt: Option<String>,
              sensor_id: i32,
              key_b64: String,
              domain: String| async move {
-                let resp = observer.agent_config(sensor_id, key_b64, domain).await;
+                let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
+                let resp = observer.agent_config(sensor_id, key_b64, domain, tz).await;
                 build_response(resp)
             },
         )
@@ -153,21 +159,25 @@ fn agent_config(
 fn set_agent_config(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let opt_timezone = warp::header::optional::<String>("X-TZ");
     warp::any()
         .map(move || observer.clone())
+        .and(warp::post())
+        .and(opt_timezone)
         .and(warp::path!(
             "api" / "agent" / i32 / String / String / "config"
         ))
         .and(warp::body::json())
-        .and(warp::post())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
+             tz_opt: Option<String>,
              sensor_id: i32,
              key_b64: String,
              domain: String,
              body| async move {
+                let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp = observer
-                    .set_agent_config(sensor_id, key_b64, domain, body)
+                    .set_agent_config(sensor_id, key_b64, domain, body, tz)
                     .await;
                 build_response(resp)
             },

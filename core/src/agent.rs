@@ -63,7 +63,7 @@ pub trait AgentTrait: std::fmt::Debug + Send + Sync {
     fn handle_cmd(&mut self, payload: i64);
 
     // ui related
-    fn render_ui(&self, data: &SensorDataMessage) -> AgentUI;
+    fn render_ui(&self, data: &SensorDataMessage, timezone: chrono_tz::Tz) -> AgentUI;
 
     // framework logic
     fn state(&self) -> AgentState;
@@ -71,8 +71,12 @@ pub trait AgentTrait: std::fmt::Debug + Send + Sync {
     fn deserialize(&self) -> String;
 
     // user config
-    fn config(&self) -> HashMap<String, (String, AgentConfigType)>; // key, translation, ui
-    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool;
+    fn config(&self, timezone: chrono_tz::Tz) -> HashMap<String, (String, AgentConfigType)>; // key, translation, ui
+    fn set_config(
+        &mut self,
+        values: &HashMap<String, AgentConfigType>,
+        timezone: chrono_tz::Tz,
+    ) -> bool;
 }
 
 ///

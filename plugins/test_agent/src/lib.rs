@@ -7,6 +7,7 @@ use std::sync::{
 };
 use std::{collections::HashMap, pin::Pin};
 
+use chrono_tz::Tz;
 use ripe_core::*;
 use tokio::sync::mpsc::Sender;
 
@@ -126,10 +127,10 @@ impl AgentTrait for TestAgent {
         }
     }
 
-    fn render_ui(&self, _data: &SensorDataMessage) -> AgentUI {
+    fn render_ui(&self, _data: &SensorDataMessage, timezone: Tz) -> AgentUI {
         AgentUI {
             decorator: AgentUIDecorator::Slider(0.0, 1.0, self.val),
-            rendered: "Server rendered text".to_owned(),
+            rendered: format!("Server rendered text, timezone: {}", timezone),
             state: self.state(),
         }
     }
@@ -146,7 +147,7 @@ impl AgentTrait for TestAgent {
         CMD_INACTIVE
     }
 
-    fn config(&self) -> HashMap<String, (String, AgentConfigType)> {
+    fn config(&self, _timezone: Tz) -> HashMap<String, (String, AgentConfigType)> {
         let mut config = HashMap::new();
         config.insert(
             "01_active".to_owned(),
@@ -196,7 +197,7 @@ impl AgentTrait for TestAgent {
         config
     }
 
-    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>) -> bool {
+    fn set_config(&mut self, values: &HashMap<String, AgentConfigType>, _timezone: Tz) -> bool {
         let active;
         let daytime_ms;
         let time_slider_hour;

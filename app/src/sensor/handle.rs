@@ -5,6 +5,7 @@ use crate::{
     error::{DBError, ObserverError},
     plugin::AgentFactory,
 };
+use chrono_tz::Tz;
 use ripe_core::{error::AgentError, AgentConfigType, SensorDataMessage};
 use std::{collections::HashMap, vec::Vec};
 
@@ -135,10 +136,11 @@ impl SensorHandle {
     pub fn agent_config(
         &self,
         domain: &String,
+        timezone: Tz,
     ) -> Option<HashMap<String, (String, AgentConfigType)>> {
         for agent in self.agents.iter() {
             if agent.domain() == domain {
-                return Some(agent.config());
+                return Some(agent.config(timezone));
             }
         }
         None
@@ -148,10 +150,11 @@ impl SensorHandle {
         &mut self,
         domain: &String,
         config: HashMap<String, AgentConfigType>,
+        timezone: Tz,
     ) -> Result<&Agent, ObserverError> {
         for agent in self.agents.iter_mut() {
             if agent.domain() == domain {
-                if !agent.set_config(&config) {
+                if !agent.set_config(&config, timezone) {
                     return Err(AgentError::InvalidConfig(
                         serde_json::to_string(&config).unwrap_or("serde_error".to_owned()),
                     )

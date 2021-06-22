@@ -20,7 +20,7 @@ const VERSION_CODE: u32 = 2;
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
 /*
- * Implementatio
+ * Implementation
  */
 
 #[allow(improper_ctypes_definitions)]

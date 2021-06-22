@@ -153,7 +153,7 @@ impl AgentTrait for ThresholdAgent {
                 rendered = format!("Letzte Aktion vor {} Minuten", delta.num_minutes());
             } else {
                 rendered = format!(
-                    "Letzte Aktion vor {}.{} Stunden",
+                    "Letzte Aktion vor {}:{} Stunden",
                     delta.num_hours(),
                     (delta.num_minutes() - delta.num_hours() * 60)
                 );

@@ -55,18 +55,7 @@ pub async fn main() -> std::io::Result<()> {
     let plugin_loop =
         sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
 
-    // Multi-thread runtime for rest-requests
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        // Await server requests in multithread runtime
-        //let _ = std::panic::take_hook();
-        //std::panic::set_hook(Box::new(|_| std::process::exit(-1)));
-        runtime.block_on(rest::dispatch_server_daemon(sensor_arc));
-    });
     // Single-thread runtime for local plugin changes and iac events
-    let _ = tokio::join!(iac_loop, reveice_mqtt_loop, plugin_loop);
+    let _ = tokio::join!(rest::dispatch_server_daemon(sensor_arc), iac_loop, reveice_mqtt_loop, plugin_loop);
     Ok(())
 }

@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use ripe_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
+use std::sync::atomic::AtomicBool;
 use std::{
     collections::HashMap,
     string::String,
@@ -18,15 +19,13 @@ use std::{
 };
 use tokio::sync::mpsc::{Receiver, UnboundedSender};
 
-static TERMINATED: AtomicU32 = AtomicU32::new(0);
+static TERMINATED: AtomicBool = AtomicBool::new(false);
 static TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 pub fn register_sigint_handler() {
     // Set termination handler
     ctrlc::set_handler(|| {
-        let count = TERMINATED.fetch_add(1, Ordering::Relaxed);
-        if count == 1 {
-            info!(APP_LOGGING, "Force killing");
+        if TERMINATED.load(Ordering::Relaxed) {
             std::process::exit(0);
         }
 
@@ -34,6 +33,8 @@ pub fn register_sigint_handler() {
         if task_count == 0 {
             std::process::exit(0);
         }
+
+        TERMINATED.store(true, Ordering::Relaxed);
         info!(
             APP_LOGGING,
             "Waiting for {} agent tasks to finish..", task_count
@@ -232,7 +233,7 @@ impl Agent {
     }
 
     async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {
-        if TERMINATED.load(Ordering::Relaxed) != 0 {
+        if TERMINATED.load(Ordering::Relaxed) {
             info!(PLUGIN_LOGGING, "Task was declined as app recv SIGINT");
         } else if agent.task_handles.lock().len() > MAX_TASK_COUNT {
             info!(
@@ -263,7 +264,7 @@ impl Agent {
                         agent.sensor_id,
                         task_count
                     );
-                    if TERMINATED.load(Ordering::Relaxed) != 0 && task_count == 0 {
+                    if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
                         std::process::exit(0);
                     }
                 },
@@ -316,7 +317,7 @@ impl Agent {
                         let runtime = tokio::runtime::Handle::current();
                         let is_finished = interval_task.build_future(runtime).await;
                         let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-                        if task_count == 0 && TERMINATED.load(Ordering::Relaxed) != 0 {
+                        if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
                             std::process::exit(0);
                         }
 

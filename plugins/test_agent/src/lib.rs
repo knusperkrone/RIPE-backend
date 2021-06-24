@@ -116,7 +116,7 @@ impl FutBuilder for TestFutBuilder {
 
 impl AgentTrait for TestAgent {
     fn handle_data(&mut self, data: &SensorDataMessage) {
-        info!(self.logger, "Received data: {:?}", data);
+        debug!(self.logger, "Received data: {:?}", data);
     }
 
     fn handle_cmd(&mut self, payload: i64) {

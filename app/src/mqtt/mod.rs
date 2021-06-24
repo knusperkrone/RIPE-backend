@@ -71,7 +71,7 @@ impl MqttSensorClientInner {
         let connect_self = self.clone();
         connect_cli.set_message_callback(move |_cli, msg| {
             if let Some(msg) = msg {
-                debug!(APP_LOGGING, "Received topic: {}", msg.topic());
+                debug!(APP_LOGGING, "Received topic: {}, {:?}", msg.topic(), std::str::from_utf8(msg.payload()));
                 if let Err(e) = Self::on_sensor_message(&connect_self.sender, msg) {
                     error!(APP_LOGGING, "Received message threw error: {}", e);
                 }

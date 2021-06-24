@@ -59,7 +59,7 @@ pub struct ThresholdAgent {
     #[serde(skip)]
     task_cell: RwLock<ThresholdTask>,
     state: AgentState,
-    max_threshold: u32,
+    min_threshold: u32,
     action_duration_ms: i64,
     action_cooldown_ms: i64,
     action_start: Option<DateTime<Utc>>,
@@ -69,7 +69,7 @@ pub struct ThresholdAgent {
 impl PartialEq for ThresholdAgent {
     fn eq(&self, other: &Self) -> bool {
         self.state == other.state
-            && self.max_threshold == other.max_threshold
+            && self.min_threshold == other.min_threshold
             && self.action_duration_ms == other.action_duration_ms
             && self.action_cooldown_ms == other.action_cooldown_ms
             && self.action_start == other.action_start
@@ -84,7 +84,7 @@ impl Default for ThresholdAgent {
             sender: ripe_core::sender_sentinel(),
             task_cell: RwLock::default(),
             state: AgentState::Ready.into(),
-            max_threshold: 20,
+            min_threshold: 20,
             action_duration_ms: 60 * 1000,
             action_cooldown_ms: 30 * 1000,
             action_start: None,
@@ -117,7 +117,7 @@ impl AgentTrait for ThresholdAgent {
         }
 
         let moisture = data.moisture.unwrap_or(std::f64::MAX) as u32;
-        if moisture > self.max_threshold {
+        if moisture < self.min_threshold {
             debug!(self.logger, "{} moisture below threshold", NAME);
             let until = Utc::now() + Duration::milliseconds(self.action_duration_ms);
             self.last_action = Some(until);
@@ -125,7 +125,7 @@ impl AgentTrait for ThresholdAgent {
                 task.kickoff(false, until, self.logger.clone(), self.sender.clone());
             }
         } else {
-            debug!(self.logger, "{} moisture was fine {}% < {}%", NAME, moisture, self.max_threshold);
+            debug!(self.logger, "{} moisture was fine {}% < {}%", NAME, moisture, self.min_threshold);
         }
     }
 
@@ -197,10 +197,10 @@ impl AgentTrait for ThresholdAgent {
             ("Agent aktiviert".to_owned(), AgentConfigType::Switch(true)),
         );
         config.insert(
-            "02_max_threshold".to_owned(),
+            "02_min_threshold".to_owned(),
             (
                 "Schwellenwert in %".to_owned(),
-                AgentConfigType::IntSlider(0, 100, self.max_threshold as i64),
+                AgentConfigType::IntSlider(0, 100, self.min_threshold as i64),
             ),
         );
         config.insert(
@@ -235,10 +235,10 @@ impl AgentTrait for ThresholdAgent {
             error!(self.logger, "No active");
             return false;
         }
-        if let AgentConfigType::IntSlider(_l, _u, val) = &values["02_max_threshold"] {
+        if let AgentConfigType::IntSlider(_l, _u, val) = &values["02_min_threshold"] {
             min_threshold = *val;
         } else {
-            error!(self.logger, "No max_threshold");
+            error!(self.logger, "No min_threshold");
             return false;
         }
         if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["03_action_duration_ms"] {
@@ -254,7 +254,7 @@ impl AgentTrait for ThresholdAgent {
             return false;
         }
 
-        self.max_threshold = min_threshold as u32;
+        self.min_threshold = min_threshold as u32;
         self.action_duration_ms = action_duration_ms;
         self.action_cooldown_ms = action_cooldown_ms;
         true

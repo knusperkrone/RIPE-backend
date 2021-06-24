@@ -222,14 +222,15 @@ pub async fn insert_sensor_data(
     conn: &sqlx::PgPool,
     sensor_id: i32,
     dto: ripe_core::SensorDataMessage,
+    overleap: chrono::Duration,
 ) -> Result<(), DBError> {
-    sqlx::query(
-        r#"INSERT INTO sensor_data
-                (sensor_id, timestamp, battery, moisture, temperature, carbon, conductivity, light)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+    let update_result = sqlx::query(r#"
+        UPDATE sensor_data 
+        SET battery = $3, moisture = $4, temperature = $5, carbon = $6, conductivity = $7, light = $8
+        WHERE sensor_id = $1 AND timestamp > NOW() - $2::text::interval"#,
     )
     .bind(sensor_id)
-    .bind(dto.timestamp)
+    .bind(format!("'{} milliseconds'", overleap.num_milliseconds())) 
     .bind(dto.battery)
     .bind(dto.moisture)
     .bind(dto.temperature)
@@ -238,6 +239,24 @@ pub async fn insert_sensor_data(
     .bind(dto.light)
     .execute(conn)
     .await?;
+
+    if update_result.rows_affected() == 0 {
+        sqlx::query(
+            r#"INSERT INTO sensor_data
+                (sensor_id, timestamp, battery, moisture, temperature, carbon, conductivity, light)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+        )
+        .bind(sensor_id)
+        .bind(dto.timestamp)
+        .bind(dto.battery)
+        .bind(dto.moisture)
+        .bind(dto.temperature)
+        .bind(dto.carbon)
+        .bind(dto.conductivity)
+        .bind(dto.light)
+        .execute(conn)
+        .await?;
+    }
     Ok(())
 }
 
@@ -249,7 +268,8 @@ pub async fn get_latest_sensor_data(
     Ok(sqlx::query_as::<_, SensorDataDao>(
         r#"SELECT * FROM sensor_data 
                     JOIN sensors ON (sensor_data.sensor_id = sensors.id)
-                WHERE sensors.id = $1 AND sensors.key_b64 = $2"#,
+                WHERE sensors.id = $1 AND sensors.key_b64 = $2
+                ORDER BY timestamp DESC LIMIT 1"#,
     )
     .bind(search_sensor_id)
     .bind(search_key_b64)
@@ -273,6 +293,7 @@ pub async fn get_latest_sensor_data_unchecked(
 
 #[cfg(test)]
 mod test {
+    use chrono::Utc;
     use ripe_core::SensorDataMessage;
 
     use super::*;
@@ -350,15 +371,47 @@ mod test {
             .unwrap();
 
         // create
+        // insert
         insert_sensor_data(
             &conn,
             sensor.id(),
             SensorDataMessage {
+                timestamp: Utc::now() - chrono::Duration::hours(2),
                 ..Default::default()
             },
+            chrono::Duration::minutes(5),
         )
         .await
         .unwrap();
+
+        let rows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sensor_data WHERE sensor_id = $1")
+            .bind(sensor.id())
+            .fetch_one(&conn)
+            .await
+            .unwrap();
+        assert_eq!(1, rows.0);
+
+        for _ in 0..2 {
+            // insert||update
+            insert_sensor_data(
+                &conn,
+                sensor.id(),
+                SensorDataMessage {
+                    ..Default::default()
+                },
+                chrono::Duration::minutes(5),
+            )
+            .await
+            .unwrap();
+
+            let rows: (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM sensor_data WHERE sensor_id = $1")
+                    .bind(sensor.id())
+                    .fetch_one(&conn)
+                    .await
+                    .unwrap();
+            assert_eq!(2, rows.0);
+        }
 
         // read
         get_latest_sensor_data(&conn, sensor.id(), sensor.key_b64())

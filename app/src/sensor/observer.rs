@@ -85,7 +85,14 @@ impl ConcurrentSensorObserver {
                     warn!(APP_LOGGING, "Sensor not found: {}", sensor_id);
                     break;
                 }
-                if let Err(e) = models::insert_sensor_data(&self.db_conn, sensor_id, data).await {
+                if let Err(e) = models::insert_sensor_data(
+                    &self.db_conn,
+                    sensor_id,
+                    data,
+                    chrono::Duration::minutes(30),
+                )
+                .await
+                {
                     error!(APP_LOGGING, "Failed persiting sensor data: {}", e);
                 }
             }
@@ -410,7 +417,12 @@ impl ConcurrentSensorObserver {
             }
         }
         let duration = Utc::now() - start;
-        info!(APP_LOGGING, "Restored {} sensors in {} ms", count, duration.num_milliseconds());
+        info!(
+            APP_LOGGING,
+            "Restored {} sensors in {} ms",
+            count,
+            duration.num_milliseconds()
+        );
         Ok(())
     }
 

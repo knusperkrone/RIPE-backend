@@ -25,7 +25,7 @@ pub struct SensorHandle {
 impl SensorHandle {
     pub fn from(
         sensor: SensorDao,
-        actions: &Vec<AgentConfigDao>,
+        actions: Vec<AgentConfigDao>,
         factory: &AgentFactory,
     ) -> Result<SensorHandle, AgentError> {
         let mut agents: Vec<Agent> = actions

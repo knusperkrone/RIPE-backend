@@ -19,7 +19,7 @@ static MIGRATOR: Migrator = sqlx::migrate!(); // defaults to "./migrations"
 async fn connect_db() -> sqlx::PgPool {
     for i in 0..15 {
         if let Ok(Some(db_conn)) = tokio::time::timeout(
-            std::time::Duration::from_secs(250),
+            std::time::Duration::from_secs(2),
             models::establish_db_connection(),
         )
         .await
@@ -46,16 +46,26 @@ pub async fn main() -> std::io::Result<()> {
     let plugin_dir = std::path::Path::new(&plugin_path);
     let db_conn = connect_db().await;
     let sensor_arc = sensor::ConcurrentSensorObserver::new(plugin_dir, db_conn);
-    sensor_arc.init().await;
 
     // Prepare daemon tasks for current-thread
+    let server_loop = rest::dispatch_server_daemon(sensor_arc.clone());
     let reveice_mqtt_loop =
         sensor::ConcurrentSensorObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
     let iac_loop = sensor::ConcurrentSensorObserver::dispatch_iac_loop(sensor_arc.clone());
     let plugin_loop =
         sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
 
-    // Single-thread runtime for local plugin changes and iac events
-    let _ = tokio::join!(rest::dispatch_server_daemon(sensor_arc), iac_loop, reveice_mqtt_loop, plugin_loop);
+    // Multi-thread runtime for rest-requests
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            tokio::join!(sensor_arc.init(), reveice_mqtt_loop);
+        });
+    });
+    let _ = tokio::join!(server_loop, iac_loop, plugin_loop);
     Ok(())
 }

@@ -393,6 +393,7 @@ impl ConcurrentSensorObserver {
 
     async fn populate_agents(&self) -> Result<(), DBError> {
         // TODO: Stream
+        let start = Utc::now();
         let mut sensor_daos = Vec::new();
         for sensor_dao in models::get_sensors(&self.db_conn).await? {
             let agent_configs = models::get_agent_config(&self.db_conn, &sensor_dao)
@@ -401,21 +402,18 @@ impl ConcurrentSensorObserver {
             sensor_daos.push((sensor_dao, agent_configs));
         }
 
-        let start = Utc::now();
-        let mut count: usize = 0;
+        let mut count = sensor_daos.len();
         let agent_factory = self.agent_factory.read();
         for (sensor_dao, agent_configs) in sensor_daos {
-            let restore_result = self
-                .observe_sensor(&agent_factory, sensor_dao, Some(&agent_configs))
-                .await;
-            match restore_result {
-                Ok((id, _)) => {
-                    count += 1;
-                    debug!(APP_LOGGING, "Restored sensor {}", id)
-                }
-                Err(msg) => error!(APP_LOGGING, "{}", msg),
+            if let Err(e) = self
+                .observe_sensor(&agent_factory, sensor_dao, Some(agent_configs))
+                .await
+            {
+                count -= 1;
+                error!(APP_LOGGING, "{}", e)
             }
         }
+
         let duration = Utc::now() - start;
         info!(
             APP_LOGGING,
@@ -430,10 +428,10 @@ impl ConcurrentSensorObserver {
         &self,
         agent_factory: &AgentFactory,
         sensor_dao: SensorDao,
-        configs: Option<&Vec<AgentConfigDao>>,
+        configs: Option<Vec<AgentConfigDao>>,
     ) -> Result<(i32, Option<String>), ObserverError> {
         let sensor_id = sensor_dao.id();
-        let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(&vec![]), &agent_factory)?;
+        let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(vec![]), &agent_factory)?;
 
         let mqtt_broker = self.register_sensor_mqtt(&sensor).await?;
         self.container.write().insert_sensor(sensor);

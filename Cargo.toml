@@ -1,2 +1,3 @@
 [workspace]
 members = ["app", "core"]
+# members = ["core", "plugins/test_agent", "plugins/time_agent", "plugins/treshold_agent", "wasm_agent_builder"]

@@ -17,7 +17,7 @@ COPY ./core/Cargo.toml ./core/Cargo.toml
 
 #1.1c cache dependencies
 WORKDIR /ripe/app
-RUN cargo build --release
+RUN cargo build --release --target x86_64-unknown-linux-gnu
 
 #1.2a copy actual sources
 WORKDIR /ripe
@@ -32,13 +32,13 @@ WORKDIR /ripe/app
 COPY migrations ./migrations
 
 #1.2c build app for release
-RUN cargo build --release
+RUN cargo build --release --target x86_64-unknown-linux-gnu
 
 #1.3 build plugins for release
 WORKDIR /ripe
 COPY ./plugins ./plugins
 WORKDIR /ripe/plugins
-RUN cargo build --release
+RUN cargo build --release --target x86_64-unknown-linux-gnu
 
 #2 RUN
 FROM debian:buster-slim

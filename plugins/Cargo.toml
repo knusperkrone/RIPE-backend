@@ -1,7 +1,0 @@
-[workspace]
-members = ["test_agent", "time_agent", "treshold_agent", "wasm_agent_builder"]
-
-[profile.release]
-opt-level = 'z'  # Optimize for size.
-lto = true
-codegen-units = 1

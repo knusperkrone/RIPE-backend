@@ -1,10 +1,9 @@
 pub mod agent;
 pub mod test;
 
-mod abortable;
+mod logging;
 mod native;
 mod wasm;
-mod logging;
 
 use ripe_core::error::AgentError;
 use std::{collections::HashMap, ffi::OsString, path::Path, time::SystemTime};

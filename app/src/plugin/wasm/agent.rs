@@ -1,8 +1,8 @@
 use super::{stubs, WasmerMallocPtr};
 use crate::{error::WasmPluginError, logging::APP_LOGGING};
 use chrono_tz::Tz;
-use ripe_core::{AgentTrait, AgentUIDecorator};
 use parking_lot::Mutex;
+use ripe_core::{AgentTrait, AgentUIDecorator};
 use std::collections::HashMap;
 use wasmer::{Instance, Memory, NativeFunc};
 
@@ -182,7 +182,11 @@ impl AgentTrait for WasmAgent {
         HashMap::new()
     }
 
-    fn set_config(&mut self, values: &HashMap<String, ripe_core::AgentConfigType>, _timezone: Tz) -> bool {
+    fn set_config(
+        &mut self,
+        values: &HashMap<String, ripe_core::AgentConfigType>,
+        _timezone: Tz,
+    ) -> bool {
         if self.has_error() {
             return false;
         }

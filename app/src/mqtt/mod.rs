@@ -6,9 +6,9 @@ use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorHandle;
 use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
-use parking_lot::RwLock;
 use ripe_core::SensorDataMessage;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::RwLock;
 
 #[cfg(test)]
 mod test;
@@ -37,11 +37,11 @@ impl MqttSensorClient {
         }
     }
     pub async fn connect(&self) {
-        MqttSensorClientInner::connect(&self.inner)
+        MqttSensorClientInner::connect(&self.inner).await
     }
 
-    pub fn broker(&self) -> Option<String> {
-        self.inner.broker()
+    pub async fn broker(&self) -> Option<String> {
+        self.inner.broker().await
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
@@ -64,14 +64,19 @@ impl MqttSensorClientInner {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    pub fn connect(self: &Arc<MqttSensorClientInner>) {
-        let mut connect_cli = self.cli.write();
+    pub async fn connect(self: &Arc<MqttSensorClientInner>) {
+        let mut connect_cli = self.cli.write().await;
 
         // Message callback
         let connect_self = self.clone();
         connect_cli.set_message_callback(move |_cli, msg| {
             if let Some(msg) = msg {
-                debug!(APP_LOGGING, "Received topic: {}, {:?}", msg.topic(), std::str::from_utf8(msg.payload()));
+                debug!(
+                    APP_LOGGING,
+                    "Received topic: {}, {:?}",
+                    msg.topic(),
+                    std::str::from_utf8(msg.payload())
+                );
                 if let Err(e) = Self::on_sensor_message(&connect_self.sender, msg) {
                     error!(APP_LOGGING, "Received message threw error: {}", e);
                 }
@@ -85,10 +90,10 @@ impl MqttSensorClientInner {
             error!(APP_LOGGING, "Lost connection to MQTT broker");
             if let Err(e) = callback_cli.reconnect().wait_for(Duration::from_secs(3)) {
                 let future_self = disconnect_self.clone();
-                rt.spawn_blocking(move || {
+                rt.block_on(async move {
                     {
                         // create a new instance due an internal double free error
-                        let mut cli = future_self.cli.write();
+                        let mut cli = future_self.cli.write().await;
                         *cli = Self::create_client(); // needs async context
                     }
 
@@ -96,18 +101,18 @@ impl MqttSensorClientInner {
                         APP_LOGGING,
                         "Failed reconnected to broker due {}, resuming on other broker", e,
                     );
-                    MqttSensorClientInner::connect(&future_self); // needs async context
+                    MqttSensorClientInner::connect(&future_self).await;
                 });
             } else {
                 info!(APP_LOGGING, "Reconnected to previous MQTT broker");
             }
         });
 
-        Self::do_connect(&connect_cli);
+        Self::do_connect(&connect_cli).await;
     }
 
-    pub fn broker(&self) -> Option<String> {
-        if self.cli.read().is_connected() {
+    pub async fn broker(&self) -> Option<String> {
+        if self.cli.read().await.is_connected() {
             Some(CONFIG.current_mqtt_broker())
         } else {
             None
@@ -115,7 +120,7 @@ impl MqttSensorClientInner {
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli = self.cli.read();
+        let cli = self.cli.read().await;
         if cfg!(test) && !cli.is_connected() {
             return Ok(());
         }
@@ -128,7 +133,7 @@ impl MqttSensorClientInner {
     }
 
     pub async fn unsubscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli = self.cli.read();
+        let cli = self.cli.read().await;
         if cfg!(test) && !cli.is_connected() {
             return Ok(());
         }
@@ -141,7 +146,7 @@ impl MqttSensorClientInner {
     }
 
     pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli = self.cli.read();
+        let cli = self.cli.read().await;
         if cfg!(test) && !cli.is_connected() {
             return Ok(());
         }
@@ -220,13 +225,10 @@ impl MqttSensorClientInner {
         if let Err(_) = tokio::runtime::Handle::try_current() {
             panic!("PahoMqtt needs async context here");
         }
-
         CreateOptionsBuilder::new().create_client().unwrap()
     }
 
-    fn do_connect(
-        cli: &parking_lot::lock_api::RwLockWriteGuard<'_, parking_lot::RawRwLock, AsyncClient>,
-    ) {
+    async fn do_connect(cli: &tokio::sync::RwLockWriteGuard<'_, AsyncClient>) {
         if let Err(_) = tokio::runtime::Handle::try_current() {
             panic!("PahoMqtt needs async context here");
         }

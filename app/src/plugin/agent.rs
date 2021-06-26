@@ -1,10 +1,11 @@
-use super::abortable::{AbortHandle, Abortable};
 use super::logging::PLUGIN_LOGGING;
 use super::AgentLib;
 use crate::logging::APP_LOGGING;
 use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use chrono_tz::Tz;
-use parking_lot::Mutex;
+use futures::future::AbortHandle;
+use futures::future::Abortable;
+use parking_lot::{Mutex, RwLock};
 use ripe_core::{
     AgentConfigType, AgentMessage, AgentTrait, AgentUI, FutBuilder, SensorDataMessage,
 };
@@ -14,7 +15,7 @@ use std::{
     string::String,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, RwLock,
+        Arc,
     },
 };
 use tokio::sync::mpsc::{Receiver, UnboundedSender};
@@ -61,19 +62,19 @@ pub struct AgentInner {
     agent_lib: AgentLib,
     iac_abort_handle: AbortHandle,
     repeat_task_handle: RwLock<Option<AbortHandle>>,
-    task_handles: Mutex<Vec<AbortHandle>>,
+    task_handles: Mutex<Vec<(usize, AbortHandle)>>,
 }
 
 impl Drop for AgentInner {
     fn drop(&mut self) {
         self.iac_abort_handle.abort();
         // stop tasks
-        if let Some(repeat_handle) = self.repeat_task_handle.write().unwrap().as_ref() {
+        if let Some(repeat_handle) = self.repeat_task_handle.write().as_ref() {
             repeat_handle.abort();
         }
         let mut handles = self.task_handles.lock();
         for handle in handles.drain(..) {
-            handle.abort();
+            handle.1.abort();
         }
 
         debug!(
@@ -274,21 +275,20 @@ impl Agent {
             // Start abortable task, safe handle and remove handle after completion
             let future_agent = abortable_agent.clone();
             tokio::spawn(async move {
+                let handle_addr = std::ptr::addr_of!(abort_handle) as usize;
                 {
                     let mut handles = future_agent.task_handles.lock();
-                    handles.push(abort_handle);
+                    handles.push((handle_addr, abort_handle));
                 }
                 let _ = task_future.await;
 
                 // remove all aborted handles from the list
                 let mut handles = future_agent.task_handles.lock();
-                let mut i = 0;
-                while i < handles.len() {
-                    if handles[i].is_aborted() {
+                for i in 0..handles.len() {
+                    if handles[i].0 == handle_addr {
                         handles.remove(i);
-                    } else {
-                        i += 1;
                     }
+                    break;
                 }
             });
         }
@@ -300,8 +300,8 @@ impl Agent {
         interval_task: Box<dyn FutBuilder>,
     ) {
         let repeat_agent = agent.clone();
-        let mut handle = agent.repeat_task_handle.write().unwrap();
-        if handle.is_none() {
+        let mut handle = agent.repeat_task_handle.write();
+        if handle.is_some() {
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let repeating_future = Abortable::new(
                 async move {
@@ -331,7 +331,7 @@ impl Agent {
                         PLUGIN_LOGGING,
                         "Ended repeating task for sensor: {}", repeat_agent.sensor_id
                     );
-                    let mut handle = repeat_agent.repeat_task_handle.write().unwrap();
+                    let mut handle = repeat_agent.repeat_task_handle.write();
                     *handle = None;
                 },
                 abort_registration,

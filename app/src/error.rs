@@ -30,6 +30,9 @@ pub enum MQTTError {
     PayloadError(std::string::String),
     ParseError(serde_json::error::Error),
     SendError(paho_mqtt::Error),
+    TimeoutError(),
+    ReadLockError(),
+    WriteLockError(),
 }
 
 impl fmt::Display for MQTTError {
@@ -39,6 +42,9 @@ impl fmt::Display for MQTTError {
             MQTTError::PayloadError(msg) => write!(f, "Invalid payload: {}", msg),
             MQTTError::ParseError(e) => e.fmt(f),
             MQTTError::SendError(e) => write!(f, "SendError: {}", e),
+            MQTTError::TimeoutError() => write!(f, "Timeout due action"),
+            MQTTError::ReadLockError() => write!(f, "Failed acquiring read lock"),
+            MQTTError::WriteLockError() => write!(f, "Failed acquiring write lock"),
         }
     }
 }

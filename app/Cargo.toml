@@ -39,4 +39,4 @@ wasmer = "2"
 paho-mqtt = { version = "0.9" }
 
 [target.aarch64-unknown-linux-gnu.dependencies]
-paho-mqtt = { version = "0.9", features = ["vendored-ssl"] }
+# paho-mqtt = { version = "0.9", features = ["vendored-ssl"] }

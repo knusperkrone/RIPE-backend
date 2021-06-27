@@ -20,6 +20,8 @@ use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 
+static MAX_SEND_TRIES: usize = 5;
+
 pub struct ConcurrentSensorObserver {
     plugin_dir: std::path::PathBuf,
     container: RwLock<SensorCache>,
@@ -52,7 +54,12 @@ impl ConcurrentSensorObserver {
 
     pub async fn init(&self) {
         self.load_plugins().await;
-        self.mqtt_client.connect().await;
+        while !self.mqtt_client.connect().await {
+            crit!(
+                APP_LOGGING,
+                "Failed to connect mqtt inside of the main context"
+            );
+        }
         if let Err(e) = self.populate_agents().await {
             crit!(APP_LOGGING, "{}", e);
             panic!();
@@ -122,8 +129,21 @@ impl ConcurrentSensorObserver {
                 let container = self.container.read().await;
                 let sensor_opt = container.sensor_unchecked(item.sensor_id).await;
                 if sensor_opt.is_some() {
-                    if let Err(e) = self.mqtt_client.send_cmd(&sensor_opt.unwrap()).await {
-                        error!(APP_LOGGING, "Failed sending command {:?} with {}", item, e);
+                    let sensor = sensor_opt.unwrap();
+                    for i in 0..MAX_SEND_TRIES {
+                        match self.mqtt_client.send_cmd(&sensor).await {
+                            Ok(_) => break,
+                            Err(e) => {
+                                error!(
+                                    APP_LOGGING,
+                                    "[{}/{}] Failed sending command {:?} with {}",
+                                    i,
+                                    MAX_SEND_TRIES,
+                                    item,
+                                    e
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -460,8 +480,12 @@ impl ConcurrentSensorObserver {
         sensor: &SensorHandle,
     ) -> Result<Option<String>, ObserverError> {
         self.mqtt_client.subscribe_sensor(sensor).await?;
-        if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
-            error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
+        for _ in 0..MAX_SEND_TRIES {
+            if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
+                error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
+            } else {
+                break;
+            }
         }
         Ok(self.mqtt_client.broker().await)
     }

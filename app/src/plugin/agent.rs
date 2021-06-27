@@ -341,7 +341,7 @@ impl Agent {
         } else {
             warn!(
                 APP_LOGGING,
-                "Sensor {} already has a running task!", agent.sensor_id
+                "Sensor {} already has a repeating task!", agent.sensor_id
             );
         }
     }

@@ -92,34 +92,37 @@ impl MqttSensorClientInner {
         let disconnect_self = self.clone();
         connect_cli.set_connection_lost_callback(move |callback_cli| {
             error!(APP_LOGGING, "Lost connection to MQTT broker");
-            if let Err(e) = callback_cli.reconnect().wait_for(Duration::from_secs(3)) {
-                let future_self = disconnect_self.clone();
-                rt.block_on(async move {
-                    loop {
-                        // create a new instance due an internal double free error
-                        if let Ok(mut cli) = future_self.write_cli().await {
-                            cli.set_connection_lost_callback(|_| {});
-                            *cli = Self::create_client(); // needs async context
-                            break;
-                        } else {
-                            crit!(APP_LOGGING, "Failed to acquire mqtt-cli write lock")
-                        }
-                    }
+            let future_self = disconnect_self.clone();
+            rt.block_on(async move {
+                if let Ok(_) =
+                    tokio::time::timeout(Duration::from_secs(5), callback_cli.reconnect()).await
+                {
+                    info!(APP_LOGGING, "Reconnected to previous MQTT broker");
+                    return;
+                }
+                error!(
+                    APP_LOGGING,
+                    "Failed reconnected on current broker due, resuming on other broker",
+                );
 
-                    error!(
-                        APP_LOGGING,
-                        "Failed reconnected to broker due {}, resuming on other broker", e,
-                    );
-                    while !MqttSensorClientInner::connect(&future_self).await {
-                        error!(APP_LOGGING, "Failed connecting inside of an lost context",);
+                loop {
+                    // create a new instance due an internal double free error
+                    if let Ok(mut cli) = future_self.write_cli().await {
+                        cli.set_connection_lost_callback(|_| {});
+                        *cli = Self::create_client(); // needs async context
+                        break;
+                    } else {
+                        crit!(APP_LOGGING, "Failed to acquire mqtt-cli write lock")
                     }
-                });
-            } else {
-                info!(APP_LOGGING, "Reconnected to previous MQTT broker");
-            }
+                }
+                while !MqttSensorClientInner::connect(&future_self).await {
+                    error!(APP_LOGGING, "Failed connecting inside of an lost context",);
+                }
+            });
         });
+        drop(connect_cli);
 
-        Self::do_connect(&connect_cli).await;
+        Self::do_connect(self.clone()).await;
         true
     }
 
@@ -139,9 +142,11 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
-        if let Err(_) = cli
-            .subscribe_many(&topics, &vec![QOS, QOS])
-            .wait_for(self.default_timeout())
+        if let Err(_) = tokio::time::timeout(
+            self.default_timeout(),
+            cli.subscribe_many(&topics, &vec![QOS, QOS]),
+        )
+        .await
         {
             return Err(MQTTError::TimeoutError());
         }
@@ -157,9 +162,8 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
-        if let Err(_) = cli
-            .unsubscribe_many(&topics)
-            .wait_for(self.default_timeout())
+        if let Err(_) =
+            tokio::time::timeout(self.default_timeout(), cli.unsubscribe_many(&topics)).await
         {
             return Err(MQTTError::TimeoutError());
         }
@@ -183,7 +187,7 @@ impl MqttSensorClientInner {
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
         let publ = Message::new_retained(cmd_topic, payload, QOS);
-        if let Err(_) = cli.publish(publ).wait_for(self.default_timeout()) {
+        if let Err(_) = tokio::time::timeout(self.default_timeout(), cli.publish(publ)).await {
             return Err(MQTTError::TimeoutError());
         }
         Ok(())
@@ -270,7 +274,7 @@ impl MqttSensorClientInner {
         CreateOptionsBuilder::new().create_client().unwrap()
     }
 
-    async fn do_connect(cli: &tokio::sync::RwLockWriteGuard<'_, AsyncClient>) {
+    async fn do_connect(self: Arc<Self>) {
         loop {
             let mqtt_uri = vec![CONFIG.next_mqtt_broker().clone()];
             let conn_opts = ConnectOptionsBuilder::new()
@@ -279,15 +283,25 @@ impl MqttSensorClientInner {
                 .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
                 .finalize();
 
-            info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri[0]);
-            if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(2)) {
-                error!(
-                    APP_LOGGING,
-                    "Coulnd't connect to broker {} with {}", mqtt_uri[0], e
-                );
+            if let Ok(cli) = self.read_cli().await {
+                info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri[0]);
+                if let Err(e) =
+                    tokio::time::timeout(self.default_timeout(), cli.connect(conn_opts)).await
+                {
+                    error!(
+                        APP_LOGGING,
+                        "Coulnd't connect to broker {} with {}", mqtt_uri[0], e
+                    );
+                } else {
+                    info!(APP_LOGGING, "connected to broker {}", mqtt_uri[0]);
+                    break;
+                }
             } else {
-                info!(APP_LOGGING, "connected to broker {}", mqtt_uri[0]);
-                break;
+                crit!(
+                    APP_LOGGING,
+                    "Failed aquiring lock to connect on broker {}",
+                    mqtt_uri[0]
+                );
             }
         }
     }

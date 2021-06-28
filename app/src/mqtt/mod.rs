@@ -94,30 +94,7 @@ impl MqttSensorClientInner {
             error!(APP_LOGGING, "Lost connection to MQTT broker");
             let future_self = disconnect_self.clone();
             rt.block_on(async move {
-                if let Ok(_) =
-                    tokio::time::timeout(Duration::from_secs(5), callback_cli.reconnect()).await
-                {
-                    info!(APP_LOGGING, "Reconnected to previous MQTT broker");
-                    return;
-                }
-                error!(
-                    APP_LOGGING,
-                    "Failed reconnected on current broker due, resuming on other broker",
-                );
-
-                loop {
-                    // create a new instance due an internal double free error
-                    if let Ok(mut cli) = future_self.write_cli().await {
-                        cli.set_connection_lost_callback(|_| {});
-                        *cli = Self::create_client(); // needs async context
-                        break;
-                    } else {
-                        crit!(APP_LOGGING, "Failed to acquire mqtt-cli write lock")
-                    }
-                }
-                while !MqttSensorClientInner::connect(&future_self).await {
-                    error!(APP_LOGGING, "Failed connecting inside of an lost context",);
-                }
+                Self::try_reconnect(future_self, callback_cli).await;
             });
         });
         drop(connect_cli);
@@ -191,6 +168,31 @@ impl MqttSensorClientInner {
             return Err(MQTTError::TimeoutError());
         }
         Ok(())
+    }
+
+    async fn try_reconnect(self: Arc<Self>, cli: &AsyncClient) {
+        if let Ok(_) = tokio::time::timeout(Duration::from_secs(5), cli.reconnect()).await {
+            info!(APP_LOGGING, "Reconnected to previous MQTT broker");
+            return;
+        }
+        error!(
+            APP_LOGGING,
+            "Failed reconnected on current broker due, resuming on other broker",
+        );
+
+        loop {
+            // create a new instance due an internal double free error
+            if let Ok(mut inner_cli) = self.write_cli().await {
+                inner_cli.set_connection_lost_callback(|_| {});
+                *inner_cli = Self::create_client(); // needs async context
+                break;
+            } else {
+                crit!(APP_LOGGING, "Failed to acquire mqtt-cli write lock")
+            }
+        }
+        while !MqttSensorClientInner::connect(&self).await {
+            error!(APP_LOGGING, "Failed connecting inside of an lost context",);
+        }
     }
 
     /// Parses and dispatches a mqtt message

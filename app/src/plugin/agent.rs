@@ -301,14 +301,15 @@ impl Agent {
     ) {
         let repeat_agent = agent.clone();
         let mut handle = agent.repeat_task_handle.write();
-        if handle.is_some() {
+        if handle.is_none() {
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let repeating_future = Abortable::new(
                 async move {
                     debug!(
                         PLUGIN_LOGGING,
-                        "Starting repeating task for sensor: {} - sleep duration: {:?}",
+                        "Starting repeating task for sensor: {}, {} - sleep duration: {:?}",
                         repeat_agent.sensor_id,
+                        repeat_agent.agent_name,
                         delay,
                     );
                     loop {
@@ -341,7 +342,9 @@ impl Agent {
         } else {
             warn!(
                 APP_LOGGING,
-                "Sensor {} already has a repeating task!", agent.sensor_id
+                "Sensor {}, agent {} already has a repeating task!",
+                agent.sensor_id,
+                agent.agent_name,
             );
         }
     }

@@ -1,4 +1,5 @@
 use super::handle::{SensorHandle, SensorMQTTCommand};
+use super::SensorMessage;
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
@@ -27,7 +28,7 @@ pub struct ConcurrentSensorObserver {
     container: RwLock<SensorCache>,
     agent_factory: RwLock<AgentFactory>,
     iac_receiver: Mutex<UnboundedReceiver<SensorMQTTCommand>>,
-    data_receveiver: Mutex<UnboundedReceiver<(i32, SensorDataMessage)>>,
+    data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,
     mqtt_client: MqttSensorClient,
     db_conn: Arc<PgPool>,
 }
@@ -35,7 +36,7 @@ pub struct ConcurrentSensorObserver {
 impl ConcurrentSensorObserver {
     pub fn new(plugin_dir: &Path, db_conn: PgPool) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
-        let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorDataMessage)>();
+        let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorMessage)>();
         let agent_factory = AgentFactory::new(iac_sender);
         let container = SensorCache::new();
         let mqtt_client = MqttSensorClient::new(sensor_data_sender);
@@ -54,12 +55,7 @@ impl ConcurrentSensorObserver {
 
     pub async fn init(&self) {
         self.load_plugins().await;
-        while !self.mqtt_client.connect().await {
-            crit!(
-                APP_LOGGING,
-                "Failed to connect mqtt inside of the main context"
-            );
-        }
+        self.mqtt_client.connect().await;
         if let Err(e) = self.populate_agents().await {
             crit!(APP_LOGGING, "{}", e);
             panic!();
@@ -85,30 +81,13 @@ impl ConcurrentSensorObserver {
 
         loop {
             info!(APP_LOGGING, "Start capturing sensor data events");
-            while let Some((sensor_id, data)) = receiver.recv().await {
-                if let Some(mut sensor) = self
-                    .container
-                    .write()
-                    .await
-                    .sensor_unchecked(sensor_id)
-                    .await
-                {
-                    sensor.handle_data(&data);
-                } else {
-                    warn!(APP_LOGGING, "Sensor not found: {}", sensor_id);
-                    break;
-                }
-                if let Err(e) = models::insert_sensor_data(
-                    &self.db_conn,
-                    sensor_id,
-                    data,
-                    chrono::Duration::minutes(30),
-                )
-                .await
-                {
-                    error!(APP_LOGGING, "Failed persiting sensor data: {}", e);
-                }
+            while let Some((sensor_id, msg)) = receiver.recv().await {
+                match msg {
+                    SensorMessage::Data(data) => self.persist_sensor_data(sensor_id, data).await,
+                    SensorMessage::Log(log) => self.persist_sensor_log(sensor_id, log).await,
+                };
             }
+            crit!(APP_LOGGING, "Failed listening sensor data events");
         }
     }
 
@@ -193,6 +172,36 @@ impl ConcurrentSensorObserver {
             }
             let timeout = if cfg!(prod) { 10 } else { 1 };
             tokio::time::sleep(Duration::from_secs(timeout)).await;
+        }
+    }
+
+    async fn persist_sensor_data(&self, sensor_id: i32, data: SensorDataMessage) {
+        if let Some(mut sensor) = self
+            .container
+            .write()
+            .await
+            .sensor_unchecked(sensor_id)
+            .await
+        {
+            sensor.handle_data(&data);
+            if let Err(e) = models::insert_sensor_data(
+                &self.db_conn,
+                sensor_id,
+                data,
+                chrono::Duration::minutes(30),
+            )
+            .await
+            {
+                error!(APP_LOGGING, "Failed persiting sensor data: {}", e);
+            }
+        } else {
+            warn!(APP_LOGGING, "Sensor not found: {}", sensor_id);
+        }
+    }
+
+    async fn persist_sensor_log(&self, sensor_id: i32, log_msg: std::string::String) {
+        if let Err(e) = models::insert_sensor_log(&self.db_conn, sensor_id, log_msg, 10).await {
+            error!(APP_LOGGING, "Failed persiting sensor log: {}", e);
         }
     }
 }
@@ -302,6 +311,28 @@ impl ConcurrentSensorObserver {
             agents: agents,
             broker: self.mqtt_client.broker().await,
         })
+    }
+
+    pub async fn sensor_logs(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+        _timezone: Tz,
+    ) -> Result<Vec<String>, ObserverError> {
+        {
+            // API guard scope
+            let container = self.container.read().await;
+            let _ = container
+                .sensor(sensor_id, key_b64.as_str())
+                .await
+                .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
+        }
+
+        let mut logs = models::get_sensor_logs(&self.db_conn, sensor_id).await?;
+        Ok(logs
+            .drain(..)
+            .map(|l| format!("[{}] {}", &l.time(), l.log()))
+            .collect())
     }
 
     /*

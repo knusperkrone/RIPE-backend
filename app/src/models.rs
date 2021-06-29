@@ -4,7 +4,7 @@ use crate::plugin::Agent;
 use std::string::String;
 
 pub mod dao {
-    use chrono::{DateTime, NaiveDateTime, Utc};
+    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
     use ripe_core::SensorDataMessage;
 
     #[derive(sqlx::FromRow)]
@@ -87,6 +87,24 @@ pub mod dao {
                 conductivity: self.conductivity,
                 light: self.light,
             }
+        }
+    }
+
+    #[derive(sqlx::FromRow)]
+    pub struct SensorLogDao {
+        // id: i32,
+        // sensor_id: i32,
+        time: NaiveDateTime,
+        log: std::string::String,
+    }
+
+    impl SensorLogDao {
+        pub fn time(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc.from_utc_datetime(&self.time)
+        }
+
+        pub fn log(&self) -> &std::string::String {
+            &self.log
         }
     }
 }
@@ -218,6 +236,7 @@ pub async fn delete_sensor_agent(
     Ok(())
 }
 
+// CREATE/UPDATE sensor_data
 pub async fn insert_sensor_data(
     conn: &sqlx::PgPool,
     sensor_id: i32,
@@ -260,6 +279,7 @@ pub async fn insert_sensor_data(
     Ok(())
 }
 
+// READ sensor_data
 pub async fn get_latest_sensor_data(
     conn: &sqlx::PgPool,
     search_sensor_id: i32,
@@ -277,6 +297,7 @@ pub async fn get_latest_sensor_data(
     .await?)
 }
 
+// READ sensor_data
 pub async fn get_latest_sensor_data_unchecked(
     conn: &sqlx::PgPool,
     search_sensor_id: i32,
@@ -289,6 +310,56 @@ pub async fn get_latest_sensor_data_unchecked(
     .bind(search_sensor_id)
     .fetch_optional(conn)
     .await?)
+}
+
+// CREATE/UPDATE sensor_log
+pub async fn insert_sensor_log(
+    conn: &sqlx::PgPool,
+    sensor_id: i32,
+    msg: std::string::String,
+    max_count: i64,
+) -> Result<(), DBError> {
+    let now = chrono::Utc::now().naive_utc();
+    let trimmed = &msg[..std::cmp::min(255, msg.len())];
+
+    let log_count: (i64,) = sqlx::query_as("SELECT count(*) FROM sensor_log WHERE sensor_id = $1")
+        .bind(sensor_id)
+        .fetch_one(conn)
+        .await?;
+
+    if log_count.0 >= max_count {
+        sqlx::query(
+            r#"
+        UPDATE sensor_log SET time = $1, log = $2 
+        WHERE id = (SELECT id FROM sensor_log WHERE sensor_id = $3 ORDER BY time ASC LIMIT 1)"#,
+        )
+        .bind(now)
+        .bind(trimmed)
+        .bind(sensor_id)
+        .execute(conn)
+        .await?;
+    } else {
+        sqlx::query("INSERT INTO sensor_log (sensor_id, time, log) VALUES ($1, $2, $3)")
+            .bind(sensor_id)
+            .bind(now)
+            .bind(trimmed)
+            .execute(conn)
+            .await?;
+    }
+    Ok(())
+}
+
+// READ sensor_log
+pub async fn get_sensor_logs(
+    conn: &sqlx::PgPool,
+    sensor_id: i32,
+) -> Result<Vec<dao::SensorLogDao>, DBError> {
+    Ok(
+        sqlx::query_as::<_, SensorLogDao>("SELECT * FROM sensor_log WHERE sensor_id = $1")
+            .bind(sensor_id)
+            .fetch_all(conn)
+            .await?,
+    )
 }
 
 #[cfg(test)]
@@ -384,12 +455,13 @@ mod test {
         .await
         .unwrap();
 
-        let rows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sensor_data WHERE sensor_id = $1")
-            .bind(sensor.id())
-            .fetch_one(&conn)
-            .await
-            .unwrap();
-        assert_eq!(1, rows.0);
+        let row_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sensor_data WHERE sensor_id = $1")
+                .bind(sensor.id())
+                .fetch_one(&conn)
+                .await
+                .unwrap();
+        assert_eq!(1, row_count.0);
 
         for _ in 0..2 {
             // insert||update
@@ -404,13 +476,13 @@ mod test {
             .await
             .unwrap();
 
-            let rows: (i64,) =
+            let row_count: (i64,) =
                 sqlx::query_as("SELECT COUNT(*) FROM sensor_data WHERE sensor_id = $1")
                     .bind(sensor.id())
                     .fetch_one(&conn)
                     .await
                     .unwrap();
-            assert_eq!(2, rows.0);
+            assert_eq!(2, row_count.0);
         }
 
         // read
@@ -422,5 +494,37 @@ mod test {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn crud_sensor_log() {
+        let conn = establish_db_connection().await.unwrap();
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+            .await
+            .unwrap();
+
+        // create
+        let max_count = 5;
+        for i in 0..10 {
+            insert_sensor_log(&conn, sensor.id(), format!("{}", i), max_count)
+                .await
+                .unwrap();
+        }
+        let row_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sensor_log WHERE sensor_id = $1")
+                .bind(sensor.id())
+                .fetch_one(&conn)
+                .await
+                .unwrap();
+        assert_eq!(max_count, row_count.0);
+
+        // get
+        let mut daos = get_sensor_logs(&conn, sensor.id()).await.unwrap();
+        let mut index = max_count;
+
+        for dao in daos.drain(..) {
+            assert_eq!(&format!("{}", index), dao.log());
+            index += 1;
+        }
     }
 }

@@ -5,3 +5,8 @@ pub mod observer;
 mod test;
 
 pub use observer::ConcurrentSensorObserver;
+
+pub enum SensorMessage {
+    Data(ripe_core::SensorDataMessage),
+    Log(std::string::String),
+}

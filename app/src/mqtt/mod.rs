@@ -6,8 +6,10 @@ use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorHandle;
 use crate::sensor::SensorMessage;
+use futures::future::{AbortHandle, Abortable};
 use futures::StreamExt;
 use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
+use parking_lot::Mutex;
 use ripe_core::SensorDataMessage;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -25,7 +27,9 @@ pub struct MqttSensorClient {
 
 struct MqttSensorClientInner {
     cli: RwLock<AsyncClient>,
+    listen_abort_handle: Mutex<Option<AbortHandle>>,
     sender: MqttSender,
+    timeout_ms: u64,
 }
 
 impl MqttSensorClient {
@@ -34,10 +38,13 @@ impl MqttSensorClient {
         MqttSensorClient {
             inner: Arc::new(MqttSensorClientInner {
                 cli: RwLock::new(cli),
+                listen_abort_handle: Mutex::new(None),
+                timeout_ms: CONFIG.mqtt_timeout_ms(),
                 sender,
             }),
         }
     }
+
     pub async fn connect(&self) {
         MqttSensorClientInner::connect(self.inner.clone()).await
     }
@@ -56,6 +63,14 @@ impl MqttSensorClient {
 
     pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         self.inner.send_cmd(sensor).await
+    }
+}
+
+impl Drop for MqttSensorClientInner {
+    fn drop(&mut self) {
+        if let Some(handle) = self.listen_abort_handle.lock().take() {
+            handle.abort();
+        }
     }
 }
 
@@ -80,34 +95,49 @@ impl MqttSensorClientInner {
 
         Self::do_connect(&self.clone()).await;
 
-        tokio::task::spawn(async move {
-            while let Some(msg_opt) = mqtt_stream.next().await {
-                if let Some(msg) = msg_opt {
-                    debug!(
-                        APP_LOGGING,
-                        "Received topic: {}, {:?}",
-                        msg.topic(),
-                        std::str::from_utf8(msg.payload())
-                    );
-                    if let Err(e) = Self::on_sensor_message(&self.sender, msg) {
-                        error!(APP_LOGGING, "Received message threw error: {}", e);
-                    }
-                } else {
-                    // Try reconnect
-                    if let Ok(cli) = self.read_cli().await {
-                        if let Ok(_) =
-                            tokio::time::timeout(Duration::from_secs(5), cli.reconnect()).await
-                        {
-                            info!(APP_LOGGING, "Reconnected to previous MQTT broker");
-                            continue;
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+
+        let mut current_abort = self.listen_abort_handle.lock();
+        if let Some(handle) = current_abort.take() {
+            warn!(APP_LOGGING, "MQTT already has a listen task - aborting..");
+            handle.abort();
+        }
+        *current_abort = Some(abort_handle);
+
+        let future_self = self.clone();
+        tokio::spawn(Abortable::new(
+            async move {
+                while let Some(msg_opt) = mqtt_stream.next().await {
+                    if let Some(msg) = msg_opt {
+                        debug!(
+                            APP_LOGGING,
+                            "Received topic: {}, {:?}",
+                            msg.topic(),
+                            std::str::from_utf8(msg.payload())
+                        );
+                        if let Err(e) = Self::on_sensor_message(&future_self.sender, msg) {
+                            error!(APP_LOGGING, "Received message threw error: {}", e);
                         }
                     } else {
-                        Self::do_connect(&self.clone()).await;
+                        // Try reconnect
+                        if let Ok(cli) = future_self.read_cli().await {
+                            if let Ok(_) = cli.reconnect().wait_for(Duration::from_secs(5)) {
+                                if let Some(_) = future_self.broker().await {
+                                    info!(APP_LOGGING, "Reconnected to previous MQTT broker");
+                                    continue;
+                                }
+                            }
+                        }
+                        Self::do_connect(&future_self.clone()).await;
+                        while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
+                            warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
+                        }
                     }
                 }
-            }
-            crit!(APP_LOGGING, "Ended MQTT message loop");
-        });
+                crit!(APP_LOGGING, "Ended MQTT message loop");
+            },
+            abort_registration,
+        ));
     }
 
     pub async fn broker(&self) -> Option<String> {
@@ -126,11 +156,9 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
-        if let Err(_) = tokio::time::timeout(
-            self.default_timeout(),
-            cli.subscribe_many(&topics, &vec![QOS, QOS]),
-        )
-        .await
+        if let Err(_) = cli
+            .subscribe_many(&topics, &vec![QOS, QOS])
+            .wait_for(self.default_timeout())
         {
             return Err(MQTTError::TimeoutError());
         }
@@ -146,8 +174,9 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
-        if let Err(_) =
-            tokio::time::timeout(self.default_timeout(), cli.unsubscribe_many(&topics)).await
+        if let Err(_) = cli
+            .unsubscribe_many(&topics)
+            .wait_for(self.default_timeout())
         {
             return Err(MQTTError::TimeoutError());
         }
@@ -171,7 +200,7 @@ impl MqttSensorClientInner {
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
         let publ = Message::new_retained(cmd_topic, payload, QOS);
-        if let Err(_) = tokio::time::timeout(self.default_timeout(), cli.publish(publ)).await {
+        if let Err(_) = cli.publish(publ).wait_for(self.default_timeout()) {
             return Err(MQTTError::TimeoutError());
         }
         Ok(())
@@ -239,7 +268,7 @@ impl MqttSensorClientInner {
      */
 
     fn default_timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(2500)
+        std::time::Duration::from_millis(self.timeout_ms.into())
     }
 
     async fn read_cli(&self) -> Result<RwLockReadGuard<'_, AsyncClient>, MQTTError> {
@@ -273,9 +302,7 @@ impl MqttSensorClientInner {
 
             if let Ok(cli) = self.read_cli().await {
                 info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri[0]);
-                if let Err(e) =
-                    tokio::time::timeout(self.default_timeout(), cli.connect(conn_opts)).await
-                {
+                if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(5)) {
                     error!(
                         APP_LOGGING,
                         "Coulnd't connect to broker {} with {}", mqtt_uri[0], e

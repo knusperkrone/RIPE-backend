@@ -235,7 +235,10 @@ impl Agent {
 
     async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) {
-            info!(PLUGIN_LOGGING, "Task was declined as app recv SIGINT");
+            info!(
+                PLUGIN_LOGGING,
+                "Task for {} {} was declined as app recv SIGINT", agent.sensor_id, agent.agent_name
+            );
         } else if agent.task_handles.lock().len() > MAX_TASK_COUNT {
             info!(
                 PLUGIN_LOGGING,

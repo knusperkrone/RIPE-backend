@@ -4,7 +4,7 @@ use crate::plugin::Agent;
 use std::string::String;
 
 pub mod dao {
-    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+    use chrono::{DateTime, NaiveDateTime, Utc};
     use ripe_core::SensorDataMessage;
 
     #[derive(sqlx::FromRow)]
@@ -99,8 +99,11 @@ pub mod dao {
     }
 
     impl SensorLogDao {
-        pub fn time(&self) -> chrono::DateTime<chrono::Utc> {
-            chrono::Utc.from_utc_datetime(&self.time)
+        pub fn time<T>(&self, tz: &T) -> chrono::DateTime<T>
+        where
+            T: chrono::TimeZone,
+        {
+            tz.from_utc_datetime(&self.time)
         }
 
         pub fn log(&self) -> &std::string::String {

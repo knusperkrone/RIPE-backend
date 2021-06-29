@@ -1,5 +1,6 @@
 use super::handle::{SensorHandle, SensorMQTTCommand};
 use super::SensorMessage;
+use crate::config::CONFIG;
 use crate::logging::APP_LOGGING;
 use crate::models::{
     self,
@@ -20,8 +21,6 @@ use sqlx::PgPool;
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
-
-static MAX_SEND_TRIES: usize = 5;
 
 pub struct ConcurrentSensorObserver {
     plugin_dir: std::path::PathBuf,
@@ -85,6 +84,7 @@ impl ConcurrentSensorObserver {
                 match msg {
                     SensorMessage::Data(data) => self.persist_sensor_data(sensor_id, data).await,
                     SensorMessage::Log(log) => self.persist_sensor_log(sensor_id, log).await,
+                    SensorMessage::Reconnect => self.resubscribe_sensors().await,
                 };
             }
             crit!(APP_LOGGING, "Failed listening sensor data events");
@@ -102,6 +102,7 @@ impl ConcurrentSensorObserver {
         }
 
         let mut receiver = receiver_res.unwrap();
+        let max_retries = CONFIG.mqtt_send_retries();
         loop {
             info!(APP_LOGGING, "Start capturing iac events");
             while let Some(item) = receiver.recv().await {
@@ -109,7 +110,7 @@ impl ConcurrentSensorObserver {
                 let sensor_opt = container.sensor_unchecked(item.sensor_id).await;
                 if sensor_opt.is_some() {
                     let sensor = sensor_opt.unwrap();
-                    for i in 0..MAX_SEND_TRIES {
+                    for i in 0..max_retries {
                         match self.mqtt_client.send_cmd(&sensor).await {
                             Ok(_) => break,
                             Err(e) => {
@@ -117,7 +118,7 @@ impl ConcurrentSensorObserver {
                                     APP_LOGGING,
                                     "[{}/{}] Failed sending command {:?} with {}",
                                     i,
-                                    MAX_SEND_TRIES,
+                                    max_retries,
                                     item,
                                     e
                                 )
@@ -170,7 +171,7 @@ impl ConcurrentSensorObserver {
                     }
                 }
             }
-            let timeout = if cfg!(prod) { 10 } else { 1 };
+            let timeout = if cfg!(prod) { 5 } else { 1 };
             tokio::time::sleep(Duration::from_secs(timeout)).await;
         }
     }
@@ -200,8 +201,25 @@ impl ConcurrentSensorObserver {
     }
 
     async fn persist_sensor_log(&self, sensor_id: i32, log_msg: std::string::String) {
-        if let Err(e) = models::insert_sensor_log(&self.db_conn, sensor_id, log_msg, 10).await {
+        let max_logs = CONFIG.mqtt_log_count();
+        if let Err(e) = models::insert_sensor_log(&self.db_conn, sensor_id, log_msg, max_logs).await
+        {
             error!(APP_LOGGING, "Failed persiting sensor log: {}", e);
+        }
+    }
+
+    async fn resubscribe_sensors(&self) {
+        let container = self.container.write().await;
+        for sensor_mtx in container.sensors() {
+            let sensor = sensor_mtx.lock().await;
+            if let Err(e) = self.subscribe_sensor(&sensor).await {
+                error!(
+                    APP_LOGGING,
+                    "Failed observing sensor {} - {}",
+                    sensor.id(),
+                    e
+                );
+            }
         }
     }
 }
@@ -239,7 +257,7 @@ impl ConcurrentSensorObserver {
 
         // Create agents and persist
         let factory = self.agent_factory.read().await;
-        match self.observe_sensor(&factory, sensor_dao, None).await {
+        match self.insert_sensor(&factory, sensor_dao, None).await {
             Ok((id, broker)) => {
                 info!(APP_LOGGING, "Registered new sensor: {}", id);
                 Ok(SensorCredentialDto { id, key, broker })
@@ -317,7 +335,7 @@ impl ConcurrentSensorObserver {
         &self,
         sensor_id: i32,
         key_b64: String,
-        _timezone: Tz,
+        tz: Tz,
     ) -> Result<Vec<String>, ObserverError> {
         {
             // API guard scope
@@ -331,7 +349,7 @@ impl ConcurrentSensorObserver {
         let mut logs = models::get_sensor_logs(&self.db_conn, sensor_id).await?;
         Ok(logs
             .drain(..)
-            .map(|l| format!("[{}] {}", &l.time(), l.log()))
+            .map(|l| format!("[{}] {}", l.time(&tz).format(&"%b %e %T %Y"), l.log()))
             .collect())
     }
 
@@ -474,7 +492,7 @@ impl ConcurrentSensorObserver {
         let agent_factory = self.agent_factory.read().await;
         for (sensor_dao, agent_configs) in sensor_daos {
             if let Err(e) = self
-                .observe_sensor(&agent_factory, sensor_dao, Some(agent_configs))
+                .insert_sensor(&agent_factory, sensor_dao, Some(agent_configs))
                 .await
             {
                 count -= 1;
@@ -492,7 +510,7 @@ impl ConcurrentSensorObserver {
         Ok(())
     }
 
-    async fn observe_sensor(
+    async fn insert_sensor(
         &self,
         agent_factory: &AgentFactory,
         sensor_dao: SensorDao,
@@ -501,17 +519,17 @@ impl ConcurrentSensorObserver {
         let sensor_id = sensor_dao.id();
         let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(vec![]), &agent_factory)?;
 
-        let mqtt_broker = self.register_sensor_mqtt(&sensor).await?;
+        let mqtt_broker = self.subscribe_sensor(&sensor).await?;
         self.container.write().await.insert_sensor(sensor);
         Ok((sensor_id, mqtt_broker))
     }
 
-    async fn register_sensor_mqtt(
+    async fn subscribe_sensor(
         &self,
         sensor: &SensorHandle,
     ) -> Result<Option<String>, ObserverError> {
         self.mqtt_client.subscribe_sensor(sensor).await?;
-        for _ in 0..MAX_SEND_TRIES {
+        for _ in 0..CONFIG.mqtt_send_retries() {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
                 error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
             } else {

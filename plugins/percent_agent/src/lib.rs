@@ -71,7 +71,7 @@ impl AgentTrait for PercentAgent {
     }
 
     fn render_ui(&self, _data: &SensorDataMessage, _timezone: Tz) -> AgentUI {
-        let percent = self.val as f32;
+        let percent = self.val as f32 / 100.0;
         AgentUI {
             decorator: AgentUIDecorator::Slider(0.0, 1.0, percent),
             rendered: format!("{}%", self.val),

@@ -43,20 +43,22 @@ fn get_active_agents(
 fn register_agent(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::post())
-        .and(warp::path!("api" / "agent" / i32 / String))
+        .and(key_header)
+        .and(warp::path!("api" / "agent" / i32))
         .and(warp::body::json())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
+             key_b64: Option<String>,
              sensor_id: i32,
-             key_b64: String,
              body: dto::AgentDto| async move {
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .register_agent(sensor_id, key_b64, domain, agent_name)
+                    .register_agent(sensor_id, key_b64.unwrap_or_default(), domain, agent_name)
                     .await;
                 build_response(resp)
             },
@@ -72,20 +74,22 @@ fn register_agent(
 fn unregister_agent(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::delete())
-        .and(warp::path!("api" / "agent" / i32 / String))
+        .and(key_header)
+        .and(warp::path!("api" / "agent" / i32))
         .and(warp::body::json())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
+             key_b64: Option<String>,
              sensor_id: i32,
-             key_b64: String,
              body: dto::AgentDto| async move {
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .unregister_agent(sensor_id, key_b64, domain, agent_name)
+                    .unregister_agent(sensor_id, key_b64.unwrap_or_default(), domain, agent_name)
                     .await;
                 build_response(resp)
             },
@@ -101,19 +105,26 @@ fn unregister_agent(
 fn on_agent_cmd(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::post())
-        .and(warp::path!("api" / "agent" / i32 / String / String))
+        .and(key_header)
+        .and(warp::path!("api" / "agent" / i32 / String))
         .and(warp::body::json())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
+             key_b64: Option<String>,
              sensor_id: i32,
-             key_b64: String,
-             domain: String,
+             domain_b64: String,
              body: dto::ForceRequest| async move {
                 let resp = observer
-                    .on_agent_cmd(sensor_id, key_b64, domain, body.payload)
+                    .on_agent_cmd(
+                        sensor_id,
+                        key_b64.unwrap_or_default(),
+                        decode_b64(domain_b64),
+                        body.payload,
+                    )
                     .await;
                 build_response(resp)
             },
@@ -129,22 +140,29 @@ fn on_agent_cmd(
 fn agent_config(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let opt_timezone = warp::header::optional::<String>("X-TZ");
+    let timezone_header = warp::header::optional::<String>("X-TZ");
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
-        .and(opt_timezone)
-        .and(warp::path!(
-            "api" / "agent" / i32 / String / String / "config"
-        ))
+        .and(timezone_header)
+        .and(key_header)
+        .and(warp::path!("api" / "agent" / i32 / String / "config"))
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
              tz_opt: Option<String>,
+             key_b64: Option<String>,
              sensor_id: i32,
-             key_b64: String,
-             domain: String| async move {
+             domain_b64: String| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
-                let resp = observer.agent_config(sensor_id, key_b64, domain, tz).await;
+                let resp = observer
+                    .agent_config(
+                        sensor_id,
+                        key_b64.unwrap_or_default(),
+                        decode_b64(domain_b64),
+                        tz,
+                    )
+                    .await;
                 build_response(resp)
             },
         )
@@ -159,30 +177,45 @@ fn agent_config(
 fn set_agent_config(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let opt_timezone = warp::header::optional::<String>("X-TZ");
+    let timezone_header = warp::header::optional::<String>("X-TZ");
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::post())
-        .and(opt_timezone)
-        .and(warp::path!(
-            "api" / "agent" / i32 / String / String / "config"
-        ))
+        .and(timezone_header)
+        .and(key_header)
+        .and(warp::path!("api" / "agent" / i32 / String / "config"))
         .and(warp::body::json())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
              tz_opt: Option<String>,
+             key_b64: Option<String>,
              sensor_id: i32,
-             key_b64: String,
-             domain: String,
-             body| async move {
+             domain_b64: String,
+             body: _| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp = observer
-                    .set_agent_config(sensor_id, key_b64, domain, body, tz)
+                    .set_agent_config(
+                        sensor_id,
+                        key_b64.unwrap_or_default(),
+                        decode_b64(domain_b64),
+                        body,
+                        tz,
+                    )
                     .await;
                 build_response(resp)
             },
         )
         .boxed()
+}
+
+fn decode_b64(payload_b64: String) -> String {
+    if let Ok(payload_bytes) = base64::decode(payload_b64) {
+        if let Ok(payload) = String::from_utf8(payload_bytes) {
+            return payload;
+        }
+    }
+    String::default()
 }
 
 ///

@@ -71,19 +71,23 @@ fn unregister_sensor(
 fn sensor_status(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let opt_timezone = warp::header::optional::<String>("X-TZ");
+    let timezone_header = warp::header::optional::<String>("X-TZ");
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
-        .and(opt_timezone)
-        .and(warp::path!("api" / "sensor" / i32 / String))
+        .and(timezone_header)
+        .and(key_header)
+        .and(warp::path!("api" / "sensor" / i32))
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
              tz_opt: Option<String>,
-             sensor_id: i32,
-             key_b64: String| async move {
+             key_b64: Option<String>,
+             sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
-                let resp = observer.sensor_status(sensor_id, key_b64, tz).await;
+                let resp = observer
+                    .sensor_status(sensor_id, key_b64.unwrap_or_default(), tz)
+                    .await;
                 build_response(resp)
             },
         )
@@ -98,19 +102,23 @@ fn sensor_status(
 fn sensor_logs(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let opt_timezone = warp::header::optional::<String>("X-TZ");
+    let timezone_header = warp::header::optional::<String>("X-TZ");
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
-        .and(opt_timezone)
-        .and(warp::path!("api" / "sensor" / "log" / i32 / String))
+        .and(timezone_header)
+        .and(key_header)
+        .and(warp::path!("api" / "sensor" / i32 / "log"))
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>,
              tz_opt: Option<String>,
-             sensor_id: i32,
-             key_b64: String| async move {
+             key_b64: Option<String>,
+             sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
-                let resp = observer.sensor_logs(sensor_id, key_b64, tz).await;
+                let resp = observer
+                    .sensor_logs(sensor_id, key_b64.unwrap_or_default(), tz)
+                    .await;
                 build_response(resp)
             },
         )
@@ -126,12 +134,16 @@ fn sensor_logs(
 fn sensor_reload(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::post())
-        .and(warp::path!("api" / "sensor" / i32 / String / "reload"))
+        .and(key_header)
+        .and(warp::path!("api" / "sensor" / i32 / "reload"))
         .and_then(
-            |_observer: Arc<ConcurrentSensorObserver>, _sensor_id: i32, _key_b64: String| async move {
+            |_observer: Arc<ConcurrentSensorObserver>,
+             _key_b64: Option<String>,
+             _sensor_id: i32| async move {
                 // TODO: let resp = observer.reload_sensor(sensor_id, key_b64).await;
                 build_response(Ok(()))
             },

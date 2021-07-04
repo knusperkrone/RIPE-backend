@@ -1,7 +1,8 @@
-use std::env;
-use std::process::Command;
+//use std::env;
+//use std::process::Command;
 
 fn main() {
+    /*
     let cargo_src = env::var("CARGO_MANIFEST_DIR").unwrap();
     let cargo_out = env::var("OUT_DIR").unwrap();
 
@@ -23,4 +24,5 @@ fn main() {
         .args(&[wasm_target, wasm_out])
         .status()
         .unwrap();
+    */
 }

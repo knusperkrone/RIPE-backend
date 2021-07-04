@@ -302,6 +302,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae5588f6b3c3cb05239e90bd110f257254aecd01e4635400391aeae07497845"
+dependencies = [
+ "cfg-if 1.0.0",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1454,6 +1468,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4fd5641d01c8f18a23da7b6fe29298ff4b55afcccdf78973b24cf3175fee32e"
 
 [[package]]
+name = "percent_agent"
+version = "0.1.0"
+dependencies = [
+ "chrono-tz",
+ "ripe_core",
+ "serde",
+ "serde_json",
+ "slog",
+ "tokio",
+]
+
+[[package]]
 name = "pest"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2360,6 +2386,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_agent"
+version = "0.1.0"
+dependencies = [
+ "chrono-tz",
+ "ripe_core",
+ "slog",
+ "tokio",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2396,6 +2432,19 @@ checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
 dependencies = [
  "libc",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "time_agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "ripe_core",
+ "serde",
+ "serde_json",
+ "slog",
+ "tokio",
 ]
 
 [[package]]
@@ -2549,6 +2598,20 @@ checksum = "ebeb235c5847e2f82cfe0f07eb971d1e5f6804b18dac2ae16349cc604380f82f"
 dependencies = [
  "quote",
  "syn",
+]
+
+[[package]]
+name = "treshold_agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "crossbeam",
+ "ripe_core",
+ "serde",
+ "serde_json",
+ "slog",
+ "tokio",
 ]
 
 [[package]]
@@ -2793,6 +2856,10 @@ name = "wasm-bindgen-shared"
 version = "0.2.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7cff876b8f18eed75a66cf49b65e7f967cb354a7aa16003fb55dbfd25b44b4f"
+
+[[package]]
+name = "wasm_agent_builder"
+version = "0.1.0"
 
 [[package]]
 name = "wasmer"

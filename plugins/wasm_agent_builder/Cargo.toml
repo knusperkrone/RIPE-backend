@@ -3,6 +3,7 @@ name = "wasm_agent_builder"
 version = "0.1.0"
 authors = ["knusperkrone <aron.metzig@fau.de>"]
 edition = "2018"
+workspace = "../../"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

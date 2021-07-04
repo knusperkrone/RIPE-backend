@@ -1,17 +1,21 @@
 #! /usr/bin/python3
 
 import os
-import time
-import sys
 import subprocess
+import sys
 import threading
+import time
+
+DEFAULT_TARGET = 'debug'
+RELOAD_OUT = 'target/hot-reload'
 
 
 def start_ripe(lock):
-    subprocess.Popen(['rm', 'target/debug/*.so*'],
+    subprocess.Popen(['rm', f'target/{DEFAULT_TARGET}/*.so*'],
                      stderr=subprocess.PIPE).wait()
-    os.system('cargo build')
-    os.chdir('..')
+    subprocess.Popen(['rm', f'{RELOAD_OUT}/*.so*'],
+                     stderr=subprocess.PIPE).wait()
+    os.system('cargo build --all')
 
     lock.release()
     os.system('cargo run')
@@ -20,8 +24,9 @@ def start_ripe(lock):
 
 
 def reload_plugins():
-    print('Compiling..')
-    build = subprocess.Popen(['cargo', 'build'], stderr=subprocess.PIPE)
+    print(f'Compiling..')
+    build = subprocess.Popen(
+        ['cargo', 'build', '--all', f'--out-dir {RELOAD_OUT}'], stderr=subprocess.PIPE)
     stdout, stderr = build.communicate()
     output = stderr.decode('utf-8')
 
@@ -37,7 +42,7 @@ def reload_plugins():
             updated_plugins.append(lib_name)
 
     # list, filter and count existing plugins
-    os.chdir('target/debug')
+    os.chdir(f'{DEFAULT_TARGET}')
     libs = {}
     for entry in os.listdir('.'):
         needle = '.so'
@@ -48,22 +53,21 @@ def reload_plugins():
                 if not key in libs:
                     libs[key] = 0
                 libs[key] += 1
+    os.chdir('-')
 
     for k in libs:
         orig_name = f'{k}.so'
         new_name = f'{k}.so{libs[k] + 1}'
-        subprocess.Popen(['cp', orig_name, new_name])
+        subprocess.Popen(['cp', orig_name, f'../{DEFAULT_TARGET}/{new_name}'])
         print('updated', k)
-    os.chdir('../..')
 
 
 def main():
     lock = threading.Semaphore(0)
     threading.Thread(target=start_ripe, name="Ripe executor",
                      args=(lock,)).start()
-    lock.acquire()
-    time.sleep(0.1)
-    os.chdir('plugins')
+    lock.acquire()  # wait for app running
+    time.sleep(1)
 
     while True:
         print('Press enter to reload')

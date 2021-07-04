@@ -23,22 +23,19 @@ RUN cargo build --release --target x86_64-unknown-linux-gnu
 WORKDIR /ripe
 RUN rm ./app/src/*.rs
 RUN rm ./core/src/*.rs
-COPY ./app/src ./app/src
-COPY ./core/src ./core/src
-COPY ./core/build.rs ./core/build.rs
+COPY ./app ./app
+COPY ./core ./core
 
 #1.2b copy migrations
 WORKDIR /ripe/app
 COPY migrations ./migrations
 
-#1.2c build app for release
-RUN cargo build --release --target x86_64-unknown-linux-gnu
-
-#1.3 build plugins for release
+#1.2c copy plugins
 WORKDIR /ripe
-COPY ./plugins ./plugins
-WORKDIR /ripe/plugins
-RUN cargo build --release --target x86_64-unknown-linux-gnu
+COPY plugins ./plugins
+
+#1.2c build app for release
+RUN cargo build --all --release --target x86_64-unknown-linux-gnu
 
 #2 RUN
 FROM debian:buster-slim

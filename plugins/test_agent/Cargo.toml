@@ -3,6 +3,7 @@ name = "test_agent"
 version = "0.1.0"
 authors = ["Aron Metzig <aron.metzig@fau.de>"]
 edition = "2018"
+workspace = "../../"
 
 [lib]
 crate-type = ["cdylib"]

@@ -7,26 +7,32 @@ import threading
 import time
 
 DEFAULT_TARGET = 'debug'
-RELOAD_OUT = 'target/hot-reload'
+RELOAD_TARGET = 'hot-reload'
 
 
 def start_ripe(lock):
     subprocess.Popen(['rm', f'target/{DEFAULT_TARGET}/*.so*'],
                      stderr=subprocess.PIPE).wait()
-    subprocess.Popen(['rm', f'{RELOAD_OUT}/*.so*'],
+    subprocess.Popen(['rm', f'target/{RELOAD_TARGET}/*.so*'],
                      stderr=subprocess.PIPE).wait()
-    os.system('cargo build --all')
-
+    subprocess.Popen(['rm', '-rf', f'target/{RELOAD_TARGET}/new'],
+                     stderr=subprocess.PIPE).wait()
+    os.system(
+        f'cargo +nightly build --all -Z unstable-options --out-dir target/{RELOAD_TARGET}')
     lock.release()
-    os.system('cargo run')
+
+    os.system(f'mkdir -p ./target/{RELOAD_TARGET}')
+    os.environ.setdefault('PLUGIN_DIR', f'./target/{RELOAD_TARGET}')
+    os.system('cargo +nightly run')
     print('RIPE crashed')
     exit(1)
 
 
 def reload_plugins():
     print(f'Compiling..')
+
     build = subprocess.Popen(
-        ['cargo', 'build', '--all', f'--out-dir {RELOAD_OUT}'], stderr=subprocess.PIPE)
+        ['cargo', '+nightly', 'build', '--all', '--out-dir', f'target/{RELOAD_TARGET}/new', '-Z', 'unstable-options'], stderr=subprocess.PIPE)
     stdout, stderr = build.communicate()
     output = stderr.decode('utf-8')
 
@@ -42,8 +48,10 @@ def reload_plugins():
             updated_plugins.append(lib_name)
 
     # list, filter and count existing plugins
-    os.chdir(f'{DEFAULT_TARGET}')
+    base_dir = os.getcwd()
     libs = {}
+    os.chdir(f'target/{RELOAD_TARGET}')
+
     for entry in os.listdir('.'):
         needle = '.so'
         index = entry.find(needle)
@@ -53,13 +61,15 @@ def reload_plugins():
                 if not key in libs:
                     libs[key] = 0
                 libs[key] += 1
-    os.chdir('-')
 
+    os.chdir('new')
     for k in libs:
         orig_name = f'{k}.so'
         new_name = f'{k}.so{libs[k] + 1}'
-        subprocess.Popen(['cp', orig_name, f'../{DEFAULT_TARGET}/{new_name}'])
-        print('updated', k)
+        subprocess.Popen(
+            ['cp', orig_name, f'{base_dir}/target/{RELOAD_TARGET}/{new_name}'])
+        print(f'updated {k}_v{libs[k] + 1}')
+    os.chdir(base_dir)
 
 
 def main():

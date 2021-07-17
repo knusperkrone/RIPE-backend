@@ -229,8 +229,8 @@ impl Agent {
                 }
             };
         }
-        // unreachable
-        crit!(APP_LOGGING, "dispatch_iac endend for {}", agent.sensor_id);
+        // plugin update
+        debug!(APP_LOGGING, "dispatch_iac endend for {}", agent.sensor_id);
     }
 
     async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {

@@ -84,7 +84,18 @@ impl ConcurrentSensorObserver {
                 match msg {
                     SensorMessage::Data(data) => self.persist_sensor_data(sensor_id, data).await,
                     SensorMessage::Log(log) => self.persist_sensor_log(sensor_id, log).await,
-                    SensorMessage::Reconnect => self.resubscribe_sensors().await,
+                    SensorMessage::Reconnect => {
+                        let resubscribe_count = self.resubscribe_sensors().await;
+                        let all_count = self.sensor_count().await;
+                        if resubscribe_count != all_count {
+                            info!(
+                                APP_LOGGING,
+                                "Resubscribed {}/{} sensors", resubscribe_count, all_count
+                            )
+                        } else {
+                            info!(APP_LOGGING, "Resubscribed all sensors",)
+                        }
+                    }
                 };
             }
             crit!(APP_LOGGING, "Failed listening sensor data events");
@@ -208,8 +219,9 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    async fn resubscribe_sensors(&self) {
-        let container = self.container.write().await;
+    async fn resubscribe_sensors(&self) -> usize {
+        let mut count = 0;
+        let container = self.container.read().await;
         for sensor_mtx in container.sensors() {
             let sensor = sensor_mtx.lock().await;
             if let Err(e) = self.subscribe_sensor(&sensor).await {
@@ -219,8 +231,12 @@ impl ConcurrentSensorObserver {
                     sensor.id(),
                     e
                 );
+            } else {
+                debug!(APP_LOGGING, "Resubscribed sensor {}", sensor.id());
+                count += 1;
             }
         }
+        count
     }
 }
 

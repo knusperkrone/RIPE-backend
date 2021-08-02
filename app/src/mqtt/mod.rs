@@ -120,15 +120,17 @@ impl MqttSensorClientInner {
                         }
                     } else {
                         // Try reconnect
-                        if let Ok(cli) = future_self.read_cli().await {
-                            if let Ok(_) = cli.reconnect().wait_for(Duration::from_secs(5)) {
-                                if let Some(_) = future_self.broker().await {
-                                    info!(APP_LOGGING, "Reconnected to previous MQTT broker");
-                                    continue;
-                                }
-                            }
+                        let is_reconnected = if let Ok(cli) = future_self.read_cli().await {
+                            cli.reconnect().wait_for(Duration::from_secs(5)).is_ok()                        
+                        } else {
+                            false
+                        };
+
+                        if is_reconnected {
+                            info!(APP_LOGGING, "Reconnected to previous MQTT broker");
+                        } else {
+                            Self::do_connect(&future_self.clone()).await;
                         }
-                        Self::do_connect(&future_self.clone()).await;
                         while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
                             warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
                         }

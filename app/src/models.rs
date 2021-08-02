@@ -3,15 +3,58 @@ use crate::error::DBError;
 use crate::plugin::Agent;
 use std::string::String;
 
+#[cfg(debug_assertions)]
+macro_rules! sql_stmnt {
+    ($ret:ident, $stmt:expr) => {
+        sqlx::query_as!($ret, $stmt)
+    };
+    ($stmt:expr) => {
+        sqlx::query!($stmt)
+    };
+    ($ret:ident, $stmt:expr, $($bind:expr),*) => {
+        sqlx::query_as!($ret, $stmt,$($bind,)*)
+    };
+    ($stmt:expr, $($bind:expr),*) => {
+        sqlx::query!($stmt, $($bind,)*)
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! sql_stmnt {
+    ($ret:ident, $stmt:expr) => {
+        sqlx::query_as::<_ ,$ret>($stmt)
+    };
+    ($stmt:expr) => {
+        sqlx::query($stmt)
+    };
+    ($ret:ident, $stmt:expr, $($bind:expr),*) => {
+        sqlx::query_as::<_ ,$ret>($stmt)$(.bind($bind))*
+    };
+    ($stmt:expr, $($bind:expr),*) => {
+        sqlx::query($stmt)$(.bind($bind))*
+    };
+}
+
 pub mod dao {
     use chrono::{DateTime, NaiveDateTime, Utc};
     use ripe_core::SensorDataMessage;
 
     #[derive(sqlx::FromRow)]
+    pub(crate) struct CountRecord {
+        pub count: Option<i64>,
+    }
+
+    impl CountRecord {
+        pub fn count(self) -> i64 {
+            self.count.unwrap_or(0)
+        }
+    }
+
+    #[derive(sqlx::FromRow)]
     pub struct SensorDao {
-        id: i32,
-        key_b64: String,
-        name: String,
+        pub(crate) id: i32,
+        pub(crate) key_b64: String,
+        pub(crate) name: String,
     }
 
     impl SensorDao {
@@ -65,15 +108,15 @@ pub mod dao {
 
     #[derive(sqlx::FromRow)]
     pub struct SensorDataDao {
-        //id: i32,
-        //sensor_id: i32,
-        timestamp: NaiveDateTime,
-        battery: Option<f64>,
-        moisture: Option<f64>,
-        temperature: Option<f64>,
-        carbon: Option<i32>,
-        conductivity: Option<i32>,
-        light: Option<i32>,
+        // pub(crate) id: i32,
+        // pub(crate) sensor_id: i32,
+        pub(crate) timestamp: NaiveDateTime,
+        pub(crate) battery: Option<f64>,
+        pub(crate) moisture: Option<f64>,
+        pub(crate) temperature: Option<f64>,
+        pub(crate) carbon: Option<i32>,
+        pub(crate) conductivity: Option<i32>,
+        pub(crate) light: Option<i32>,
     }
 
     impl Into<SensorDataMessage> for SensorDataDao {
@@ -91,11 +134,12 @@ pub mod dao {
     }
 
     #[derive(sqlx::FromRow)]
+    #[allow(dead_code)]
     pub struct SensorLogDao {
-        // id: i32,
-        // sensor_id: i32,
-        time: NaiveDateTime,
-        log: std::string::String,
+        pub(crate) id: i32,
+        pub(crate) sensor_id: i32,
+        pub(crate) time: NaiveDateTime,
+        pub(crate) log: std::string::String,
     }
 
     impl SensorLogDao {
@@ -124,8 +168,8 @@ pub async fn establish_db_connection() -> Option<sqlx::PgPool> {
 }
 
 pub(crate) async fn check_schema(conn: &sqlx::PgPool) -> Result<(), DBError> {
-    sqlx::query("SELECT * FROM sensors LIMIT 1")
-        .execute(conn)
+    sql_stmnt!("SELECT count(*) as count FROM sensors")
+        .fetch_one(conn)
         .await?;
     Ok(())
 }
@@ -141,36 +185,35 @@ pub async fn create_new_sensor(
         name = opt_name.clone();
     } else {
         // generate name from current sensor count
-        let rows: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sensors")
+        let rows = sql_stmnt!(CountRecord, "SELECT count(*) as count FROM sensors")
             .fetch_one(conn)
             .await?;
-        name = format!("Sensor {}", &rows.0);
+        name = format!("Sensor {}", &rows.count());
     }
 
-    Ok(sqlx::query_as::<_, SensorDao>(
+    Ok(sql_stmnt!(
+        SensorDao,
         "INSERT INTO sensors (key_b64, name) VALUES ($1, $2) RETURNING *",
+        key_b64,
+        name
     )
-    .bind(key_b64)
-    .bind(name)
     .fetch_one(conn)
     .await?)
 }
 
 /// READ sensors
 pub async fn get_sensors(conn: &sqlx::PgPool) -> Result<Vec<SensorDao>, DBError> {
-    Ok(sqlx::query_as::<_, SensorDao>("SELECT * FROM sensors")
+    Ok(sql_stmnt!(SensorDao, "SELECT * FROM sensors")
         .fetch_all(conn)
         .await?)
 }
 
 /// DELETE agent_config/sensors
 pub async fn delete_sensor(conn: &sqlx::PgPool, remove_id: i32) -> Result<(), DBError> {
-    sqlx::query("DELETE FROM agent_configs WHERE sensor_id = $1")
-        .bind(remove_id)
+    sql_stmnt!("DELETE FROM agent_configs WHERE sensor_id = $1", remove_id)
         .execute(conn)
         .await?;
-    sqlx::query("DELETE FROM sensors WHERE id = $1")
-        .bind(remove_id)
+    sql_stmnt!("DELETE FROM sensors WHERE id = $1", remove_id)
         .execute(conn)
         .await?;
     Ok(())
@@ -181,15 +224,15 @@ pub async fn create_agent_config(
     conn: &sqlx::PgPool,
     config: &AgentConfigDao,
 ) -> Result<(), DBError> {
-    sqlx::query(
+    sql_stmnt!(
         r#"INSERT INTO agent_configs
                 (sensor_id, domain, agent_impl, state_json)
                 VALUES ($1, $2, $3, $4)"#,
+        config.sensor_id(),
+        config.domain(),
+        config.agent_impl(),
+        config.state_json()
     )
-    .bind(config.sensor_id())
-    .bind(config.domain())
-    .bind(config.agent_impl())
-    .bind(config.state_json())
     .execute(conn)
     .await?;
     Ok(())
@@ -200,10 +243,11 @@ pub async fn get_agent_config(
     conn: &sqlx::PgPool,
     sensor_dao: &SensorDao,
 ) -> Result<Vec<AgentConfigDao>, DBError> {
-    Ok(sqlx::query_as::<_, AgentConfigDao>(
+    Ok(sql_stmnt!(
+        AgentConfigDao,
         "SELECT * FROM agent_configs WHERE sensor_id = $1 ORDER BY domain ASC",
+        sensor_dao.id()
     )
-    .bind(sensor_dao.id())
     .fetch_all(conn)
     .await?)
 }
@@ -213,12 +257,14 @@ pub async fn update_agent_config(
     conn: &sqlx::PgPool,
     update: &AgentConfigDao,
 ) -> Result<(), DBError> {
-    sqlx::query("UPDATE agent_configs SET state_json = $1 WHERE sensor_id = $2 AND domain = $3")
-        .bind(update.state_json())
-        .bind(update.sensor_id())
-        .bind(update.domain())
-        .execute(conn)
-        .await?;
+    sql_stmnt!(
+        "UPDATE agent_configs SET state_json = $1 WHERE sensor_id = $2 AND domain = $3",
+        update.state_json(),
+        update.sensor_id(),
+        update.domain()
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
@@ -228,12 +274,12 @@ pub async fn delete_sensor_agent(
     remove_id: i32,
     agent: Agent,
 ) -> Result<(), DBError> {
-    sqlx::query(
+    sql_stmnt!(
         "DELETE FROM agent_configs WHERE sensor_id = $1 AND agent_impl = $2 AND domain = $3",
+        remove_id,
+        agent.agent_name(),
+        agent.domain()
     )
-    .bind(remove_id)
-    .bind(agent.agent_name())
-    .bind(agent.domain())
     .execute(conn)
     .await?;
     Ok(())
@@ -246,36 +292,36 @@ pub async fn insert_sensor_data(
     dto: ripe_core::SensorDataMessage,
     overleap: chrono::Duration,
 ) -> Result<(), DBError> {
-    let update_result = sqlx::query(r#"
-        UPDATE sensor_data 
-        SET battery = $3, moisture = $4, temperature = $5, carbon = $6, conductivity = $7, light = $8
-        WHERE sensor_id = $1 AND timestamp > NOW() - $2::text::interval"#,
+    let update_result = sql_stmnt!(
+        r#"UPDATE sensor_data 
+            SET battery = $3, moisture = $4, temperature = $5, carbon = $6, conductivity = $7, light = $8
+            WHERE sensor_id = $1 AND timestamp > NOW() - $2::text::interval"#,
+        sensor_id,
+        format!("'{} milliseconds'", overleap.num_milliseconds()),
+        dto.battery,
+        dto.moisture,
+        dto.temperature,
+        dto.carbon,
+        dto.conductivity,
+        dto.light
     )
-    .bind(sensor_id)
-    .bind(format!("'{} milliseconds'", overleap.num_milliseconds())) 
-    .bind(dto.battery)
-    .bind(dto.moisture)
-    .bind(dto.temperature)
-    .bind(dto.carbon)
-    .bind(dto.conductivity)
-    .bind(dto.light)
     .execute(conn)
     .await?;
 
     if update_result.rows_affected() == 0 {
-        sqlx::query(
+        sql_stmnt!(
             r#"INSERT INTO sensor_data
                 (sensor_id, timestamp, battery, moisture, temperature, carbon, conductivity, light)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+            sensor_id,
+            dto.timestamp.naive_utc(),
+            dto.battery,
+            dto.moisture,
+            dto.temperature,
+            dto.carbon,
+            dto.conductivity,
+            dto.light
         )
-        .bind(sensor_id)
-        .bind(dto.timestamp)
-        .bind(dto.battery)
-        .bind(dto.moisture)
-        .bind(dto.temperature)
-        .bind(dto.carbon)
-        .bind(dto.conductivity)
-        .bind(dto.light)
         .execute(conn)
         .await?;
     }
@@ -288,14 +334,16 @@ pub async fn get_latest_sensor_data(
     search_sensor_id: i32,
     search_key_b64: &String,
 ) -> Result<Option<SensorDataDao>, DBError> {
-    Ok(sqlx::query_as::<_, SensorDataDao>(
-        r#"SELECT * FROM sensor_data 
-                    JOIN sensors ON (sensor_data.sensor_id = sensors.id)
-                WHERE sensors.id = $1 AND sensors.key_b64 = $2
-                ORDER BY timestamp DESC LIMIT 1"#,
+    Ok(sql_stmnt!(
+        SensorDataDao,
+        r#"SELECT sd.timestamp, sd.battery, sd.moisture, sd.temperature, sd.carbon, sd.conductivity, sd.light  
+            FROM sensor_data as sd
+            JOIN sensors ON (sd.sensor_id = sensors.id)
+            WHERE sensors.id = $1 AND sensors.key_b64 = $2
+            ORDER BY timestamp DESC LIMIT 1"#,
+        search_sensor_id,
+        search_key_b64
     )
-    .bind(search_sensor_id)
-    .bind(search_key_b64)
     .fetch_optional(conn)
     .await?)
 }
@@ -305,12 +353,14 @@ pub async fn get_latest_sensor_data_unchecked(
     conn: &sqlx::PgPool,
     search_sensor_id: i32,
 ) -> Result<Option<SensorDataDao>, DBError> {
-    Ok(sqlx::query_as::<_, SensorDataDao>(
-        r#"SELECT * FROM sensor_data 
-                    JOIN sensors ON (sensor_data.sensor_id = sensors.id)
-                WHERE sensors.id = $1"#,
+    Ok(sql_stmnt!(
+        SensorDataDao,
+        r#"SELECT sd.timestamp, sd.battery, sd.moisture, sd.temperature, sd.carbon, sd.conductivity, sd.light  
+            FROM sensor_data as sd
+            JOIN sensors ON (sd.sensor_id = sensors.id)
+            WHERE sensors.id = $1"#,
+        search_sensor_id
     )
-    .bind(search_sensor_id)
     .fetch_optional(conn)
     .await?)
 }
@@ -325,29 +375,33 @@ pub async fn insert_sensor_log(
     let now = chrono::Utc::now().naive_utc();
     let trimmed = &msg[..std::cmp::min(255, msg.len())];
 
-    let log_count: (i64,) = sqlx::query_as("SELECT count(*) FROM sensor_log WHERE sensor_id = $1")
-        .bind(sensor_id)
-        .fetch_one(conn)
-        .await?;
+    let log_count = sql_stmnt!(
+        CountRecord,
+        "SELECT count(*) FROM sensor_log WHERE sensor_id = $1",
+        sensor_id
+    )
+    .fetch_one(conn)
+    .await?;
 
-    if log_count.0 >= max_count {
-        sqlx::query(
-            r#"
-        UPDATE sensor_log SET time = $1, log = $2 
-        WHERE id = (SELECT id FROM sensor_log WHERE sensor_id = $3 ORDER BY time ASC LIMIT 1)"#,
+    if log_count.count() >= max_count {
+        sql_stmnt!(
+            r#"UPDATE sensor_log SET time = $1, log = $2 
+                WHERE id = (SELECT id FROM sensor_log WHERE sensor_id = $3 ORDER BY time ASC LIMIT 1)"#,
+            now,
+            trimmed,
+            sensor_id
         )
-        .bind(now)
-        .bind(trimmed)
-        .bind(sensor_id)
         .execute(conn)
         .await?;
     } else {
-        sqlx::query("INSERT INTO sensor_log (sensor_id, time, log) VALUES ($1, $2, $3)")
-            .bind(sensor_id)
-            .bind(now)
-            .bind(trimmed)
-            .execute(conn)
-            .await?;
+        sql_stmnt!(
+            "INSERT INTO sensor_log (sensor_id, time, log) VALUES ($1, $2, $3)",
+            sensor_id,
+            now,
+            trimmed
+        )
+        .execute(conn)
+        .await?;
     }
     Ok(())
 }
@@ -357,12 +411,13 @@ pub async fn get_sensor_logs(
     conn: &sqlx::PgPool,
     sensor_id: i32,
 ) -> Result<Vec<dao::SensorLogDao>, DBError> {
-    Ok(
-        sqlx::query_as::<_, SensorLogDao>("SELECT * FROM sensor_log WHERE sensor_id = $1")
-            .bind(sensor_id)
-            .fetch_all(conn)
-            .await?,
+    Ok(sql_stmnt!(
+        SensorLogDao,
+        "SELECT * FROM sensor_log WHERE sensor_id = $1 ORDER BY time ASC",
+        sensor_id
     )
+    .fetch_all(conn)
+    .await?)
 }
 
 #[cfg(test)]

@@ -36,8 +36,8 @@ wasmer = "2"
 
 [target.'cfg(not(target_arch = "aarch64"))'.dependencies]
 paho-mqtt = { version = "0.9" }
-sqlx = { version = "0.5", features = [ "postgres", "migrate", "chrono", "runtime-tokio-native-tls" ] }
+sqlx = { version = "0.5", features = [ "postgres", "macros", "migrate", "chrono", "runtime-tokio-native-tls" ] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 paho-mqtt = { version = "0.9", features = [ "vendored-ssl" ] }
-sqlx = { version = "0.5", features = [ "postgres", "migrate", "chrono", "runtime-tokio-rustls" ] }
+sqlx = { version = "0.5", features = [ "postgres", "macros", "migrate", "chrono", "runtime-tokio-rustls" ] }

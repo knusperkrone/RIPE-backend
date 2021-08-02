@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono_tz::UTC;
 
@@ -64,7 +64,9 @@ async fn test_sensor_status() {
     let sensor_res = observer.register_sensor(None).await.unwrap();
 
     // execute
-    let res = observer.sensor_status(sensor_res.id, sensor_res.key, UTC).await;
+    let res = observer
+        .sensor_status(sensor_res.id, sensor_res.key, UTC)
+        .await;
 
     // validate
     assert!(res.is_ok());
@@ -116,10 +118,53 @@ async fn test_unregister_agent() {
 
 #[tokio::test]
 async fn test_agent_config() {
-    todo!()
+    // prepare
+    let domain = "TEST".to_owned();
+    let agent = "MockAgent".to_owned();
+    let observer = build_mocked_observer().await;
+    let sensor_res = observer.register_sensor(None).await.unwrap();
+    observer
+        .register_agent(
+            sensor_res.id,
+            sensor_res.key.clone(),
+            domain.clone(),
+            agent.clone(),
+        )
+        .await
+        .unwrap();
+
+    // execute
+    let config_res = observer
+        .agent_config(sensor_res.id, sensor_res.key, domain, UTC)
+        .await;
+
+    // validate
+    assert!(config_res.is_ok());
 }
 
 #[tokio::test]
 async fn test_set_agent_config() {
-    todo!()
+    // prepare
+    let domain = "TEST".to_owned();
+    let agent = "MockAgent".to_owned();
+    let observer = build_mocked_observer().await;
+    let sensor_res = observer.register_sensor(None).await.unwrap();
+    observer
+        .register_agent(
+            sensor_res.id,
+            sensor_res.key.clone(),
+            domain.clone(),
+            agent.clone(),
+        )
+        .await
+        .unwrap();
+
+    // execute
+    let expected_config = HashMap::new();
+    let config_res = observer
+        .set_agent_config(sensor_res.id, sensor_res.key, domain, expected_config, UTC)
+        .await;
+
+    // validate
+    assert!(config_res.is_ok());
 }

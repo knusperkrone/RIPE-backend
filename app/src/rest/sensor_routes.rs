@@ -240,9 +240,10 @@ mod test {
 
         // Execute
         let res = warp::test::request()
+            .header("X-KEY", register.key)
             .path(&format!(
-                "/api/sensor/{}/{}",
-                register.id as i32, register.key as String
+                "/api/sensor/{}",
+                register.id as i32
             ))
             .reply(&routes)
             .await;

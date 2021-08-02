@@ -118,6 +118,7 @@ fn on_agent_cmd(
              sensor_id: i32,
              domain_b64: String,
              body: dto::ForceRequest| async move {
+                //let key_b64 = Some("".to_owned());
                 let resp = observer
                     .on_agent_cmd(
                         sensor_id,
@@ -283,7 +284,7 @@ mod test {
     ) -> Result<impl warp::Reply, std::convert::Infallible> {
         println!("ERR: {:?}", err);
         Ok(warp::reply::with_status(
-            "",
+            format!("ERR: {:?}", err),
             warp::http::StatusCode::BAD_REQUEST,
         ))
     }
@@ -302,7 +303,8 @@ mod test {
         };
         let res = warp::test::request()
             .method("POST")
-            .path(&format!("/api/agent/{}/{}", sensor.id, sensor.key))
+            .header("X-KEY", sensor.key)
+            .path(&format!("/api/agent/{}", sensor.id))
             .json(&dto)
             .reply(&routes)
             .await;
@@ -333,7 +335,8 @@ mod test {
         let dto = dto::AgentDto { domain, agent_name };
         let res = warp::test::request()
             .method("DELETE")
-            .path(&format!("/api/agent/{}/{}", sensor.id, sensor.key))
+            .header("X-KEY", sensor.key)
+            .path(&format!("/api/agent/{}", sensor.id))
             .json(&dto)
             .reply(&routes)
             .await;
@@ -364,9 +367,11 @@ mod test {
         let dto = dto::ForceRequest { payload: 1 };
         let res = warp::test::request()
             .method("POST")
+            .header("X-KEY", sensor.key)
             .path(&format!(
-                "/api/agent/{}/{}/{}",
-                sensor.id, sensor.key, domain
+                "/api/agent/{}/{}",
+                sensor.id,
+                base64::encode(domain)
             ))
             .json(&dto)
             .reply(&routes)
@@ -397,9 +402,11 @@ mod test {
         // Execute
         let dto = dto::ForceRequest { payload: 1 };
         let res = warp::test::request()
+            .header("X-KEY", sensor.key)
             .path(&format!(
-                "/api/agent/{}/{}/{}/config",
-                sensor.id, sensor.key, domain
+                "/api/agent/{}/{}/config",
+                sensor.id,
+                base64::encode(domain)
             ))
             .json(&dto)
             .reply(&routes)
@@ -431,9 +438,10 @@ mod test {
         let dto = HashMap::<String, String>::new();
         let res = warp::test::request()
             .method("POST")
+            .header("X-KEY", sensor.key)
             .path(&format!(
-                "/api/agent/{}/{}/{}/config",
-                sensor.id, sensor.key, domain
+                "/api/agent/{}/{}/config",
+                sensor.id, base64::encode(domain)
             ))
             .json(&dto)
             .reply(&routes)

@@ -65,8 +65,12 @@ impl AgentFactory {
             .into_iter()
             .filter_map(Result::ok)
             .filter_map(|entry| {
-                let modified = entry.metadata().ok()?.created().ok()?;
-                return Some((entry, modified));
+                if let Ok(metadata) = entry.metadata() {
+                    let modified = metadata.created().unwrap_or(SystemTime::UNIX_EPOCH);
+                    Some((entry, modified))
+                } else {
+                    Some((entry, SystemTime::UNIX_EPOCH))
+                }
             })
             .filter_map(|(entry, modified)| {
                 let path: std::path::PathBuf = entry.path();

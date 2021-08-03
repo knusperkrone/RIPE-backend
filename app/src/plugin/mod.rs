@@ -66,9 +66,15 @@ impl AgentFactory {
             .filter_map(Result::ok)
             .filter_map(|entry| {
                 if let Ok(metadata) = entry.metadata() {
-                    let modified = metadata.created().unwrap_or(SystemTime::UNIX_EPOCH);
+                    let mut modified = SystemTime::UNIX_EPOCH;
+                    if let Ok(created) = metadata.created() {
+                        modified = created;
+                    } else {
+                        warn!(APP_LOGGING, "No created metadata for {:?}", entry);
+                    }
                     Some((entry, modified))
                 } else {
+                    warn!(APP_LOGGING, "No metadata for {:?}", entry);
                     Some((entry, SystemTime::UNIX_EPOCH))
                 }
             })

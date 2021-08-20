@@ -549,6 +549,7 @@ impl ConcurrentSensorObserver {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
                 error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
             } else {
+                debug!(APP_LOGGING, "Sent initial mqtt command to sensor {}", sensor.id());
                 break;
             }
         }

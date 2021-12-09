@@ -28,12 +28,45 @@ In order to update such a shared libary, it is just necessary to push the new ve
 
 ### Monolith
 
-Hopefully you won't as you will use state. Plugins are configured to get into a neutral state, when shutdown
+Plugins are configured to get into a neutral state, when shutdown
 but I'd recommend a very fast restart, after fixing a bug, adding a feature, etc.
 
 ### Plugin
 
 Use either the Rust 1.57 compiler and fullfil the rust trait contract or make a WASM module, as described in `plugins/wasm_agent_builder`, the application will do the runtime checking for you.
+
+#### Agent Implementations
+
+##### TimeAgent
+
+Sends a zero or a one depending if the current time of the day is inside a certain time period.
+
+Useful for watering and lighning.
+
+##### PercentAgent
+
+Holds a value between 0-100. Useful for things like a Fan.
+
+##### TestAgent
+
+Just debug purposes. Useful for showing the live updates of the application.
+
+##### ThresholdAgent
+
+Sends a zero or a one depending if the current sensor value is up or below a certain threshold.
+
+Useful for watering and heating.
+
+## MQTT
+
+Each client registers itself and get's a `SENSOR_ID` and a `SENSOR_KEY`, which serves a password.
+
+Also each client is able to add and remove a new agent at runtime.
+
+Each time the clients state is updated inside the monoilith, it publishes the commands on the according mqtt channel. A command is just a `int32`, the order of the commands is the alphanumeric order of the agent names,
+which is defined by the client.
+
+So ones registers  `(01_Water : TresholdAgent)` and `(02_PWM_Fan : PercentAgent)` the order of the command bytes is first the TresholdAgent payload, and second the payload of the PercentValue.
 
 ### High Availabiliy
 

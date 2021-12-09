@@ -1,5 +1,5 @@
 #1 BUILD app
-FROM rust:1.54 as build
+FROM rust:1.57 as build
 RUN apt-get update && \ 
         apt-get install -y cmake npm
 

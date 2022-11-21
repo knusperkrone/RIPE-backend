@@ -15,7 +15,7 @@ use crate::{
 };
 use chrono::Utc;
 use chrono_tz::Tz;
-use notify::{watcher, Watcher};
+use notify::{Config, PollWatcher, Watcher};
 use ripe_core::{AgentConfigType, SensorDataMessage};
 use sqlx::PgPool;
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
@@ -149,7 +149,14 @@ impl ConcurrentSensorObserver {
 
         // watch plugin dir
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = watcher(tx, Duration::from_secs(1)).unwrap();
+        let mut watcher = PollWatcher::new(
+            tx,
+            Config::default()
+                .with_poll_interval(Duration::from_secs(5))
+                .with_compare_contents(true),
+        )
+        .unwrap();
+
         if let Err(e) = watcher.watch(&plugin_dir, notify::RecursiveMode::NonRecursive) {
             crit!(APP_LOGGING, "Cannot watch plugin dir: {}", e);
             return;
@@ -549,7 +556,11 @@ impl ConcurrentSensorObserver {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
                 error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
             } else {
-                debug!(APP_LOGGING, "Sent initial mqtt command to sensor {}", sensor.id());
+                debug!(
+                    APP_LOGGING,
+                    "Sent initial mqtt command to sensor {}",
+                    sensor.id()
+                );
                 break;
             }
         }

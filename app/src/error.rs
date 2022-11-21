@@ -119,8 +119,11 @@ impl From<wasmer::InstantiationError> for WasmPluginError {
             wasmer::InstantiationError::Start(e) => {
                 WasmPluginError::ContractMismatch(format!("{}", e))
             }
-            wasmer::InstantiationError::HostEnvInitialization(e) => {
+            wasmer::InstantiationError::CpuFeature(e) => {
                 WasmPluginError::ContractMismatch(format!("{}", e))
+            }
+            wasmer::InstantiationError::DifferentStores => {
+                WasmPluginError::ContractMismatch(format!("Different Stores"))
             }
         }
     }

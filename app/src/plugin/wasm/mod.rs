@@ -2,7 +2,7 @@ mod agent;
 mod ticker;
 
 use crate::{error::WasmPluginError, logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use ripe_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
 use std::fs::{self, File};
 use std::io::Read;
@@ -11,27 +11,27 @@ use std::{collections::HashMap, ffi::OsStr};
 use ticker::TimerFuture;
 use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 use wasmer::{
-    imports, wat2wasm, Function, Instance, LazyInit, Memory, Module, NativeFunc, Store,
-    WasmTypeList, WasmerEnv,
+    imports, wat2wasm, AsStoreMut, Function, FunctionEnv, Instance, Memory, MemoryType, Module,
+    Store, TypedFunction, WasmTypeList,
 };
 
 use self::agent::WasmAgent;
 
 use super::{Agent, AgentFactoryTrait, AgentLib};
 
-#[derive(WasmerEnv, Clone)]
+#[derive(Clone)]
 pub struct WasmerInstanceCallEnv {
     sensor_id: i32,
     agent_name: String,
-    sender: Sender<AgentMessage>,
+    // sender: Sender<AgentMessage>,
     is_test: bool,
-    #[wasmer(export)]
-    memory: LazyInit<Memory>,
+    memory: Memory,
+    store: Arc<RwLock<Store>>,
 }
 
 pub(crate) struct WasmerMallocPtr<'a> {
     agent: &'a WasmAgent,
-    ptr: i32,
+    ptr: u64,
 }
 
 impl<'a> Drop for WasmerMallocPtr<'a> {
@@ -41,7 +41,7 @@ impl<'a> Drop for WasmerMallocPtr<'a> {
 }
 
 pub struct WasmAgentFactory {
-    store: Store,
+    store: Arc<RwLock<Store>>,
     libraries: HashMap<String, Arc<Module>>, // <agent_name, Module>
     agent_sender: UnboundedSender<SensorMQTTCommand>,
 }
@@ -128,7 +128,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
 impl WasmAgentFactory {
     pub fn new(sender: UnboundedSender<SensorMQTTCommand>) -> Self {
         WasmAgentFactory {
-            store: Store::default(),
+            store: Arc::new(RwLock::new(Store::default())),
             libraries: HashMap::new(),
             agent_sender: sender,
         }
@@ -143,7 +143,7 @@ impl WasmAgentFactory {
             return Err(WasmPluginError::Duplicate);
         }
 
-        let module = Module::new(&self.store, bytes)?;
+        let module = Module::new(&self.store.write().as_store_mut(), bytes)?;
         let (mock_sender, _mock_receiver) = channel::<AgentMessage>(64);
         let test_agent = self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
         if self.test_agent_contract(test_agent) {
@@ -172,28 +172,37 @@ impl WasmAgentFactory {
     fn build_wasm_agent(
         &self,
         module: &Module,
-        sender: Sender<AgentMessage>,
+        _sender: Sender<AgentMessage>,
         sensor_id: i32,
         agent_name: &str,
         old_state_opt: Option<&str>,
         is_test: bool,
     ) -> Result<WasmAgent, WasmPluginError> {
         // setup wasmer env
-        let env = WasmerInstanceCallEnv {
-            sensor_id,
-            sender,
-            is_test,
-            agent_name: agent_name.to_owned(),
-            memory: LazyInit::default(),
-        };
+        let env = FunctionEnv::new(
+            &mut self.store.write().as_store_mut(),
+            WasmerInstanceCallEnv {
+                sensor_id,
+                // sender,
+                is_test,
+                agent_name: agent_name.to_owned(),
+                store: self.store.clone(),
+                memory: Memory::new(
+                    &mut self.store.write().as_store_mut(),
+                    MemoryType::new(1, None, true),
+                )
+                .expect("Failed to init wasmer memory"),
+            },
+        );
+        let mut store = self.store.write();
         let import_object = imports! {
             "env" => {
-                "abort" => Function::new_native_with_env(&self.store, env.clone(), stubs::abort),
-                "sleep" => Function::new_native_with_env(&self.store, env.clone(), stubs::sleep),
-                "log" => Function::new_native_with_env(&self.store, env.clone(), stubs::log),
+                "abort" => Function::new_typed_with_env(&mut store.as_store_mut(), &env, stubs::abort),
+                "sleep" => Function::new_typed_with_env(&mut store.as_store_mut(), &env, stubs::sleep),
+                "log" => Function::new_typed_with_env(&mut store.as_store_mut(), &env, stubs::log),
             }
         };
-        let instance = Instance::new(&module, &import_object)?;
+        let instance = Instance::new(&mut store.as_store_mut(), &module, &import_object)?;
 
         // check if module fullfills contract
 
@@ -207,9 +216,10 @@ impl WasmAgentFactory {
         let cmd = self.get_native_fn(&instance, "getCmd")?;
         let config = self.get_native_fn(&instance, "getConfig")?;
         let set_config = self.get_native_fn(&instance, "setConfig")?;
-        let build_agent = self.get_native_fn::<i32, i32>(&instance, "buildAgent")?;
+        let build_agent = self.get_native_fn::<u64, u64>(&instance, "buildAgent")?;
         let agent = WasmAgent {
             instance,
+            store: self.store.clone(),
             error_indicator: Mutex::new(None),
             wasm_malloc: malloc,
             wasm_free: free,
@@ -226,9 +236,9 @@ impl WasmAgentFactory {
         // init wasmer_agent with prev_state
         if let Some(old_state) = old_state_opt {
             let alloced = agent.write(&old_state)?;
-            build_agent.call(alloced.ptr)?
+            build_agent.call(&mut store.as_store_mut(), alloced.ptr)?
         } else {
-            build_agent.call(0)?
+            build_agent.call(&mut store.as_store_mut(), 0)?
         };
 
         Ok(agent)
@@ -238,7 +248,7 @@ impl WasmAgentFactory {
         &self,
         instance: &Instance,
         name: &str,
-    ) -> Result<NativeFunc<Args, Rets>, WasmPluginError>
+    ) -> Result<TypedFunction<Args, Rets>, WasmPluginError>
     where
         Args: WasmTypeList,
         Rets: WasmTypeList,
@@ -250,7 +260,7 @@ impl WasmAgentFactory {
                 "Functionn {} not implemented",
                 name
             ))))?
-            .native::<Args, Rets>()
+            .typed::<Args, Rets>(&*self.store.write())
             .map_err(|e| WasmPluginError::ContractMismatch(format!("{} - {}", name, e,)))
     }
 
@@ -274,64 +284,57 @@ impl WasmAgentFactory {
 }
 
 mod stubs {
+    use wasmer::{AsStoreRef, FunctionEnvMut};
+
     use crate::plugin::logging::PLUGIN_LOGGING;
 
     use super::*;
 
     pub fn abort(
-        env: &WasmerInstanceCallEnv,
-        msg_ptr: i32,
-        filename_ptr: i32,
+        env: FunctionEnvMut<WasmerInstanceCallEnv>,
+        msg_ptr: u64,
+        filename_ptr: u64,
         line_nr: i32,
         col_nr: i32,
     ) {
-        if let Some(memory) = env.memory.get_ref() {
-            let msg = read_c_str(memory, msg_ptr).unwrap_or_default();
-            let filename = read_c_str(memory, filename_ptr).unwrap_or_default();
-            error!(
-                PLUGIN_LOGGING,
-                "sensor[{}][{}] ABORT with {} at {}:{}:{}",
-                env.sensor_id,
-                env.agent_name,
-                msg,
-                filename,
-                line_nr,
-                col_nr,
-            );
-        } else {
-            error!(
-                PLUGIN_LOGGING,
-                "sensor[{}][{}] ABORT without memory!", env.sensor_id, env.agent_name,
-            );
-        }
+        let env = env.data();
+        let store = env.store.read();
+        let msg = read_c_str(&store.as_store_ref(), &env.memory, msg_ptr).unwrap_or_default();
+        let filename =
+            read_c_str(&store.as_store_ref(), &env.memory, filename_ptr).unwrap_or_default();
+        error!(
+            PLUGIN_LOGGING,
+            "sensor[{}][{}] ABORT with {} at {}:{}:{}",
+            env.sensor_id,
+            env.agent_name,
+            msg,
+            filename,
+            line_nr,
+            col_nr,
+        );
     }
 
-    pub fn log(env: &WasmerInstanceCallEnv, ptr: i32) {
+    pub fn log(env: FunctionEnvMut<WasmerInstanceCallEnv>, ptr: u64) {
+        let env = env.data();
         if !env.is_test {
             return;
         }
 
-        if let Some(memory) = env.memory.get_ref() {
-            if let Some(msg) = read_c_str(memory, ptr) {
-                debug!(
-                    PLUGIN_LOGGING,
-                    "sensor[{}][{}] log: {}", env.sensor_id, env.agent_name, msg
-                );
-            } else {
-                warn!(
-                    PLUGIN_LOGGING,
-                    "sensor[{}][{}] invalid msg buffer!", env.sensor_id, env.agent_name
-                );
-            }
-        } else {
-            error!(
+        if let Some(msg) = read_c_str(&env.store.read().as_store_ref(), &env.memory, ptr) {
+            debug!(
                 PLUGIN_LOGGING,
-                "sensor[{}][{}] LOG without memory!", env.sensor_id, env.agent_name,
+                "sensor[{}][{}] log: {}", env.sensor_id, env.agent_name, msg
+            );
+        } else {
+            warn!(
+                PLUGIN_LOGGING,
+                "sensor[{}][{}] invalid msg buffer!", env.sensor_id, env.agent_name
             );
         }
     }
 
-    pub fn sleep(env: &WasmerInstanceCallEnv, ms: u64) {
+    pub fn sleep(env: FunctionEnvMut<WasmerInstanceCallEnv>, ms: u64) {
+        let env = env.data();
         debug!(
             PLUGIN_LOGGING,
             "sensor[{}][{}] sleep for {}", env.sensor_id, env.agent_name, ms
@@ -341,12 +344,11 @@ mod stubs {
         });
     }
 
-    pub fn read_c_str(memory: &Memory, mut ptr: i32) -> Option<String> {
-        let view = memory.view::<u8>();
+    pub fn read_c_str(store: &impl AsStoreRef, memory: &Memory, mut ptr: u64) -> Option<String> {
+        let view = memory.view(store);
         let mut buffer = Vec::with_capacity(128);
         loop {
-            if let Some(cell) = view.get(ptr as usize) {
-                let byte = cell.get();
+            if let Ok(byte) = view.read_u8(ptr) {
                 if byte == 0 {
                     break;
                 }

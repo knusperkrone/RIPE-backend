@@ -9,9 +9,9 @@ crate_type = ["lib"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.5"
+chrono-tz = "0.8"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1.7", features = ["full"] }
+tokio = { version = "1.22", features = ["full"] }
 slog = "2.7" 
 
 [dev-dependencies]

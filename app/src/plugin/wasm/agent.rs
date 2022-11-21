@@ -1,24 +1,25 @@
 use super::{stubs, WasmerMallocPtr};
 use crate::{error::WasmPluginError, logging::APP_LOGGING};
 use chrono_tz::Tz;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use ripe_core::{AgentTrait, AgentUIDecorator};
-use std::collections::HashMap;
-use wasmer::{Instance, Memory, NativeFunc};
+use std::{collections::HashMap, sync::Arc};
+use wasmer::{AsStoreMut, AsStoreRef, Instance, Memory, Store, TypedFunction};
 
 pub struct WasmAgent {
     pub instance: Instance,
+    pub store: Arc<RwLock<Store>>,
     pub error_indicator: Mutex<Option<WasmPluginError>>,
-    pub wasm_malloc: NativeFunc<i32, i32>, // size -> memory_ptr
-    pub wasm_free: NativeFunc<i32, ()>,    // memory_ptr -> void
-    pub wasm_handle_data: NativeFunc<i32, ()>, // data_str_ptr -> void
-    pub wasm_handle_cmd: NativeFunc<i64, ()>, // payload -> void
-    pub wasm_render_ui: NativeFunc<i32, i32>, // data_str_ptr -> void
-    pub wasm_deserialize: NativeFunc<(), i32>, // () -> str_ptr
-    pub wasm_state: NativeFunc<(), i32>,   // () -> str_ptr
-    pub wasm_cmd: NativeFunc<(), i32>,     // () -> str_ptr
-    pub wasm_config: NativeFunc<(), i32>,  // () -> str_ptr
-    pub wasm_set_config: NativeFunc<i32, i32>, // data_str_ptr -> str_ptr
+    pub wasm_malloc: TypedFunction<u64, u64>, // size -> memory_ptr
+    pub wasm_free: TypedFunction<u64, ()>,    // memory_ptr -> void
+    pub wasm_handle_data: TypedFunction<u64, ()>, // data_str_ptr -> void
+    pub wasm_handle_cmd: TypedFunction<i64, ()>, // payload -> void
+    pub wasm_render_ui: TypedFunction<u64, u64>, // data_str_ptr -> void
+    pub wasm_deserialize: TypedFunction<(), u64>, // () -> str_ptr
+    pub wasm_state: TypedFunction<(), u64>,   // () -> str_ptr
+    pub wasm_cmd: TypedFunction<(), i32>,     // () -> str_ptr
+    pub wasm_config: TypedFunction<(), u64>,  // () -> str_ptr
+    pub wasm_set_config: TypedFunction<u64, u64>, // data_str_ptr -> str_ptr
 }
 
 impl WasmAgent {
@@ -35,28 +36,28 @@ impl WasmAgent {
     pub(crate) fn write(&self, msg: &str) -> Result<WasmerMallocPtr, WasmPluginError> {
         // malloc
         let memory: &Memory = self.instance.exports.get("memory")?;
-        let len = msg.bytes().len() as i32;
+        let mut store = self.store.write();
+
+        let len = msg.bytes().len() as u64;
         let ptr = self
             .wasm_malloc
-            .call(len)
-            .map_err(|e| self.inidicate_error(&"write", e))?;
+            .call(&mut store.as_store_mut(), len)
+            .map_err(|e| self.inidicate_error(&"write", e))? as u64;
         // write bytes
-        let view = memory.view();
-        let heap_view = view[ptr as usize..(ptr + len) as usize].iter();
-        for (byte, cell) in msg.bytes().zip(heap_view) {
-            cell.set(byte);
-        }
+        let bytes = msg.bytes().clone().collect::<Vec<u8>>();
+        let view = memory.view(&mut store.as_store_mut());
+        let _ = view.write(ptr, &bytes);
 
         Ok(WasmerMallocPtr { agent: self, ptr })
     }
 
-    pub(crate) fn read(&self, ptr: i32) -> Option<String> {
+    pub(crate) fn read(&self, ptr: u64) -> Option<String> {
         let memory: &Memory = self.instance.exports.get("memory").unwrap();
-        stubs::read_c_str(memory, ptr)
+        stubs::read_c_str(&self.store.read().as_store_ref(), memory, ptr)
     }
 
-    pub(crate) fn free(&self, ptr: i32) -> Result<(), WasmPluginError> {
-        Ok(self.wasm_free.call(ptr)?)
+    pub(crate) fn free(&self, ptr: u64) -> Result<(), WasmPluginError> {
+        Ok(self.wasm_free.call(&mut *self.store.write(), ptr)?)
     }
 
     pub(crate) fn has_error(&self) -> bool {
@@ -82,7 +83,7 @@ impl AgentTrait for WasmAgent {
 
         let _ = self
             .wasm_handle_data
-            .call(alloced.ptr)
+            .call(&mut *self.store.write(), alloced.ptr)
             .map_err(|e| self.inidicate_error(&"handle_data", e));
     }
 
@@ -93,7 +94,7 @@ impl AgentTrait for WasmAgent {
 
         let _ = self
             .wasm_handle_cmd
-            .call(payload)
+            .call(&mut *self.store.write(), payload)
             .map_err(|e| self.inidicate_error(&"handle_cmd", e));
     }
 
@@ -108,7 +109,10 @@ impl AgentTrait for WasmAgent {
         let data_json = serde_json::to_string(data).unwrap();
 
         if let Ok(alloced) = self.write(&data_json) {
-            match self.wasm_render_ui.call(alloced.ptr) {
+            match self
+                .wasm_render_ui
+                .call(&mut *self.store.write(), alloced.ptr)
+            {
                 Ok(json_ptr) => {
                     if let Some(json_str) = self.read(json_ptr) {
                         if let Ok(ui) = serde_json::from_str(&json_str) {
@@ -131,7 +135,7 @@ impl AgentTrait for WasmAgent {
 
     fn state(&self) -> ripe_core::AgentState {
         if !self.has_error() {
-            if let Ok(json_ptr) = self.wasm_state.call() {
+            if let Ok(json_ptr) = self.wasm_state.call(&mut *self.store.write()) {
                 if let Some(json_str) = self.read(json_ptr) {
                     if let Ok(state) = serde_json::from_str(&json_str) {
                         return state;
@@ -149,13 +153,13 @@ impl AgentTrait for WasmAgent {
         if self.has_error() {
             0
         } else {
-            self.wasm_cmd.call().unwrap_or(0)
+            self.wasm_cmd.call(&mut *self.store.write()).unwrap_or(0)
         }
     }
 
     fn deserialize(&self) -> String {
         if !self.has_error() {
-            if let Ok(json_ptr) = self.wasm_deserialize.call() {
+            if let Ok(json_ptr) = self.wasm_deserialize.call(&mut *self.store.write()) {
                 if let Some(json_str) = self.read(json_ptr) {
                     return json_str;
                 }
@@ -169,7 +173,7 @@ impl AgentTrait for WasmAgent {
     fn config(&self, _timezone: Tz) -> HashMap<String, (String, ripe_core::AgentConfigType)> {
         type Map = HashMap<String, (String, ripe_core::AgentConfigType)>;
         if !self.has_error() {
-            if let Ok(json_ptr) = self.wasm_config.call() {
+            if let Ok(json_ptr) = self.wasm_config.call(&mut *self.store.write()) {
                 if let Some(json_str) = self.read(json_ptr) {
                     if let Ok(ui) = serde_json::from_str::<Map>(&json_str) {
                         return ui;
@@ -194,7 +198,10 @@ impl AgentTrait for WasmAgent {
         let data_json = serde_json::to_string(values).unwrap();
         let alloced = self.write(&data_json).unwrap();
 
-        if let Ok(json_ptr) = self.wasm_set_config.call(alloced.ptr) {
+        if let Ok(json_ptr) = self
+            .wasm_set_config
+            .call(&mut *self.store.write(), alloced.ptr)
+        {
             if let Some(json_str) = self.read(json_ptr) {
                 if let Ok(success) = serde_json::from_str(&json_str) {
                     return success;

@@ -18,27 +18,24 @@ fn health(
         .and_then(|observer: Arc<ConcurrentSensorObserver>| async move {
             use tokio::time::timeout;
             let duration = std::time::Duration::from_millis(500);
-            let mqtt_broker = timeout(duration.clone(), observer.mqtt_broker())
-                .await
-                .unwrap_or(Some("TIMEOUT".to_owned()));
-            let database_state = timeout(duration.clone(), observer.check_db())
-                .await
-                .unwrap_or("TIMEOUT".to_owned());
-            let sensor_count = timeout(duration.clone(), observer.sensor_count())
-                .await
-                .unwrap_or(usize::MAX);
-            let active_agents = timeout(duration.clone(), observer.agents())
-                .await
-                .unwrap_or(vec!["TIMEOUT".to_owned()]);
+            let results = tokio::join!(
+                timeout(duration.clone(), observer.mqtt_broker()),
+                timeout(duration.clone(), observer.check_db()),
+                timeout(duration.clone(), observer.sensor_count()),
+                timeout(duration.clone(), observer.agents())
+            );
+            let mqtt_broker = results.0.unwrap_or(Some("TIMEOUT".to_owned()));
+            let database_state = results.1.unwrap_or("TIMEOUT".to_owned());
+            let sensor_count = results.2.unwrap_or(usize::MAX);
+            let active_agents = results.3.unwrap_or(vec!["TIMEOUT".to_owned()]);
 
-            let ret = dto::HealthyDto {
+            build_response(Ok(dto::HealthyDto {
                 healthy: true,
                 mqtt_broker,
                 database_state,
                 sensor_count,
                 active_agents,
-            };
-            build_response(Ok(ret))
+            }))
         })
         .boxed()
 }

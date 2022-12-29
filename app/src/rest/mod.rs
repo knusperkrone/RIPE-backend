@@ -22,11 +22,15 @@ pub struct ErrorResponseDto {
 pub fn build_response<T: serde::Serialize>(
     resp: Result<T, ObserverError>,
 ) -> Result<impl warp::Reply, Infallible> {
+    build_response_with_status(resp, StatusCode::OK)
+}
+
+pub fn build_response_with_status<T: serde::Serialize>(
+    resp: Result<T, ObserverError>,
+    status: StatusCode,
+) -> Result<impl warp::Reply, Infallible> {
     match resp {
-        Ok(data) => Ok(warp::reply::with_status(
-            warp::reply::json(&data),
-            StatusCode::OK,
-        )),
+        Ok(data) => Ok(warp::reply::with_status(warp::reply::json(&data), status)),
         Err(ObserverError::User(err)) => {
             warn!(APP_LOGGING, "UserRequest error: {}", err);
             let json = warp::reply::json(&ErrorResponseDto {

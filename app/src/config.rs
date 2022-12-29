@@ -8,10 +8,10 @@ pub struct Config {
 
 struct InnerConfig {
     database_url: String,
-    mqtt_brokers: Vec<String>,
+    mqtt_broker_tcp: String,
+    mqtt_broker_wss: String,
     plugin_dir: String,
     server_port: String,
-    mqtt_index: usize,
     mqtt_timeout_ms: u64,
     mqtt_send_retries: usize,
     mqtt_log_count: i64,
@@ -23,16 +23,14 @@ impl Config {
         inner.database_url.clone()
     }
 
-    pub fn current_mqtt_broker(&self) -> String {
+    pub fn mqtt_broker_tcp(&self) -> String {
         let inner = self.inner.read();
-        inner.mqtt_brokers[inner.mqtt_index].clone()
+        inner.mqtt_broker_tcp.clone()
     }
 
-    pub fn next_mqtt_broker(&self) -> String {
-        let mut inner = self.inner.write();
-        inner.mqtt_index = (inner.mqtt_index + 1) % inner.mqtt_brokers.len();
-
-        inner.mqtt_brokers[inner.mqtt_index].clone()
+    pub fn mqtt_broker_wss(&self) -> String {
+        let inner = self.inner.read();
+        inner.mqtt_broker_wss.clone()
     }
 
     pub fn mqtt_timeout_ms(&self) -> u64 {
@@ -64,11 +62,8 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
     let server_port = env::var("SERVER_PORT").expect("SERVER_PORT must be set");
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let plugin_dir = std::env::var("PLUGIN_DIR").expect("PLUGIN_DIR must be set");
-    let mqtt_brokers: Vec<String> = env::var("MQTT_BROKERS")
-        .expect("MQTT_BROKERS must be set")
-        .split(",")
-        .map(|s| s.trim().to_owned())
-        .collect();
+    let mqtt_broker_tcp = env::var("MQTT_BROKER_TCP").expect("MQTT_BROKER_TCP must be set");
+    let mqtt_broker_wss = env::var("MQTT_BROKER_WSS").expect("MQTT_BROKER_WSS must be set");
     let mqtt_timeout_ms = std::env::var("MQTT_TIMEOUT_MS")
         .expect("MQTT_TIMEOUT_MS must be set")
         .parse()
@@ -82,20 +77,16 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
         .parse()
         .unwrap();
 
-    if mqtt_brokers.len() == 0 {
-        panic!("No MQTT-Brokers provided");
-    }
-
     Config {
         inner: RwLock::new(InnerConfig {
             server_port,
             database_url,
             plugin_dir,
-            mqtt_brokers,
+            mqtt_broker_tcp,
+            mqtt_broker_wss,
             mqtt_timeout_ms,
             mqtt_log_count,
             mqtt_send_retries,
-            mqtt_index: 0,
         }),
     }
 });

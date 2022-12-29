@@ -8,7 +8,7 @@ use crate::models::{
 };
 use crate::mqtt::MqttSensorClient;
 use crate::plugin::AgentFactory;
-use crate::rest::{AgentStatusDto, SensorCredentialDto, SensorStatusDto};
+use crate::rest::{AgentStatusDto, BrokerDto, SensorCredentialDto, SensorStatusDto};
 use crate::{
     error::{DBError, ObserverError},
     rest::AgentDto,
@@ -260,8 +260,12 @@ impl ConcurrentSensorObserver {
         }
     }
 
-    pub async fn mqtt_broker(&self) -> Option<String> {
-        self.mqtt_client.broker().await
+    pub async fn mqtt_broker_tcp(&self) -> Option<String> {
+        self.mqtt_client.broker_tcp().await
+    }
+
+    pub async fn mqtt_broker_wss(&self) -> Option<String> {
+        self.mqtt_client.broker_wss().await
     }
 
     pub async fn sensor_count(&self) -> usize {
@@ -312,7 +316,10 @@ impl ConcurrentSensorObserver {
         Ok(SensorCredentialDto {
             id: sensor_id,
             key: key_b64,
-            broker: None,
+            broker: BrokerDto {
+                tcp: None,
+                wss: None,
+            },
         })
     }
 
@@ -350,7 +357,10 @@ impl ConcurrentSensorObserver {
             name: sensor.name().clone(),
             data: data,
             agents: agents,
-            broker: self.mqtt_client.broker().await,
+            broker: BrokerDto {
+                tcp: self.mqtt_client.broker_tcp().await,
+                wss: self.mqtt_client.broker_wss().await,
+            },
         })
     }
 
@@ -538,7 +548,7 @@ impl ConcurrentSensorObserver {
         agent_factory: &AgentFactory,
         sensor_dao: SensorDao,
         configs: Option<Vec<AgentConfigDao>>,
-    ) -> Result<(i32, Option<String>), ObserverError> {
+    ) -> Result<(i32, BrokerDto), ObserverError> {
         let sensor_id = sensor_dao.id();
         let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(vec![]), &agent_factory)?;
 
@@ -547,10 +557,7 @@ impl ConcurrentSensorObserver {
         Ok((sensor_id, mqtt_broker))
     }
 
-    async fn subscribe_sensor(
-        &self,
-        sensor: &SensorHandle,
-    ) -> Result<Option<String>, ObserverError> {
+    async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<BrokerDto, ObserverError> {
         self.mqtt_client.subscribe_sensor(sensor).await?;
         for _ in 0..CONFIG.mqtt_send_retries() {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
@@ -564,7 +571,10 @@ impl ConcurrentSensorObserver {
                 break;
             }
         }
-        Ok(self.mqtt_client.broker().await)
+        Ok(BrokerDto {
+            tcp: self.mqtt_broker_tcp().await,
+            wss: self.mqtt_broker_wss().await,
+        })
     }
 
     fn generate_sensor_key(&self) -> String {

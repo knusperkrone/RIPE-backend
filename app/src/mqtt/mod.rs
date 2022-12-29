@@ -49,8 +49,12 @@ impl MqttSensorClient {
         MqttSensorClientInner::connect(self.inner.clone()).await
     }
 
-    pub async fn broker(&self) -> Option<String> {
-        self.inner.broker().await
+    pub async fn broker_wss(&self) -> Option<String> {
+        self.inner.broker_wss().await
+    }
+
+    pub async fn broker_tcp(&self) -> Option<String> {
+        self.inner.broker_tcp().await
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
@@ -121,7 +125,7 @@ impl MqttSensorClientInner {
                     } else {
                         // Try reconnect
                         let is_reconnected = if let Ok(cli) = future_self.read_cli().await {
-                            cli.reconnect().wait_for(Duration::from_secs(5)).is_ok()                        
+                            cli.reconnect().wait_for(Duration::from_secs(5)).is_ok()
                         } else {
                             false
                         };
@@ -142,10 +146,19 @@ impl MqttSensorClientInner {
         ));
     }
 
-    pub async fn broker(&self) -> Option<String> {
+    pub async fn broker_tcp(&self) -> Option<String> {
         if let Ok(cli) = self.read_cli().await {
             if cli.is_connected() {
-                return Some(CONFIG.current_mqtt_broker());
+                return Some(CONFIG.mqtt_broker_tcp());
+            }
+        }
+        None
+    }
+
+    pub async fn broker_wss(&self) -> Option<String> {
+        if let Ok(cli) = self.read_cli().await {
+            if cli.is_connected() {
+                return Some(CONFIG.mqtt_broker_wss());
             }
         }
         None
@@ -295,7 +308,7 @@ impl MqttSensorClientInner {
 
     async fn do_connect(self: &Arc<Self>) {
         loop {
-            let mqtt_uri = vec![CONFIG.next_mqtt_broker().clone()];
+            let mqtt_uri = vec![CONFIG.mqtt_broker_tcp().clone()];
             let conn_opts = ConnectOptionsBuilder::new()
                 .server_uris(&mqtt_uri)
                 .keep_alive_interval(Duration::from_secs(3))

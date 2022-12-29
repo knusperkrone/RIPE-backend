@@ -165,10 +165,16 @@ pub mod dto {
     }
 
     #[derive(Debug, Serialize, Deserialize)]
+    pub struct BrokerDto {
+        pub tcp: Option<String>,
+        pub wss: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
     pub struct SensorCredentialDto {
         pub id: i32,
         pub key: String,
-        pub broker: Option<String>,
+        pub broker: BrokerDto,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -176,7 +182,7 @@ pub mod dto {
         pub name: String,
         pub data: SensorDataMessage,
         pub agents: Vec<AgentStatusDto>,
-        pub broker: Option<String>,
+        pub broker: BrokerDto,
     }
 }
 
@@ -241,10 +247,7 @@ mod test {
         // Execute
         let res = warp::test::request()
             .header("X-KEY", register.key)
-            .path(&format!(
-                "/api/sensor/{}",
-                register.id as i32
-            ))
+            .path(&format!("/api/sensor/{}", register.id as i32))
             .reply(&routes)
             .await;
 

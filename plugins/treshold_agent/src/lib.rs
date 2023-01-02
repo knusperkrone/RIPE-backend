@@ -105,9 +105,13 @@ impl AgentTrait for ThresholdAgent {
         let watering_delta = Utc::now()
             - self
                 .last_action
-                .unwrap_or(DateTime::from_utc(NaiveDateTime::from_timestamp(0, 0), Utc));
+                .unwrap_or(DateTime::from_utc(NaiveDateTime::MIN, Utc));
         if watering_delta.num_milliseconds() < self.action_cooldown_ms {
-            debug!(self.logger, "Still in cooldown for {} ms", self.action_cooldown_ms - watering_delta.num_milliseconds());
+            debug!(
+                self.logger,
+                "Still in cooldown for {} ms",
+                self.action_cooldown_ms - watering_delta.num_milliseconds()
+            );
             return;
         }
 
@@ -125,7 +129,10 @@ impl AgentTrait for ThresholdAgent {
                 task.kickoff(false, until, self.logger.clone(), self.sender.clone());
             }
         } else {
-            debug!(self.logger, "{} moisture was fine {}% < {}%", NAME, moisture, self.min_threshold);
+            debug!(
+                self.logger,
+                "{} moisture was fine {}% < {}%", NAME, moisture, self.min_threshold
+            );
         }
     }
 
@@ -249,7 +256,7 @@ impl AgentTrait for ThresholdAgent {
         }
         if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["04_action_cooldown_ms"] {
             action_cooldown_ms = *val;
-        } else { 
+        } else {
             error!(self.logger, "No action_cooldown_ms");
             return false;
         }

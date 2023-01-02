@@ -50,7 +50,7 @@ unsafe extern "C" fn build_agent(
     Box::new(TestAgent {
         val: 0.5,
         logger: logger,
-        sender: sender,
+        _sender: sender,
         config_active: true,
         config_daytime_ms: 0,
         config_time_slider_hour: 0,
@@ -63,7 +63,7 @@ unsafe extern "C" fn build_agent(
 struct TestAgent {
     val: f32,
     logger: slog::Logger,
-    sender: Sender<AgentMessage>,
+    _sender: Sender<AgentMessage>,
     config_active: bool,
     config_daytime_ms: u64,
     config_time_slider_hour: i64,

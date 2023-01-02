@@ -104,8 +104,8 @@ impl NativeAgentFactory {
         {
             // version checks to prevent accidental ABI incompatibilities
             return Err(PluginError::CompilerMismatch(
-                decl.rustc_version.to_owned(),
                 ripe_core::RUSTC_VERSION.to_owned(),
+                decl.rustc_version.to_owned(),
             ));
         } else if let Some(current_lib) = self.libraries.get(decl.agent_name) {
             // Check duplicated or outdated library

@@ -7,20 +7,46 @@ use warp::Filter;
 
 pub fn routes(
     observer: &Arc<ConcurrentSensorObserver>,
-) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    get_active_agents(observer.clone())
-        .or(register_agent(observer.clone()))
-        .or(unregister_agent(observer.clone()))
-        .or(on_agent_cmd(observer.clone()))
-        .or(agent_config(observer.clone()))
-        .or(set_agent_config(observer.clone()))
+) -> (
+    String,
+    impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
+) {
+    use super::ErrorResponseDto;
+    use crate::rest::AgentStatusDto;
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(get_active_agents, register_agent, unregister_agent, on_agent_cmd, agent_config, set_agent_config),
+        components(schemas(dto::AgentDto, dto::AgentStatusDto, dto::ForceRequest, super::ErrorResponseDto,
+            ErrorResponseDto, AgentStatusDto),
+        ),
+        tags((name = "agent", description = "Agent related API"))
+    )]
+    struct ApiDoc;
+
+    (
+        "/api/doc/agent-api.json".to_owned(),
+        get_active_agents(observer.clone())
+            .or(register_agent(observer.clone()))
+            .or(unregister_agent(observer.clone()))
+            .or(on_agent_cmd(observer.clone()))
+            .or(agent_config(observer.clone()))
+            .or(set_agent_config(observer.clone()))
+            .or(warp::path!("api" / "doc" / "agent-api.json")
+                .and(warp::get())
+                .map(|| warp::reply::json(&ApiDoc::openapi()))),
+    )
 }
 
-/// GET api/agent
-///
-/// Show all active agent plugins
-///
-/// Returns a string list of all names
+#[utoipa::path(
+    get,
+    path = "/api/agent",
+    responses(
+        (status = 200, description = "Get all active loaded Agents", body = String, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "agent",
+)]
 fn get_active_agents(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -35,11 +61,21 @@ fn get_active_agents(
         .boxed()
 }
 
-/// POST api/agent/:id/:pwd
-///
-/// Register an agent to a sensor
-///
-/// Returns 200 if the new agent was added
+#[utoipa::path(
+    post,
+    path = "/api/agent/{id}",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    request_body(content = AgentDto, description = "The agent to register", content_type = "application/json"),
+    responses(
+        (status = 200, description = "Register a Agent for provided Sensor", body = AgentDto, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "agent",
+)]
 fn register_agent(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -66,11 +102,21 @@ fn register_agent(
         .boxed()
 }
 
-/// DELETE api/agent/:id/:pwd
-///
-/// Unregister an agent to a sensor
-///
-/// Returns 200 if the new agent was removed
+#[utoipa::path(
+    delete,
+    path = "/api/agent/{id}",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    request_body(content = AgentDto, description = "The agent to delete", content_type = "application/json"),
+    responses(
+        (status = 200, description = "Delete a Agent for provided Sensor", body = AgentDto, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "agent",
+)]
 fn unregister_agent(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -97,11 +143,22 @@ fn unregister_agent(
         .boxed()
 }
 
-/// POST api/agent/:id/:pwd/:domain
-///
-/// Sends an command to an agent
-///
-/// Returns 200 if the new agent was notified
+#[utoipa::path(
+    post,
+    path = "/api/agent/{id}/{domain}",
+    tag = "agent",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("domain" = i32, Path, description = "The domain"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    request_body(content = ForceRequest, description = "The payload for the agend", content_type = "application/json"),
+    responses(
+        (status = 200, description = "Set forced command for Agent", body = AgentDto, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+)]
 fn on_agent_cmd(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -133,11 +190,22 @@ fn on_agent_cmd(
         .boxed()
 }
 
-/// GET api/agent/:id/:pwd/:domain/config
-///
-/// Get the config for an agent
-///
-/// Returns a HashMap with name and AgentConfigType
+#[utoipa::path(
+    get,
+    path = "/api/agent/{id}/{domain}/config",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("domain" = i32, Path, description = "The domain"),
+        ("x-key" = String, Header, description = "The sensor key"),
+        ("x-tz" = Option<String>, Header, description = "The timezone to format displayed text into"),
+    ),
+    responses(
+        (status = 200, description = "Get the config map for an agent", content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "agent",
+)]
 fn agent_config(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -170,11 +238,23 @@ fn agent_config(
         .boxed()
 }
 
-/// POST api/agent/:id/:pwd/:domain/config
-///
-/// Sets the config for an agent
-///
-/// Returns 200, if the HashMap was valid and accepted by the agent
+#[utoipa::path(
+    post,
+    path = "/api/agent/{id}/{domain}/config",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("domain" = i32, Path, description = "The domain"),
+        ("x-key" = String, Header, description = "The sensor key"),
+        ("x-tz" = Option<String>, Header, description = "The timezone to format displayed text into"),
+    ),
+    request_body(content = HashMap<String, AgentConfigType>, description = "The payload for the agend", content_type = "application/json"),
+    responses(
+        (status = 200, description = "Set the fetched config Map for an agent", content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "agent",
+)]
 fn set_agent_config(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -225,21 +305,22 @@ fn decode_b64(payload_b64: String) -> String {
 pub mod dto {
     use ripe_core::AgentUI;
     use serde::{Deserialize, Serialize};
+    use utoipa::ToSchema;
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug, ToSchema)]
     pub struct AgentDto {
         pub domain: String,
         pub agent_name: String,
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug, ToSchema)]
     pub struct AgentStatusDto {
         pub domain: String,
         pub agent_name: String,
         pub ui: AgentUI,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub struct ForceRequest {
         pub payload: i64,
     }
@@ -266,7 +347,7 @@ mod test {
     async fn test_rest_agents() {
         // Prepare
         let observer = build_mocked_observer().await;
-        let routes = routes(&observer);
+        let routes = routes(&observer).1;
 
         // Execute
         let res = warp::test::request()
@@ -294,7 +375,7 @@ mod test {
         // Prepare
         let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
-        let routes = routes(&observer).recover(handle_rejection);
+        let routes = routes(&observer).1.recover(handle_rejection);
 
         // Execute
         let dto = dto::AgentDto {
@@ -329,7 +410,7 @@ mod test {
             )
             .await
             .unwrap();
-        let routes = routes(&observer).recover(handle_rejection);
+        let routes = routes(&observer).1.recover(handle_rejection);
 
         // Execute
         let dto = dto::AgentDto { domain, agent_name };
@@ -361,7 +442,7 @@ mod test {
             )
             .await
             .unwrap();
-        let routes = routes(&observer).recover(handle_rejection);
+        let routes = routes(&observer).1.recover(handle_rejection);
 
         // Execute
         let dto = dto::ForceRequest { payload: 1 };
@@ -397,7 +478,7 @@ mod test {
             )
             .await
             .unwrap();
-        let routes = routes(&observer).recover(handle_rejection);
+        let routes = routes(&observer).1.recover(handle_rejection);
 
         // Execute
         let dto = dto::ForceRequest { payload: 1 };
@@ -432,7 +513,7 @@ mod test {
             )
             .await
             .unwrap();
-        let routes = routes(&observer).recover(handle_rejection);
+        let routes = routes(&observer).1.recover(handle_rejection);
 
         // Execute
         let dto = HashMap::<String, String>::new();
@@ -441,7 +522,8 @@ mod test {
             .header("X-KEY", sensor.key)
             .path(&format!(
                 "/api/agent/{}/{}/config",
-                sensor.id, base64::encode(domain)
+                sensor.id,
+                base64::encode(domain)
             ))
             .json(&dto)
             .reply(&routes)

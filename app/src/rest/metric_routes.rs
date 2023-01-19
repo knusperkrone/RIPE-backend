@@ -5,10 +5,36 @@ use warp::{hyper::StatusCode, Filter, Reply};
 
 pub fn routes(
     observer: &Arc<ConcurrentSensorObserver>,
-) -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
-    health(observer.clone())
+) -> (
+    String,
+    impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone,
+) {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(health),
+        components(schemas(dto::HealthyDto)),
+        tags((name = "metric", description = "Application related API"))
+    )]
+    struct ApiDoc;
+
+    (
+        "/api/doc/metric-api.json".to_owned(),
+        health(observer.clone()).or(warp::path!("api" / "doc" / "metric-api.json")
+            .and(warp::get())
+            .map(|| warp::reply::json(&ApiDoc::openapi()))),
+    )
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses(
+        (status = 200, description = "The service is healthy", body = HealthyDto, content_type = "application/json"),
+        (status = 500, description = "The service is unhealthy", body = HealthyDto, content_type = "application/json"),
+    ),
+    tag = "metric",
+)]
 fn health(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
@@ -52,7 +78,8 @@ fn health(
 
 mod dto {
     use serde::Serialize;
-    #[derive(Debug, Serialize)]
+    use utoipa::ToSchema;
+    #[derive(Debug, Serialize, ToSchema)]
     pub struct HealthyDto {
         pub healthy: bool,
         pub mqtt_broker: Option<String>,

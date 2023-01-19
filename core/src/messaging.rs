@@ -15,7 +15,7 @@ pub enum AgentMessage {
     RepeatedTask(std::time::Duration, Box<dyn FutBuilder>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SensorDataMessage {
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,

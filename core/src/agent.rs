@@ -2,21 +2,22 @@ use super::*;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AgentConfig {
     pub name: String,
     pub state_json: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AgentUI {
     pub decorator: AgentUIDecorator,
     pub state: AgentState,
     pub rendered: String, // pub config_rendered: String
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
 pub enum AgentConfigType {
     Switch(bool),                   // val
     DayTime(u64),                   // ms_of_day
@@ -24,7 +25,7 @@ pub enum AgentConfigType {
     IntSlider(i64, i64, i64),       // lower, upper, val
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum AgentUIDecorator {
     Text,
     TimePane(u32),         // ui_stepsize
@@ -41,7 +42,7 @@ impl AgentUIDecorator {
     }
 }
 
-#[derive(PartialEq, Debug, Deserialize, Serialize, Clone, Copy)]
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone, Copy, ToSchema)]
 pub enum AgentState {
     Disabled,
     Ready,

@@ -7,20 +7,48 @@ use warp::Filter;
 
 pub fn routes(
     observer: &Arc<ConcurrentSensorObserver>,
-) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    register_sensor(observer.clone())
-        .or(unregister_sensor(observer.clone()))
-        .or(sensor_status(observer.clone()))
-        .or(sensor_logs(observer.clone()))
-        .or(sensor_reload(observer.clone()))
+) -> (
+    String,
+    impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
+) {
+    use super::ErrorResponseDto;
+    use crate::rest::AgentStatusDto;
+    use ripe_core::{AgentUI, AgentUIDecorator, SensorDataMessage, AgentState};
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_reload),
+        components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, 
+            SensorDataMessage, ErrorResponseDto, AgentStatusDto, AgentUI, AgentUIDecorator, AgentState
+        )),
+        tags((name = "sensor", description = "Sensor related API"))
+    )]
+    struct ApiDoc;
+
+    (
+        "/api/doc/sensor-api.json".to_owned(),
+        register_sensor(observer.clone())
+            .or(unregister_sensor(observer.clone()))
+            .or(sensor_status(observer.clone()))
+            .or(sensor_logs(observer.clone()))
+            .or(sensor_reload(observer.clone()))
+            .or(warp::path!("api" / "doc" / "sensor-api.json")
+                .and(warp::get())
+                .map(|| warp::reply::json(&ApiDoc::openapi()))),
+    )
 }
 
-/// POST /api/sensor
-///
-/// Register a new sensor
-///
-/// Returns a `SensorRegisterResponseDto` which contains the
-/// assigned sensor_id and it's api key, which should be stored safely
+#[utoipa::path(
+    post,
+    path = "/api/sensor",
+    request_body(content = SensorRegisterRequestDto, content_type = "application/json"),
+    responses(
+        (status = 200, description = "The freshly registered sensor, store the id and key safely", body = SensorStatusDto, content_type = "application/json"),
+        (status = 400, description = "Invalid request body", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
 fn register_sensor(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -38,11 +66,17 @@ fn register_sensor(
         .boxed()
 }
 
-/// DELETE /api/sensor
-///
-/// Unregister a sensor
-///
-/// Returns 200 if the sensor got unregistered
+#[utoipa::path(
+    delete,
+    path = "/api/sensor",
+    request_body(content = SensorCredentialDto, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Delete a sensor", body = SensorStatusDto, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
 fn unregister_sensor(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -60,14 +94,21 @@ fn unregister_sensor(
         .boxed()
 }
 
-/// GET api/sensor/:id/:key
-///
-/// Fetch a sensor status
-///
-/// Returns a `SensorStatusDto`, which holds the sensor
-/// - name
-/// - values
-/// - server rendered UI
+#[utoipa::path(
+    get,
+    path = "/api/sensor/{id}",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+        ("x-tz" = Option<String>, Header, description = "The timezone to format displayed text into"),
+    ),
+    responses(
+        (status = 200, description = "The current sensor status", body = SensorStatusDto, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
 fn sensor_status(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -94,11 +135,21 @@ fn sensor_status(
         .boxed()
 }
 
-/// GET api/sensor/log/:id/:key
-///
-/// Fetch a sensor logs
-///
-/// Returns a Array of log messages prefix with the timestamp
+#[utoipa::path(
+    get,
+    path = "/api/sensor/{id}/log",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+        ("x-tz" = Option<String>, Header, description = "The timezone to format displayed text into"),
+    ),
+    responses(
+        (status = 200, description = "The last X sensor logs", body = [String], content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
 fn sensor_logs(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -125,12 +176,20 @@ fn sensor_logs(
         .boxed()
 }
 
-/// POST api/sensor/:id/:key/reload
-///
-/// Reload the plugins of a sensor
-/// Only possible, if all agents are inactive
-///
-/// Returns 200 if the sensor got reloaded
+#[utoipa::path(
+    post,
+    path = "/api/sensor/{id}/reload",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    responses(
+        (status = 200, description = "The sensor plugins got reloaded, as all agents were inactive"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
 fn sensor_reload(
     observer: Arc<ConcurrentSensorObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -158,26 +217,27 @@ pub mod dto {
     use crate::rest::AgentStatusDto;
     use ripe_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
+    use utoipa::ToSchema;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorRegisterRequestDto {
         pub name: Option<String>,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct BrokerDto {
         pub tcp: Option<String>,
         pub wss: Option<String>,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorCredentialDto {
         pub id: i32,
         pub key: String,
         pub broker: BrokerDto,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorStatusDto {
         pub name: String,
         pub data: SensorDataMessage,
@@ -202,7 +262,7 @@ mod test {
     async fn test_rest_register_sensor() {
         // Prepare
         let observer = build_mocked_observer().await;
-        let routes = routes(&observer);
+        let routes = routes(&observer).1;
 
         // Execute
         let dto = dto::SensorRegisterRequestDto { name: None };
@@ -222,7 +282,7 @@ mod test {
     async fn test_rest_unregister_sensor() {
         // Prepare
         let observer = build_mocked_observer().await;
-        let routes = routes(&observer);
+        let routes = routes(&observer).1;
         let dto = observer.register_sensor(None).await.unwrap();
 
         // Execute
@@ -241,7 +301,7 @@ mod test {
     async fn test_rest_sensor_status() {
         // Prepare
         let observer = build_mocked_observer().await;
-        let routes = routes(&observer);
+        let routes = routes(&observer).1;
         let register = observer.register_sensor(None).await.unwrap();
 
         // Execute

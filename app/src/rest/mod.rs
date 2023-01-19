@@ -5,16 +5,18 @@ use crate::sensor::ConcurrentSensorObserver;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::{convert::Infallible, sync::Arc};
-use warp::{hyper::StatusCode, Filter};
+use warp::hyper::StatusCode;
+use warp::Filter;
 
 mod agent_routes;
+mod doc_routes;
 mod metric_routes;
 mod sensor_routes;
 
 pub use agent_routes::dto::*;
 pub use sensor_routes::dto::*;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ErrorResponseDto {
     pub error: String,
 }
@@ -55,16 +57,25 @@ pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) {
     // Set up logging
     std::env::set_var("RUST_LOG", "actix_web=info");
     let server_port = CONFIG.server_port();
-    let sensor_routes = sensor_routes::routes(&observer);
-    let metric_routes = metric_routes::routes(&observer);
-    let agent_routes = agent_routes::routes(&observer);
+    let (sensor_swagger_path, sensor_routes) = sensor_routes::routes(&observer);
+    let (metric_swagger_path, metric_routes) = metric_routes::routes(&observer);
+    let (agent_swagger_path, agent_routes) = agent_routes::routes(&observer);
 
     info!(
         APP_LOGGING,
         "Starting webserver at: 0.0.0.0:{}", server_port
     );
     let addr = IpAddr::from_str("::0").unwrap();
-    warp::serve(sensor_routes.or(metric_routes).or(agent_routes))
-        .run((addr, server_port.parse().unwrap()))
-        .await;
+    warp::serve(
+        sensor_routes
+            .or(metric_routes)
+            .or(agent_routes)
+            .or(doc_routes::swagger(vec![
+                sensor_swagger_path,
+                metric_swagger_path,
+                agent_swagger_path,
+            ])),
+    )
+    .run((addr, server_port.parse().unwrap()))
+    .await;
 }

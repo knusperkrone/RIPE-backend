@@ -1,4 +1,4 @@
-use super::build_response;
+use super::{build_response, SwaggerHostDefinition};
 use crate::sensor::ConcurrentSensorObserver;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
@@ -8,7 +8,7 @@ use warp::Filter;
 pub fn routes(
     observer: &Arc<ConcurrentSensorObserver>,
 ) -> (
-    String,
+    SwaggerHostDefinition,
     impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
 ) {
     use super::ErrorResponseDto;
@@ -25,7 +25,10 @@ pub fn routes(
     struct ApiDoc;
 
     (
-        "/api/doc/agent-api.json".to_owned(),
+        SwaggerHostDefinition {
+            url: "/api/doc/agent-api.json".to_owned(),
+            openApi: ApiDoc::openapi(),
+        },
         get_active_agents(observer.clone())
             .or(register_agent(observer.clone()))
             .or(unregister_agent(observer.clone()))

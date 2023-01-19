@@ -1,4 +1,4 @@
-use super::build_response_with_status;
+use super::{build_response_with_status, SwaggerHostDefinition};
 use crate::sensor::ConcurrentSensorObserver;
 use std::sync::Arc;
 use warp::{hyper::StatusCode, Filter, Reply};
@@ -6,7 +6,7 @@ use warp::{hyper::StatusCode, Filter, Reply};
 pub fn routes(
     observer: &Arc<ConcurrentSensorObserver>,
 ) -> (
-    String,
+    SwaggerHostDefinition,
     impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone,
 ) {
     use utoipa::OpenApi;
@@ -19,7 +19,10 @@ pub fn routes(
     struct ApiDoc;
 
     (
-        "/api/doc/metric-api.json".to_owned(),
+        SwaggerHostDefinition {
+            url: "/api/doc/metric-api.json".to_owned(),
+            openApi: ApiDoc::openapi(),
+        },
         health(observer.clone()).or(warp::path!("api" / "doc" / "metric-api.json")
             .and(warp::get())
             .map(|| warp::reply::json(&ApiDoc::openapi()))),

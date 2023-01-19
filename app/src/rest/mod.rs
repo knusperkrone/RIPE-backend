@@ -21,6 +21,11 @@ pub struct ErrorResponseDto {
     pub error: String,
 }
 
+pub struct SwaggerHostDefinition {
+    url: String,
+    openApi: utoipa::openapi::OpenApi,
+}
+
 pub fn build_response<T: serde::Serialize>(
     resp: Result<T, ObserverError>,
 ) -> Result<impl warp::Reply, Infallible> {

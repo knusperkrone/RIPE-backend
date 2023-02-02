@@ -28,7 +28,7 @@ pub fn routes(
     (
         SwaggerHostDefinition {
             url: "/api/doc/sensor-api.json".to_owned(),
-            openApi: ApiDoc::openapi(),
+            open_api: ApiDoc::openapi(),
         },
         register_sensor(observer.clone())
             .or(unregister_sensor(observer.clone()))

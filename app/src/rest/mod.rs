@@ -23,7 +23,7 @@ pub struct ErrorResponseDto {
 
 pub struct SwaggerHostDefinition {
     url: String,
-    openApi: utoipa::openapi::OpenApi,
+    open_api: utoipa::openapi::OpenApi,
 }
 
 pub fn build_response<T: serde::Serialize>(

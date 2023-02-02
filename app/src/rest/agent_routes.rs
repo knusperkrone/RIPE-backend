@@ -27,7 +27,7 @@ pub fn routes(
     (
         SwaggerHostDefinition {
             url: "/api/doc/agent-api.json".to_owned(),
-            openApi: ApiDoc::openapi(),
+            open_api: ApiDoc::openapi(),
         },
         get_active_agents(observer.clone())
             .or(register_agent(observer.clone()))
@@ -152,7 +152,7 @@ fn unregister_agent(
     tag = "agent",
     params(
         ("id" = i32, Path, description = "The sensor id"),
-        ("domain" = i32, Path, description = "The domain"),
+        ("domain" = String, Path, description = "The domain"),
         ("x-key" = String, Header, description = "The sensor key"),
     ),
     request_body(content = ForceRequest, description = "The payload for the agend", content_type = "application/json"),
@@ -198,7 +198,7 @@ fn on_agent_cmd(
     path = "/api/agent/{id}/{domain}/config",
     params(
         ("id" = i32, Path, description = "The sensor id"),
-        ("domain" = i32, Path, description = "The domain"),
+        ("domain" = String, Path, description = "The domain"),
         ("x-key" = String, Header, description = "The sensor key"),
         ("x-tz" = Option<String>, Header, description = "The timezone to format displayed text into"),
     ),
@@ -246,11 +246,11 @@ fn agent_config(
     path = "/api/agent/{id}/{domain}/config",
     params(
         ("id" = i32, Path, description = "The sensor id"),
-        ("domain" = i32, Path, description = "The domain"),
+        ("domain" = String, Path, description = "The domain"),
         ("x-key" = String, Header, description = "The sensor key"),
         ("x-tz" = Option<String>, Header, description = "The timezone to format displayed text into"),
     ),
-    request_body(content = HashMap<String, AgentConfigType>, description = "The payload for the agend", content_type = "application/json"),
+    request_body(content = String, description = "The payload for the agend", content_type = "application/json"),
     responses(
         (status = 200, description = "Set the fetched config Map for an agent", content_type = "application/json"),
         (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),

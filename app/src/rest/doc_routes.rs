@@ -17,14 +17,14 @@ pub fn swagger(
     mut spec_defs: Vec<SwaggerHostDefinition>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let builder = OpenApiBuilder::new();
-    let mut path_configs: Vec<String> = vec!["api.json".to_owned()];
+    let path_configs: Vec<String> = vec!["/api/doc/api.json".to_owned()];
     let mut tags: Vec<Tag> = Vec::new();
     let mut paths = PathsBuilder::new();
     let mut components = ComponentsBuilder::new();
 
     for spec_def in spec_defs.drain(..) {
-        let spec = &spec_def.openApi;
-        path_configs.push(spec_def.url);
+        let spec = &spec_def.open_api;
+        // path_configs.push(spec_def.url);
 
         for tag in spec.tags.iter() {
             tags.append(&mut tag.clone());

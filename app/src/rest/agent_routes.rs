@@ -354,6 +354,11 @@ mod test {
     use super::*;
     use std::collections::HashMap;
 
+    fn encode_b64(payload: String) -> String {
+        use base64::{engine::general_purpose, Engine as _};
+        general_purpose::STANDARD.encode(payload)
+    }
+
     use crate::{
         config::CONFIG, models::establish_db_connection, sensor::observer::sensor::SensorObserver,
     };
@@ -464,11 +469,7 @@ mod test {
         let res = warp::test::request()
             .method("POST")
             .header("X-KEY", sensor.key)
-            .path(&format!(
-                "/api/agent/{}/{}",
-                sensor.id,
-                base64::encode(domain)
-            ))
+            .path(&format!("/api/agent/{}/{}", sensor.id, encode_b64(domain)))
             .json(&dto)
             .reply(&routes)
             .await;
@@ -497,7 +498,7 @@ mod test {
             .path(&format!(
                 "/api/agent/{}/{}/config",
                 sensor.id,
-                base64::encode(domain)
+                encode_b64(domain)
             ))
             .json(&dto)
             .reply(&routes)
@@ -528,7 +529,7 @@ mod test {
             .path(&format!(
                 "/api/agent/{}/{}/config",
                 sensor.id,
-                base64::encode(domain)
+                encode_b64(domain)
             ))
             .json(&dto)
             .reply(&routes)

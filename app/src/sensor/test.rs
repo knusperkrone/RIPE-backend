@@ -37,7 +37,7 @@ async fn test_unregister_sensor() {
     let cred = observer.register_sensor(None).await.unwrap();
 
     // execute
-    let res = observer.unregister_sensor(cred.id, cred.key).await;
+    let res = observer.unregister_sensor(cred.id, &cred.key).await;
 
     // validate
     assert!(res.is_ok());
@@ -51,7 +51,7 @@ async fn test_invalid_remove_sensor() {
     let remove_key = "asdase".to_owned();
 
     // execute
-    let res = observer.unregister_sensor(remove_id, remove_key).await;
+    let res = observer.unregister_sensor(remove_id, &remove_key).await;
 
     // validate
     assert!(res.is_err());
@@ -83,7 +83,7 @@ async fn test_register_agent() {
     // execute
 
     let res = observer
-        .register_agent(sensor_res.id, sensor_res.key, domain, agent)
+        .register_agent(sensor_res.id, sensor_res.key, &domain, &agent)
         .await;
 
     // validate
@@ -101,8 +101,8 @@ async fn test_unregister_agent() {
         .register_agent(
             sensor_res.id,
             sensor_res.key.clone(),
-            domain.clone(),
-            agent.clone(),
+            &domain.clone(),
+            &agent.clone(),
         )
         .await
         .unwrap();
@@ -127,8 +127,8 @@ async fn test_agent_config() {
         .register_agent(
             sensor_res.id,
             sensor_res.key.clone(),
-            domain.clone(),
-            agent.clone(),
+            &domain.clone(),
+            &agent.clone(),
         )
         .await
         .unwrap();
@@ -153,8 +153,8 @@ async fn test_set_agent_config() {
         .register_agent(
             sensor_res.id,
             sensor_res.key.clone(),
-            domain.clone(),
-            agent.clone(),
+            &domain.clone(),
+            &agent.clone(),
         )
         .await
         .unwrap();

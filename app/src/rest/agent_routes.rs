@@ -57,7 +57,7 @@ fn get_active_agents(
         .and(warp::get())
         .and(warp::path!("api" / "agent"))
         .and_then(|observer: Arc<ConcurrentSensorObserver>| async move {
-            let agents = observer.agents().await;
+            let agents = observer.agent_factory.read().await.agents();
             build_response(Ok(agents))
         })
         .boxed()
@@ -406,12 +406,7 @@ mod test {
         let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
-            .register_agent(
-                sensor.id,
-                sensor.key.clone(),
-                &domain,
-                &agent_name,
-            )
+            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -438,12 +433,7 @@ mod test {
         let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
-            .register_agent(
-                sensor.id,
-                sensor.key.clone(),
-                &domain,
-                &agent_name,
-            )
+            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -474,12 +464,7 @@ mod test {
         let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
-            .register_agent(
-                sensor.id,
-                sensor.key.clone(),
-                &domain,
-                &agent_name,
-            )
+            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -509,12 +494,7 @@ mod test {
         let observer = build_mocked_observer().await;
         let sensor = observer.register_sensor(None).await.unwrap();
         observer
-            .register_agent(
-                sensor.id,
-                sensor.key.clone(),
-                &domain,
-                &agent_name,
-            )
+            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);

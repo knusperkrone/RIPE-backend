@@ -1,3 +1,4 @@
+use super::container::SensorContainer;
 use super::handle::{SensorHandle, SensorMQTTCommand};
 use super::SensorMessage;
 use crate::config::CONFIG;
@@ -8,7 +9,7 @@ use crate::models::{
 };
 use crate::mqtt::MqttSensorClient;
 use crate::plugin::AgentFactory;
-use crate::rest::{AgentStatusDto, BrokerDto, SensorCredentialDto, SensorStatusDto};
+use crate::rest::{AgentStatusDto, SensorStatusDto};
 use crate::{
     error::{DBError, ObserverError},
     rest::AgentDto,
@@ -22,14 +23,19 @@ use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 
+pub struct Sensor {
+    pub id: i32,
+    pub key: String,
+}
+
 pub struct ConcurrentSensorObserver {
+    pub mqtt_client: MqttSensorClient,
+    pub container: RwLock<SensorContainer>,
+    pub agent_factory: RwLock<AgentFactory>,
+    pub db_conn: PgPool,
     plugin_dir: std::path::PathBuf,
-    container: RwLock<SensorCache>,
-    agent_factory: RwLock<AgentFactory>,
     iac_receiver: Mutex<UnboundedReceiver<SensorMQTTCommand>>,
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,
-    mqtt_client: MqttSensorClient,
-    db_conn: PgPool,
 }
 
 impl ConcurrentSensorObserver {
@@ -37,7 +43,7 @@ impl ConcurrentSensorObserver {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorMessage)>();
         let agent_factory = AgentFactory::new(iac_sender);
-        let container = SensorCache::new();
+        let container = SensorContainer::new();
         let mqtt_client = MqttSensorClient::new(sensor_data_sender);
 
         let observer = ConcurrentSensorObserver {
@@ -86,7 +92,7 @@ impl ConcurrentSensorObserver {
                     SensorMessage::Log(log) => self.persist_sensor_log(sensor_id, log).await,
                     SensorMessage::Reconnect => {
                         let resubscribe_count = self.resubscribe_sensors().await;
-                        let all_count = self.sensor_count().await;
+                        let all_count = self.container.read().await.len();
                         if resubscribe_count != all_count {
                             info!(
                                 APP_LOGGING,
@@ -245,6 +251,39 @@ impl ConcurrentSensorObserver {
         }
         count
     }
+
+    async fn populate_agents(&self) -> Result<(), DBError> {
+        // TODO: Stream
+        let start = Utc::now();
+        let mut sensor_daos = Vec::new();
+        for sensor_dao in models::get_sensors(&self.db_conn).await? {
+            let agent_configs = models::get_agent_config(&self.db_conn, &sensor_dao)
+                .await
+                .unwrap();
+            sensor_daos.push((sensor_dao, agent_configs));
+        }
+
+        let mut count = sensor_daos.len();
+        let agent_factory = self.agent_factory.read().await;
+        for (sensor_dao, agent_configs) in sensor_daos {
+            if let Err(e) = self
+                .insert_sensor(&agent_factory, sensor_dao, Some(agent_configs))
+                .await
+            {
+                count -= 1;
+                error!(APP_LOGGING, "{}", e)
+            }
+        }
+
+        let duration = Utc::now() - start;
+        info!(
+            APP_LOGGING,
+            "Restored {} sensors in {} ms",
+            count,
+            duration.num_milliseconds()
+        );
+        Ok(())
+    }
 }
 
 /*
@@ -252,31 +291,7 @@ impl ConcurrentSensorObserver {
  */
 
 impl ConcurrentSensorObserver {
-    pub async fn check_db(&self) -> String {
-        if let Err(err) = models::check_schema(&self.db_conn).await {
-            format!("{}", err)
-        } else {
-            "healthy".to_owned()
-        }
-    }
-
-    pub async fn mqtt_broker_tcp(&self) -> Option<String> {
-        self.mqtt_client.broker_tcp().await
-    }
-
-    pub async fn mqtt_broker_wss(&self) -> Option<String> {
-        self.mqtt_client.broker_wss().await
-    }
-
-    pub async fn sensor_count(&self) -> usize {
-        let container = self.container.read().await;
-        container.len()
-    }
-
-    pub async fn register_sensor(
-        &self,
-        name: Option<String>,
-    ) -> Result<SensorCredentialDto, ObserverError> {
+    pub async fn register_sensor(&self, name: Option<String>) -> Result<Sensor, ObserverError> {
         // Create sensor dao
         let key = self.generate_sensor_key();
         let sensor_dao = models::create_new_sensor(&self.db_conn, key.clone(), &name).await?;
@@ -285,9 +300,9 @@ impl ConcurrentSensorObserver {
         // Create agents and persist
         let factory = self.agent_factory.read().await;
         match self.insert_sensor(&factory, sensor_dao, None).await {
-            Ok((id, broker)) => {
+            Ok(id) => {
                 info!(APP_LOGGING, "Registered new sensor: {}", id);
-                Ok(SensorCredentialDto { id, key, broker })
+                Ok(Sensor { id, key })
             }
             Err(err) => {
                 models::delete_sensor(&self.db_conn, dao_id).await?; // Fallback delete
@@ -299,8 +314,8 @@ impl ConcurrentSensorObserver {
     pub async fn unregister_sensor(
         &self,
         sensor_id: i32,
-        key_b64: String,
-    ) -> Result<SensorCredentialDto, ObserverError> {
+        key_b64: &String,
+    ) -> Result<(), ObserverError> {
         models::delete_sensor(&self.db_conn, sensor_id).await?;
 
         let sensor_mtx = self
@@ -313,14 +328,7 @@ impl ConcurrentSensorObserver {
         self.mqtt_client.unsubscribe_sensor(&sensor).await?;
 
         info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
-        Ok(SensorCredentialDto {
-            id: sensor_id,
-            key: key_b64,
-            broker: BrokerDto {
-                tcp: None,
-                wss: None,
-            },
-        })
+        Ok(())
     }
 
     pub async fn sensor_status(
@@ -357,64 +365,13 @@ impl ConcurrentSensorObserver {
             name: sensor.name().clone(),
             data: data,
             agents: agents,
-            broker: BrokerDto {
-                tcp: self.mqtt_client.broker_tcp().await,
-                wss: self.mqtt_client.broker_wss().await,
-            },
+            broker: self.mqtt_client.broker().into(),
         })
-    }
-
-    pub async fn sensor_logs(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        tz: Tz,
-    ) -> Result<Vec<String>, ObserverError> {
-        {
-            // API guard scope
-            let container = self.container.read().await;
-            let _ = container
-                .sensor(sensor_id, key_b64.as_str())
-                .await
-                .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
-        }
-
-        let mut logs = models::get_sensor_logs(&self.db_conn, sensor_id).await?;
-        Ok(logs
-            .drain(..)
-            .map(|l| format!("[{}] {}", l.time(&tz).format(&"%b %e %T %Y"), l.log()))
-            .collect())
-    }
-
-    pub async fn sensor_data(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-    ) -> Result<Vec<SensorDataMessage>, ObserverError> {
-        {
-            // API guard scope
-            let container = self.container.read().await;
-            let _ = container
-                .sensor(sensor_id, key_b64.as_str())
-                .await
-                .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
-        }
-        let data = models::get_sensor_data(&self.db_conn, sensor_id, 0, i64::MAX)
-            .await?
-            .drain(..)
-            .map(|d| d.into())
-            .collect();
-        Ok(data)
     }
 
     /*
      * Agent
      */
-
-    pub async fn agents(&self) -> Vec<String> {
-        let agent_factory = self.agent_factory.read().await;
-        agent_factory.agents()
-    }
 
     pub async fn register_agent(
         &self,
@@ -531,54 +488,21 @@ impl ConcurrentSensorObserver {
      * Helpers
      */
 
-    async fn populate_agents(&self) -> Result<(), DBError> {
-        // TODO: Stream
-        let start = Utc::now();
-        let mut sensor_daos = Vec::new();
-        for sensor_dao in models::get_sensors(&self.db_conn).await? {
-            let agent_configs = models::get_agent_config(&self.db_conn, &sensor_dao)
-                .await
-                .unwrap();
-            sensor_daos.push((sensor_dao, agent_configs));
-        }
-
-        let mut count = sensor_daos.len();
-        let agent_factory = self.agent_factory.read().await;
-        for (sensor_dao, agent_configs) in sensor_daos {
-            if let Err(e) = self
-                .insert_sensor(&agent_factory, sensor_dao, Some(agent_configs))
-                .await
-            {
-                count -= 1;
-                error!(APP_LOGGING, "{}", e)
-            }
-        }
-
-        let duration = Utc::now() - start;
-        info!(
-            APP_LOGGING,
-            "Restored {} sensors in {} ms",
-            count,
-            duration.num_milliseconds()
-        );
-        Ok(())
-    }
-
     async fn insert_sensor(
         &self,
         agent_factory: &AgentFactory,
         sensor_dao: SensorDao,
         configs: Option<Vec<AgentConfigDao>>,
-    ) -> Result<(i32, BrokerDto), ObserverError> {
+    ) -> Result<i32, ObserverError> {
         let sensor_id = sensor_dao.id();
         let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(vec![]), &agent_factory)?;
 
-        let mqtt_broker = self.subscribe_sensor(&sensor).await?;
+        self.subscribe_sensor(&sensor).await?;
         self.container.write().await.insert_sensor(sensor);
-        Ok((sensor_id, mqtt_broker))
+        Ok(sensor_id)
     }
 
-    async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<BrokerDto, ObserverError> {
+    async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), ObserverError> {
         self.mqtt_client.subscribe_sensor(sensor).await?;
         for _ in 0..CONFIG.mqtt_send_retries() {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
@@ -592,10 +516,7 @@ impl ConcurrentSensorObserver {
                 break;
             }
         }
-        Ok(BrokerDto {
-            tcp: self.mqtt_broker_tcp().await,
-            wss: self.mqtt_broker_wss().await,
-        })
+        Ok(())
     }
 
     fn generate_sensor_key(&self) -> String {
@@ -607,74 +528,5 @@ impl ConcurrentSensorObserver {
             .map(char::from)
             .take(6)
             .collect()
-    }
-}
-
-/*
- * SensorCache
- */
-
-pub struct SensorCache {
-    sensors: HashMap<i32, Mutex<SensorHandle>>,
-}
-
-impl SensorCache {
-    pub fn new() -> Self {
-        SensorCache {
-            sensors: HashMap::new(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.sensors.len()
-    }
-
-    pub fn sensors(
-        &self,
-    ) -> std::collections::hash_map::Values<'_, i32, tokio::sync::Mutex<SensorHandle>> {
-        self.sensors.values().into_iter()
-    }
-
-    pub async fn sensor_unchecked(
-        &self,
-        sensor_id: i32,
-    ) -> Option<tokio::sync::MutexGuard<'_, SensorHandle>> {
-        let sensor_mutex = self.sensors.get(&sensor_id)?;
-        Some(sensor_mutex.lock().await)
-    }
-
-    pub async fn sensor(
-        &self,
-        sensor_id: i32,
-        key_b64: &str,
-    ) -> Option<tokio::sync::MutexGuard<'_, SensorHandle>> {
-        let sensor_mutex = self.sensors.get(&sensor_id)?;
-        let sensor = sensor_mutex.lock().await;
-        if sensor.key_b64() == key_b64 {
-            Some(sensor)
-        } else {
-            None
-        }
-    }
-
-    pub fn insert_sensor(&mut self, sensor: SensorHandle) {
-        // TODO: Read-write lock
-        self.sensors.insert(sensor.id(), Mutex::new(sensor));
-    }
-
-    pub async fn remove_sensor(
-        &mut self,
-        sensor_id: i32,
-        key_b64: &str,
-    ) -> Result<Mutex<SensorHandle>, DBError> {
-        if let None = self.sensor(sensor_id, key_b64).await {
-            return Err(DBError::SensorNotFound(sensor_id));
-        }
-
-        if let Some(sensor_mtx) = self.sensors.remove(&sensor_id) {
-            Ok(sensor_mtx)
-        } else {
-            Err(DBError::SensorNotFound(sensor_id))
-        }
     }
 }

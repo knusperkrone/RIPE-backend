@@ -1,8 +1,12 @@
 use super::{build_response, SwaggerHostDefinition};
+use crate::error::DBError;
+use crate::error::ObserverError;
+use crate::models;
 use crate::sensor::ConcurrentSensorObserver;
 use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
+use ripe_core::SensorDataMessage;
 use std::sync::Arc;
 use warp::Filter;
 
@@ -14,7 +18,7 @@ pub fn routes(
 ) {
     use super::ErrorResponseDto;
     use crate::rest::AgentStatusDto;
-    use ripe_core::{AgentUI, AgentUIDecorator, SensorDataMessage, AgentState};
+    use ripe_core::{AgentUI, AgentUIDecorator, AgentState};
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
@@ -47,7 +51,7 @@ pub fn routes(
     path = "/api/sensor",
     request_body(content = SensorRegisterRequestDto, content_type = "application/json"),
     responses(
-        (status = 200, description = "The freshly registered sensor, store the id and key safely", body = SensorStatusDto, content_type = "application/json"),
+        (status = 200, description = "The freshly registered sensor, store the id and key safely", body = SensorCredentialDto, content_type = "application/json"),
         (status = 400, description = "Invalid request body", body = ErrorResponseDto, content_type = "application/json"),
         (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
     ),
@@ -63,7 +67,14 @@ fn register_sensor(
         .and(warp::body::json())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>, body: dto::SensorRegisterRequestDto| async move {
-                let resp = observer.register_sensor(body.name).await;
+                let resp = observer.register_sensor(body.name)
+                    .await
+                    .map( |sensor|  { 
+                        dto::SensorCredentialDto {
+                            id: sensor.id,
+                            key: sensor.key,
+                            broker: observer.mqtt_client.broker().into()
+                    }});
                 build_response(resp)
             },
         )
@@ -75,7 +86,7 @@ fn register_sensor(
     path = "/api/sensor",
     request_body(content = SensorCredentialDto, content_type = "application/json"),
     responses(
-        (status = 200, description = "Delete a sensor", body = SensorStatusDto, content_type = "application/json"),
+        (status = 200, description = "Delete a sensor", body = SensorCredentialDto, content_type = "application/json"),
         (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
         (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
     ),
@@ -91,7 +102,11 @@ fn unregister_sensor(
         .and(warp::body::json())
         .and_then(
             |observer: Arc<ConcurrentSensorObserver>, body: dto::SensorCredentialDto| async move {
-                let resp = observer.unregister_sensor(body.id, body.key).await;
+                let resp = observer.unregister_sensor(body.id, &body.key)
+                    .await
+                    .map(|()| dto::SensorCredentialDto {
+                    id: body.id, key: body.key, broker: dto::BrokerDto { tcp: None, wss: None }
+                });
                 build_response(resp)
             },
         )
@@ -171,9 +186,18 @@ fn sensor_logs(
              key_b64: Option<String>,
              sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
-                let resp = observer
-                    .sensor_logs(sensor_id, key_b64.unwrap_or_default(), tz)
-                    .await;
+                
+                if !models::sensor_exists(&observer.db_conn, sensor_id, key_b64.unwrap_or_default()).await {
+                    return build_response(Err(ObserverError::from(DBError::SensorNotFound(sensor_id))));
+                }
+
+                let resp: Result<Vec<String>, ObserverError> = models::get_sensor_logs(&observer.db_conn, sensor_id).await.map(|mut logs| 
+                    logs
+                    .drain(..)
+                    .map(|l| format!("[{}] {}", l.time(&tz).format(&"%b %e %T %Y"), l.log()))
+                    .collect()
+                ).map_err(|e| ObserverError::from(e));
+            
                 build_response(resp)
             },
         )
@@ -216,9 +240,18 @@ fn sensor_data(
              key_b64: Option<String>,
              sensor_id: i32,
              _date: DateTime<chrono::Utc>| async move {
-                let resp = observer
-                    .sensor_data(sensor_id, key_b64.unwrap_or_default())
-                    .await;
+                if !models::sensor_exists(&observer.db_conn, sensor_id, key_b64.unwrap_or_default()).await {
+                    return build_response(Err(ObserverError::from(DBError::SensorNotFound(sensor_id))));
+                }
+
+                let resp: Result<Vec<SensorDataMessage>, ObserverError> = models::get_sensor_data(&observer.db_conn, sensor_id, 0, i64::MAX).await
+                    .map(|mut data|
+                        data
+                            .drain(..)
+                            .map(|dao| dao.into())
+                            .collect()
+                    ).map_err(|e| ObserverError::from(e));
+            
                 build_response(resp)
             },
         )
@@ -277,6 +310,12 @@ pub mod dto {
     pub struct BrokerDto {
         pub tcp: Option<String>,
         pub wss: Option<String>,
+    }
+
+    impl From<crate::mqtt::Broker> for BrokerDto {
+        fn from(from: crate::mqtt::Broker) -> Self {
+            BrokerDto { tcp: from.tcp, wss: from.wss }
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -339,13 +378,20 @@ mod test {
         // Prepare
         let observer = build_mocked_observer().await;
         let routes = routes(&observer).1;
-        let dto = observer.register_sensor(None).await.unwrap();
+        let sensor = observer.register_sensor(None).await.unwrap();
 
         // Execute
         let res = warp::test::request()
             .path("/api/sensor")
             .method("DELETE")
-            .json(&dto)
+            .json(& dto::SensorCredentialDto {
+                id: sensor.id,
+                key: sensor.key,
+                broker: dto::BrokerDto {
+                    tcp: None,
+                    wss: None,
+                }
+            })
             .reply(&routes)
             .await;
 

@@ -1,5 +1,5 @@
 use super::{build_response_with_status, SwaggerHostDefinition};
-use crate::sensor::ConcurrentSensorObserver;
+use crate::{models, sensor::ConcurrentSensorObserver};
 use std::sync::Arc;
 use warp::{hyper::StatusCode, Filter, Reply};
 
@@ -47,17 +47,24 @@ fn health(
             use tokio::time::timeout;
             let duration = std::time::Duration::from_millis(500);
             let results = tokio::join!(
-                timeout(duration.clone(), observer.mqtt_broker_tcp()),
-                timeout(duration.clone(), observer.check_db()),
-                timeout(duration.clone(), observer.sensor_count()),
-                timeout(duration.clone(), observer.agents())
+                timeout(duration.clone(), models::check_schema(&observer.db_conn)),
+                timeout(duration.clone(), observer.container.read()),
+                timeout(duration.clone(), observer.agent_factory.read())
             );
-            let healthy =
-                results.0.is_ok() && results.1.is_ok() && results.2.is_ok() && results.3.is_ok();
-            let mqtt_broker = results.0.unwrap_or(Some("TIMEOUT".to_owned()));
-            let database_state = results.1.unwrap_or("TIMEOUT".to_owned());
-            let sensor_count = results.2.unwrap_or(usize::MAX);
-            let active_agents = results.3.unwrap_or(vec!["TIMEOUT".to_owned()]);
+            let healthy = results.0.is_ok() && results.1.is_ok() && results.2.is_ok();
+            let mqtt_broker = observer.mqtt_client.broker().tcp;
+            let database_state = results
+                .0
+                .map(|_| "HEALTHY".to_owned())
+                .unwrap_or("TIMEOUT".to_owned());
+            let sensor_count = results
+                .1
+                .map(|container| container.len())
+                .unwrap_or(usize::MAX);
+            let active_agents = results
+                .2
+                .map(|factory| factory.agents())
+                .unwrap_or(vec!["TIMEOUT".to_owned()]);
             let status = if healthy {
                 StatusCode::OK
             } else {

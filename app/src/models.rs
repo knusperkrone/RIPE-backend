@@ -161,13 +161,12 @@ use dao::*;
 pub async fn establish_db_connection() -> Option<sqlx::PgPool> {
     let database_url = CONFIG.database_url();
     sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
         .connect(&database_url)
         .await
         .ok()
 }
 
-pub(crate) async fn check_schema(conn: &sqlx::PgPool) -> Result<(), DBError> {
+pub async fn check_schema(conn: &sqlx::PgPool) -> Result<(), DBError> {
     sql_stmnt!("SELECT count(*) as count FROM sensors")
         .fetch_one(conn)
         .await?;
@@ -206,6 +205,20 @@ pub async fn get_sensors(conn: &sqlx::PgPool) -> Result<Vec<SensorDao>, DBError>
     Ok(sql_stmnt!(SensorDao, "SELECT * FROM sensors")
         .fetch_all(conn)
         .await?)
+}
+
+pub async fn sensor_exists(conn: &sqlx::PgPool, sensor_id: i32, key: String) -> bool {
+    let count: CountRecord = sql_stmnt!(
+        CountRecord,
+        "SELECT count(*) FROM sensors WHERE id = $1 AND key_b64 = $2",
+        sensor_id,
+        key
+    )
+    .fetch_one(conn)
+    .await
+    .unwrap_or(CountRecord { count: Some(0) });
+
+    count.count.unwrap_or(0) == 1
 }
 
 /// DELETE agent_config/sensors

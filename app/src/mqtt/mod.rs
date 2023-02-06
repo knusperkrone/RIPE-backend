@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +20,11 @@ mod test;
 
 const QOS: i32 = 1;
 
+pub struct Broker {
+    pub tcp: Option<String>,
+    pub wss: Option<String>,
+}
+
 type MqttSender = UnboundedSender<(i32, SensorMessage)>;
 
 pub struct MqttSensorClient {
@@ -28,6 +34,7 @@ pub struct MqttSensorClient {
 struct MqttSensorClientInner {
     cli: RwLock<AsyncClient>,
     listen_abort_handle: Mutex<Option<AbortHandle>>,
+    is_connected: AtomicBool,
     sender: MqttSender,
     timeout_ms: u64,
 }
@@ -40,6 +47,7 @@ impl MqttSensorClient {
                 cli: RwLock::new(cli),
                 listen_abort_handle: Mutex::new(None),
                 timeout_ms: CONFIG.mqtt_timeout_ms(),
+                is_connected: AtomicBool::new(false),
                 sender,
             }),
         }
@@ -49,12 +57,18 @@ impl MqttSensorClient {
         MqttSensorClientInner::connect(self.inner.clone()).await
     }
 
-    pub async fn broker_wss(&self) -> Option<String> {
-        self.inner.broker_wss().await
-    }
-
-    pub async fn broker_tcp(&self) -> Option<String> {
-        self.inner.broker_tcp().await
+    pub fn broker(&self) -> Broker {
+        if self.inner.is_connected() {
+            Broker {
+                tcp: Some(CONFIG.mqtt_broker_tcp()),
+                wss: Some(CONFIG.mqtt_broker_wss()),
+            }
+        } else {
+            Broker {
+                tcp: None,
+                wss: None,
+            }
+        }
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
@@ -146,22 +160,8 @@ impl MqttSensorClientInner {
         ));
     }
 
-    pub async fn broker_tcp(&self) -> Option<String> {
-        if let Ok(cli) = self.read_cli().await {
-            if cli.is_connected() {
-                return Some(CONFIG.mqtt_broker_tcp());
-            }
-        }
-        None
-    }
-
-    pub async fn broker_wss(&self) -> Option<String> {
-        if let Ok(cli) = self.read_cli().await {
-            if cli.is_connected() {
-                return Some(CONFIG.mqtt_broker_wss());
-            }
-        }
-        None
+    pub(crate) fn is_connected(&self) -> bool {
+        self.is_connected.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
@@ -307,6 +307,8 @@ impl MqttSensorClientInner {
     }
 
     async fn do_connect(self: &Arc<Self>) {
+        self.is_connected
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         loop {
             let mqtt_uri = vec![CONFIG.mqtt_broker_tcp().clone()];
             let conn_opts = ConnectOptionsBuilder::new()
@@ -323,6 +325,8 @@ impl MqttSensorClientInner {
                         "Coulnd't connect to broker {} with {}", mqtt_uri[0], e
                     );
                 } else {
+                    self.is_connected
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     info!(APP_LOGGING, "connected to broker {}", mqtt_uri[0]);
                     break;
                 }

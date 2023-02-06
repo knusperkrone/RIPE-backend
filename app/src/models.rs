@@ -207,7 +207,7 @@ pub async fn get_sensors(conn: &sqlx::PgPool) -> Result<Vec<SensorDao>, DBError>
         .await?)
 }
 
-pub async fn sensor_exists(conn: &sqlx::PgPool, sensor_id: i32, key: String) -> bool {
+pub async fn sensor_exists(conn: &sqlx::PgPool, sensor_id: i32, key: &String) -> bool {
     let count: CountRecord = sql_stmnt!(
         CountRecord,
         "SELECT count(*) FROM sensors WHERE id = $1 AND key_b64 = $2",
@@ -437,19 +437,19 @@ pub async fn get_sensor_logs(
 pub async fn get_sensor_data(
     conn: &sqlx::PgPool,
     sensor_id: i32,
-    limit: i64,
-    offset: i64,
+    from: chrono::DateTime<chrono::Utc>,
+    until: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<dao::SensorDataDao>, DBError> {
     Ok(sql_stmnt!(
         SensorDataDao,
         r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light   
-            FROM sensor_data WHERE sensor_id = $1 
-            ORDER BY timestamp ASC 
-            LIMIT $2 
-            OFFSET $3"#,
+            FROM sensor_data 
+            WHERE sensor_id = $1 
+            AND timestamp >= $2 and timestamp < $3
+            ORDER BY timestamp ASC"#,
         sensor_id,
-        limit,
-        offset
+        from.naive_utc(),
+        until.naive_utc()
     )
     .fetch_all(conn)
     .await?)

@@ -1,14 +1,11 @@
 use super::{AgentStatusDto, SensorStatusDto};
 use super::{build_response, SwaggerHostDefinition};
-use crate::error::DBError;
-use crate::error::ObserverError;
-use crate::models;
-use crate::sensor::ConcurrentObserver;
+use crate::error;
+use crate::sensor::{ConcurrentObserver};
 use crate::sensor::observer::sensor::SensorObserver;
 use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
-use ripe_core::SensorDataMessage;
 use std::sync::Arc;
 use warp::Filter;
 
@@ -25,7 +22,7 @@ pub fn routes(
     #[openapi(
         paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_data, sensor_reload),
         components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, 
-            SensorDataMessage, ErrorResponseDto, AgentStatusDto, AgentUI, AgentUIDecorator, AgentState
+            SensorStatusDto, ErrorResponseDto, AgentStatusDto, AgentUI, AgentUIDecorator, AgentState
         )),
         tags((name = "sensor", description = "Sensor related API"))
     )]
@@ -39,8 +36,8 @@ pub fn routes(
         register_sensor(sensor_observer.clone())
             .or(unregister_sensor(sensor_observer.clone()))
             .or(sensor_status(sensor_observer.clone()))
-            .or(sensor_logs(observer.clone()))
-            .or(sensor_data(observer.clone()))
+            .or(sensor_logs(sensor_observer.clone()))
+            .or(sensor_data(sensor_observer))
             .or(sensor_reload(observer.clone()))
             .or(warp::path!("api" / "doc" / "sensor-api.json")
                 .and(warp::get())
@@ -71,7 +68,7 @@ fn register_sensor(
             |observer: SensorObserver, body: dto::SensorRegisterRequestDto| async move {
                 let resp = observer.register(body.name)
                     .await
-                    .map( |sensor|  { 
+                    .map(|sensor|{ 
                         dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
@@ -178,7 +175,7 @@ fn sensor_status(
     tag = "sensor",
 )]
 fn sensor_logs(
-    observer: Arc<ConcurrentObserver>,
+    observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
     let key_header = warp::header::optional::<String>("X-KEY");
@@ -189,22 +186,12 @@ fn sensor_logs(
         .and(key_header)
         .and(warp::path!("api" / "sensor" / i32 / "log"))
         .and_then(
-            |observer: Arc<ConcurrentObserver>,
+            |observer: SensorObserver,
              tz_opt: Option<String>,
              key_b64: Option<String>,
              sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
-                
-                if !models::sensor_exists(&observer.db_conn, sensor_id, key_b64.unwrap_or_default()).await {
-                    return build_response(Err(ObserverError::from(DBError::SensorNotFound(sensor_id))));
-                }
-
-                let resp: Result<Vec<String>, ObserverError> = models::get_sensor_logs(&observer.db_conn, sensor_id).await.map(|mut logs| 
-                    logs
-                    .drain(..)
-                    .map(|l| format!("[{}] {}", l.time(&tz).format(&"%b %e %T %Y"), l.log()))
-                    .collect()
-                ).map_err(|e| ObserverError::from(e));
+                let resp: Result<Vec<String>, _> = observer.logs(sensor_id, &key_b64.unwrap_or_default(), tz).await;
             
                 build_response(resp)
             },
@@ -215,7 +202,8 @@ fn sensor_logs(
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DataQuery {
-    date: DateTime<chrono::Utc>,
+    from: DateTime<chrono::Utc>,
+    until: DateTime<chrono::Utc>,
 }
 
 #[utoipa::path(
@@ -234,7 +222,7 @@ struct DataQuery {
     tag = "sensor",
 )]
 fn sensor_data(
-    observer: Arc<ConcurrentObserver>,
+    observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
@@ -244,22 +232,14 @@ fn sensor_data(
         .and(warp::path!("api" / "sensor" / i32 / "data"))
         .and(warp::query())
         .and_then(
-            |observer: Arc<ConcurrentObserver>,
+            |observer: SensorObserver,
              key_b64: Option<String>,
              sensor_id: i32,
-             _date: DateTime<chrono::Utc>| async move {
-                if !models::sensor_exists(&observer.db_conn, sensor_id, key_b64.unwrap_or_default()).await {
-                    return build_response(Err(ObserverError::from(DBError::SensorNotFound(sensor_id))));
+             query: DataQuery| async move {
+                if query.from >= query.until || query.until - query.from > chrono::Duration::days(1) {
+                    return build_response(Err(error::ObserverError::from(error::ApiError::ArgumentError())));
                 }
-
-                let resp: Result<Vec<SensorDataMessage>, ObserverError> = models::get_sensor_data(&observer.db_conn, sensor_id, 0, i64::MAX).await
-                    .map(|mut data|
-                        data
-                            .drain(..)
-                            .map(|dao| dao.into())
-                            .collect()
-                    ).map_err(|e| ObserverError::from(e));
-            
+                let resp: Result<Vec<dto::SensorDataDto>, _> = observer.data(sensor_id, &key_b64.unwrap_or_default(), query.from, query.until).await;
                 build_response(resp)
             },
         )
@@ -304,7 +284,7 @@ fn sensor_reload(
 /// DTO
 ///
 pub mod dto {
-    use crate::rest::AgentStatusDto;
+    use crate::{rest::AgentStatusDto, models::dao::SensorDataDao};
     use ripe_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -346,6 +326,46 @@ pub mod dto {
         total_pages: u32,
         payload: T
     }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct SensorDataDto {
+        pub timestamp: chrono::DateTime<chrono::Utc>,
+        pub battery: Option<f64>,
+        pub moisture: Option<f64>,
+        pub temperature: Option<f64>,
+        pub carbon: Option<i32>,
+        pub conductivity: Option<i32>,
+        pub light: Option<i32>,
+    }
+
+    impl From<SensorDataMessage> for SensorDataDto {
+        fn from(other: SensorDataMessage) -> Self {
+            SensorDataDto {
+                timestamp: other.timestamp,
+                battery: other.battery,
+                moisture: other.moisture,
+                temperature: other.temperature,
+                carbon: other.carbon,
+                conductivity: other.conductivity,
+                light: other.light
+            }
+        }
+    }
+
+    impl From<SensorDataDao> for SensorDataDto {
+        fn from(other: SensorDataDao) -> Self {
+            SensorDataDto {
+                timestamp: chrono::DateTime::from_utc(other.timestamp, chrono::Utc),
+                battery: other.battery,
+                moisture: other.moisture,
+                temperature: other.temperature,
+                carbon: other.carbon,
+                conductivity: other.conductivity,
+                light: other.light
+            }
+        } 
+    }
+    
 }
 
 #[cfg(test)]

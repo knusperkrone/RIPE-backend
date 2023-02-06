@@ -157,6 +157,21 @@ impl From<libloading::Error> for PluginError {
 }
 
 #[derive(Debug)]
+pub enum ApiError {
+    ArgumentError(),
+}
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ApiError::ArgumentError() => write!(f, "Arguments are not used as specified"),
+        }
+    }
+}
+
+impl error::Error for ApiError {}
+
+#[derive(Debug)]
 pub enum ObserverError {
     User(Box<dyn error::Error>),
     Internal(Box<dyn error::Error>),
@@ -197,6 +212,12 @@ impl From<MQTTError> for ObserverError {
 
 impl From<PluginError> for ObserverError {
     fn from(err: PluginError) -> Self {
+        ObserverError::User(Box::from(err))
+    }
+}
+
+impl From<ApiError> for ObserverError {
+    fn from(err: ApiError) -> Self {
         ObserverError::User(Box::from(err))
     }
 }

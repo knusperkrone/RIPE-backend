@@ -1,8 +1,10 @@
 use super::ConcurrentObserver;
 use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
+use crate::models::dao::SensorDataDao;
 use crate::models::{self};
 use crate::mqtt::Broker;
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use ripe_core::SensorDataMessage;
 use std::sync::Arc;
@@ -95,6 +97,43 @@ impl SensorObserver {
 
         debug!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
         Ok((data, agents))
+    }
+
+    pub async fn logs(
+        &self,
+        sensor_id: i32,
+        key_b64: &String,
+        tz: Tz,
+    ) -> Result<Vec<String>, ObserverError> {
+        if !models::sensor_exists(&self.inner.db_conn, sensor_id, key_b64).await {
+            return Err(DBError::SensorNotFound(sensor_id).into());
+        }
+
+        let mut logs = models::get_sensor_logs(&self.inner.db_conn, sensor_id).await?;
+        Ok(logs
+            .drain(..)
+            .map(|l| format!("[{}] {}", l.time(&tz).format(&"%b %e %T %Y"), l.log()))
+            .collect())
+    }
+
+    pub async fn data<T>(
+        &self,
+        sensor_id: i32,
+        key_b64: &String,
+        from: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> Result<Vec<T>, ObserverError>
+    where
+        T: From<SensorDataDao>,
+    {
+        if !models::sensor_exists(&self.inner.db_conn, sensor_id, key_b64).await {
+            return Err(DBError::SensorNotFound(sensor_id).into());
+        }
+
+        let mut data = models::get_sensor_data(&self.inner.db_conn, sensor_id, from, until).await?;
+        let transformed: Vec<T> = data.drain(..).map(|dao| T::from(dao)).collect();
+
+        Ok(transformed)
     }
 
     pub fn broker(&self) -> Broker {

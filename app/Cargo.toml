@@ -23,10 +23,10 @@ pin-project-lite = "*"
 rand = "*"
 chrono-tz = "*"
 
-base64 = "0.13"
+base64 = "0.21"
 ctrlc = "3.2"
 dotenv = "0.15"
-env_logger = "0.9"
+env_logger = "0.10"
 futures = "0.3"
 notify = "5.0"
 once_cell = "1.16"
@@ -37,9 +37,9 @@ warp = "0.3"
 wasmer = "3"
 
 [target.'cfg(not(target_arch = "aarch64"))'.dependencies]
-paho-mqtt = { version = "0.9" }
+paho-mqtt = { version = "0.12" }
 sqlx = { version = "0.6", features = [ "postgres", "macros", "migrate", "chrono", "runtime-tokio-native-tls" ] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
-paho-mqtt = { version = "0.9", features = [ "vendored-ssl" ] }
+paho-mqtt = { version = "0.12", features = [ "vendored-ssl" ] }
 sqlx = { version = "0.6", features = [ "postgres", "macros", "migrate", "chrono", "runtime-tokio-rustls" ] }

@@ -297,7 +297,8 @@ fn set_agent_config(
 }
 
 fn decode_b64(payload_b64: String) -> String {
-    if let Ok(payload_bytes) = base64::decode(payload_b64) {
+    use base64::{engine::general_purpose, Engine as _};
+    if let Ok(payload_bytes) = general_purpose::STANDARD.decode(payload_b64) {
         if let Ok(payload) = String::from_utf8(payload_bytes) {
             return payload;
         }

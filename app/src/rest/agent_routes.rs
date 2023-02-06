@@ -26,7 +26,6 @@ pub fn routes(
 
     (
         SwaggerHostDefinition {
-            url: "/api/doc/agent-api.json".to_owned(),
             open_api: ApiDoc::openapi(),
         },
         get_active_agents(observer.clone())
@@ -97,8 +96,10 @@ fn register_agent(
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .register_agent(sensor_id, key_b64.unwrap_or_default(), domain, agent_name)
-                    .await;
+                    .register_agent(sensor_id, key_b64.unwrap_or_default(), &domain, &agent_name)
+                    .await
+                    .map(|_| dto::AgentDto { domain, agent_name });
+
                 build_response(resp)
             },
         )
@@ -408,8 +409,8 @@ mod test {
             .register_agent(
                 sensor.id,
                 sensor.key.clone(),
-                domain.clone(),
-                agent_name.clone(),
+                &domain,
+                &agent_name,
             )
             .await
             .unwrap();
@@ -440,8 +441,8 @@ mod test {
             .register_agent(
                 sensor.id,
                 sensor.key.clone(),
-                domain.clone(),
-                agent_name.clone(),
+                &domain,
+                &agent_name,
             )
             .await
             .unwrap();
@@ -476,8 +477,8 @@ mod test {
             .register_agent(
                 sensor.id,
                 sensor.key.clone(),
-                domain.clone(),
-                agent_name.clone(),
+                &domain,
+                &agent_name,
             )
             .await
             .unwrap();
@@ -511,8 +512,8 @@ mod test {
             .register_agent(
                 sensor.id,
                 sensor.key.clone(),
-                domain.clone(),
-                agent_name.clone(),
+                &domain,
+                &agent_name,
             )
             .await
             .unwrap();

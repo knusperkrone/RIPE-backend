@@ -29,7 +29,7 @@ pub struct ConcurrentSensorObserver {
     iac_receiver: Mutex<UnboundedReceiver<SensorMQTTCommand>>,
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,
     mqtt_client: MqttSensorClient,
-    db_conn: Arc<PgPool>,
+    db_conn: PgPool,
 }
 
 impl ConcurrentSensorObserver {
@@ -47,7 +47,7 @@ impl ConcurrentSensorObserver {
             agent_factory: RwLock::new(agent_factory),
             iac_receiver: Mutex::new(iac_receiver),
             data_receveiver: Mutex::new(data_receiver),
-            db_conn: Arc::new(db_conn),
+            db_conn: db_conn,
         };
         Arc::new(observer)
     }
@@ -386,6 +386,27 @@ impl ConcurrentSensorObserver {
             .collect())
     }
 
+    pub async fn sensor_data(
+        &self,
+        sensor_id: i32,
+        key_b64: String,
+    ) -> Result<Vec<SensorDataMessage>, ObserverError> {
+        {
+            // API guard scope
+            let container = self.container.read().await;
+            let _ = container
+                .sensor(sensor_id, key_b64.as_str())
+                .await
+                .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
+        }
+        let data = models::get_sensor_data(&self.db_conn, sensor_id, 0, i64::MAX)
+            .await?
+            .drain(..)
+            .map(|d| d.into())
+            .collect();
+        Ok(data)
+    }
+
     /*
      * Agent
      */
@@ -399,9 +420,9 @@ impl ConcurrentSensorObserver {
         &self,
         sensor_id: i32,
         key_b64: String,
-        domain: String,
-        agent_name: String,
-    ) -> Result<AgentDto, ObserverError> {
+        domain: &String,
+        agent_name: &String,
+    ) -> Result<(), ObserverError> {
         let container = self.container.read().await;
         let mut sensor = container
             .sensor(sensor_id, &key_b64)
@@ -418,7 +439,7 @@ impl ConcurrentSensorObserver {
             APP_LOGGING,
             "Added agent {}, {} to sensor {}", agent_name, domain, sensor_id
         );
-        Ok(AgentDto { domain, agent_name })
+        Ok(())
     }
 
     pub async fn unregister_agent(

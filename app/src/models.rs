@@ -420,6 +420,28 @@ pub async fn get_sensor_logs(
     .await?)
 }
 
+// READ sensor_log
+pub async fn get_sensor_data(
+    conn: &sqlx::PgPool,
+    sensor_id: i32,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<dao::SensorDataDao>, DBError> {
+    Ok(sql_stmnt!(
+        SensorDataDao,
+        r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light   
+            FROM sensor_data WHERE sensor_id = $1 
+            ORDER BY timestamp ASC 
+            LIMIT $2 
+            OFFSET $3"#,
+        sensor_id,
+        limit,
+        offset
+    )
+    .fetch_all(conn)
+    .await?)
+}
+
 #[cfg(test)]
 mod test {
     use chrono::Utc;

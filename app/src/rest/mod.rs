@@ -22,7 +22,6 @@ pub struct ErrorResponseDto {
 }
 
 pub struct SwaggerHostDefinition {
-    url: String,
     open_api: utoipa::openapi::OpenApi,
 }
 

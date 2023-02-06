@@ -1,5 +1,6 @@
 use super::{build_response, SwaggerHostDefinition};
 use crate::sensor::ConcurrentSensorObserver;
+use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ pub fn routes(
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
-        paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_reload),
+        paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_data, sensor_reload),
         components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, 
             SensorDataMessage, ErrorResponseDto, AgentStatusDto, AgentUI, AgentUIDecorator, AgentState
         )),
@@ -27,13 +28,13 @@ pub fn routes(
 
     (
         SwaggerHostDefinition {
-            url: "/api/doc/sensor-api.json".to_owned(),
             open_api: ApiDoc::openapi(),
         },
         register_sensor(observer.clone())
             .or(unregister_sensor(observer.clone()))
             .or(sensor_status(observer.clone()))
             .or(sensor_logs(observer.clone()))
+            .or(sensor_data(observer.clone()))
             .or(sensor_reload(observer.clone()))
             .or(warp::path!("api" / "doc" / "sensor-api.json")
                 .and(warp::get())
@@ -179,6 +180,51 @@ fn sensor_logs(
         .boxed()
 }
 
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DataQuery {
+    date: DateTime<chrono::Utc>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/sensor/{id}/data",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("date" = DateTime, Query, description = "The date to fetch"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    responses(
+        (status = 200, description = "The sensor data of a day", body = [SensorDataMessage], content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
+fn sensor_data(
+    observer: Arc<ConcurrentSensorObserver>,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::optional::<String>("X-KEY");
+    warp::any()
+        .map(move || observer.clone())
+        .and(warp::get())
+        .and(key_header)
+        .and(warp::path!("api" / "sensor" / i32 / "data"))
+        .and(warp::query())
+        .and_then(
+            |observer: Arc<ConcurrentSensorObserver>,
+             key_b64: Option<String>,
+             sensor_id: i32,
+             _date: DateTime<chrono::Utc>| async move {
+                let resp = observer
+                    .sensor_data(sensor_id, key_b64.unwrap_or_default())
+                    .await;
+                build_response(resp)
+            },
+        )
+        .boxed()
+}
+
 #[utoipa::path(
     post,
     path = "/api/sensor/{id}/reload",
@@ -246,6 +292,13 @@ pub mod dto {
         pub data: SensorDataMessage,
         pub agents: Vec<AgentStatusDto>,
         pub broker: BrokerDto,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct PageDto<T> {
+        page: u32,
+        total_pages: u32,
+        payload: T
     }
 }
 

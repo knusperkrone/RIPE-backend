@@ -20,7 +20,6 @@ pub fn routes(
 
     (
         SwaggerHostDefinition {
-            url: "/api/doc/metric-api.json".to_owned(),
             open_api: ApiDoc::openapi(),
         },
         health(observer.clone()).or(warp::path!("api" / "doc" / "metric-api.json")

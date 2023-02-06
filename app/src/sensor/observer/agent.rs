@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct AgentObserver {
-    pub inner: Arc<ConcurrentObserver>,
+    inner: Arc<ConcurrentObserver>,
 }
 
 impl Clone for AgentObserver {

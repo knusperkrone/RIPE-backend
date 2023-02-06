@@ -35,10 +35,10 @@ pub struct Agent {
 }
 
 pub struct ConcurrentObserver {
-    pub mqtt_client: MqttSensorClient,
-    pub container: RwLock<SensorContainer>,
-    pub agent_factory: RwLock<AgentFactory>,
-    pub db_conn: PgPool,
+    pub(crate) mqtt_client: MqttSensorClient,
+    pub(crate) container: RwLock<SensorContainer>,
+    pub(crate) agent_factory: RwLock<AgentFactory>,
+    pub(crate) db_conn: PgPool,
     plugin_dir: std::path::PathBuf,
     iac_receiver: Mutex<UnboundedReceiver<SensorMQTTCommand>>,
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,

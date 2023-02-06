@@ -75,7 +75,7 @@ fn register_sensor(
                         dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
-                            broker: observer.inner.mqtt_client.broker().into()
+                            broker: observer.broker().into()
                     }});
                 build_response(resp)
             },
@@ -153,7 +153,7 @@ fn sensor_status(
                     .map(|(data, mut agents)| SensorStatusDto {
                         data,
                         agents: agents.drain(..).map(|a| AgentStatusDto::from(a)).collect(),
-                        broker: observer.inner.mqtt_client.broker().into()
+                        broker: observer.broker().into()
                         
                     });
                 build_response(resp)

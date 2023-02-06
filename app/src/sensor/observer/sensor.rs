@@ -2,6 +2,7 @@ use super::ConcurrentObserver;
 use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
 use crate::models::{self};
+use crate::mqtt::Broker;
 use chrono_tz::Tz;
 use ripe_core::SensorDataMessage;
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use super::{Agent, Sensor};
 
 pub struct SensorObserver {
-    pub inner: Arc<ConcurrentObserver>,
+    inner: Arc<ConcurrentObserver>,
 }
 
 impl Clone for SensorObserver {
@@ -94,6 +95,10 @@ impl SensorObserver {
 
         debug!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
         Ok((data, agents))
+    }
+
+    pub fn broker(&self) -> Broker {
+        self.inner.mqtt_client.broker()
     }
 
     /*

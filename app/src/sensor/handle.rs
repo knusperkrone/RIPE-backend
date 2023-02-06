@@ -174,10 +174,6 @@ impl SensorHandle {
         self.dao.id()
     }
 
-    pub fn name(&self) -> &String {
-        &self.dao.name()
-    }
-
     pub fn key_b64(&self) -> &String {
         &self.dao.key_b64()
     }

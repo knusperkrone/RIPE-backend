@@ -1,7 +1,7 @@
 use crate::config::CONFIG;
 use crate::error::ObserverError;
 use crate::logging::APP_LOGGING;
-use crate::sensor::ConcurrentSensorObserver;
+use crate::sensor::ConcurrentObserver;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::{convert::Infallible, sync::Arc};
@@ -57,7 +57,7 @@ pub fn build_response_with_status<T: serde::Serialize>(
     }
 }
 
-pub async fn dispatch_server_daemon(observer: Arc<ConcurrentSensorObserver>) {
+pub async fn dispatch_server_daemon(observer: Arc<ConcurrentObserver>) {
     // Set up logging
     std::env::set_var("RUST_LOG", "actix_web=info");
     let server_port = CONFIG.server_port();

@@ -5,7 +5,8 @@ mod container;
 #[cfg(test)]
 mod test;
 
-pub use observer::ConcurrentSensorObserver;
+pub use observer::agent::AgentObserver;
+pub use observer::ConcurrentObserver;
 
 pub enum SensorMessage {
     Data(ripe_core::SensorDataMessage),

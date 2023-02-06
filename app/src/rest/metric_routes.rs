@@ -1,10 +1,10 @@
 use super::{build_response_with_status, SwaggerHostDefinition};
-use crate::{models, sensor::ConcurrentSensorObserver};
+use crate::{models, sensor::ConcurrentObserver};
 use std::sync::Arc;
 use warp::{hyper::StatusCode, Filter, Reply};
 
 pub fn routes(
-    observer: &Arc<ConcurrentSensorObserver>,
+    observer: &Arc<ConcurrentObserver>,
 ) -> (
     SwaggerHostDefinition,
     impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone,
@@ -38,12 +38,12 @@ pub fn routes(
     tag = "metric",
 )]
 fn health(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: Arc<ConcurrentObserver>,
 ) -> impl Filter<Extract = impl Reply, Error = warp::Rejection> + Clone {
     warp::any()
         .map(move || observer.clone())
         .and(warp::path!("api" / "health"))
-        .and_then(|observer: Arc<ConcurrentSensorObserver>| async move {
+        .and_then(|observer: Arc<ConcurrentObserver>| async move {
             use tokio::time::timeout;
             let duration = std::time::Duration::from_millis(500);
             let results = tokio::join!(

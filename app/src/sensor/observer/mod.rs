@@ -9,26 +9,32 @@ use crate::models::{
 };
 use crate::mqtt::MqttSensorClient;
 use crate::plugin::AgentFactory;
-use crate::rest::{AgentStatusDto, SensorStatusDto};
-use crate::{
-    error::{DBError, ObserverError},
-    rest::AgentDto,
-};
+
+use crate::error::{DBError, ObserverError};
 use chrono::Utc;
-use chrono_tz::Tz;
 use notify::{Config, PollWatcher, Watcher};
-use ripe_core::{AgentConfigType, SensorDataMessage};
+use ripe_core::AgentUI;
+use ripe_core::SensorDataMessage;
 use sqlx::PgPool;
-use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
+
+pub mod agent;
+pub mod sensor;
 
 pub struct Sensor {
     pub id: i32,
     pub key: String,
 }
 
-pub struct ConcurrentSensorObserver {
+pub struct Agent {
+    pub domain: String,
+    pub name: String,
+    pub ui: AgentUI,
+}
+
+pub struct ConcurrentObserver {
     pub mqtt_client: MqttSensorClient,
     pub container: RwLock<SensorContainer>,
     pub agent_factory: RwLock<AgentFactory>,
@@ -38,7 +44,7 @@ pub struct ConcurrentSensorObserver {
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,
 }
 
-impl ConcurrentSensorObserver {
+impl ConcurrentObserver {
     pub fn new(plugin_dir: &Path, db_conn: PgPool) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
         let (sensor_data_sender, data_receiver) = unbounded_channel::<(i32, SensorMessage)>();
@@ -46,7 +52,7 @@ impl ConcurrentSensorObserver {
         let container = SensorContainer::new();
         let mqtt_client = MqttSensorClient::new(sensor_data_sender);
 
-        let observer = ConcurrentSensorObserver {
+        let observer = ConcurrentObserver {
             mqtt_client,
             plugin_dir: plugin_dir.to_owned(),
             container: RwLock::new(container),
@@ -76,7 +82,7 @@ impl ConcurrentSensorObserver {
     /// After a successful connection, the agent's get inited from the database
     /// On each message event the according sensor get's called and the data get's persistet
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_mqtt_receive_loop(self: Arc<ConcurrentSensorObserver>) -> () {
+    pub async fn dispatch_mqtt_receive_loop(self: Arc<ConcurrentObserver>) -> () {
         let reveiver_res = self.data_receveiver.try_lock();
         if reveiver_res.is_err() {
             error!(APP_LOGGING, "dispatch_mqtt_receive_loop() already called!");
@@ -111,7 +117,7 @@ impl ConcurrentSensorObserver {
     /// Dispatches the inter-agent-communication (iac) stream
     /// Each agent sends it's mqtt command over this channel
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_iac_loop(self: Arc<ConcurrentSensorObserver>) -> () {
+    pub async fn dispatch_iac_loop(self: Arc<ConcurrentObserver>) -> () {
         let receiver_res = self.iac_receiver.try_lock();
         if receiver_res.is_err() {
             error!(APP_LOGGING, "dispatch_mqtt_send_loop() already called!");
@@ -150,7 +156,7 @@ impl ConcurrentSensorObserver {
     /// Dispatches a interval checking loop
     /// checks if the plugin libary files got updated
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentSensorObserver>) -> () {
+    pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentObserver>) -> () {
         let plugin_dir = self.plugin_dir.as_path();
 
         // watch plugin dir
@@ -284,209 +290,6 @@ impl ConcurrentSensorObserver {
         );
         Ok(())
     }
-}
-
-/*
- * Sensor
- */
-
-impl ConcurrentSensorObserver {
-    pub async fn register_sensor(&self, name: Option<String>) -> Result<Sensor, ObserverError> {
-        // Create sensor dao
-        let key = self.generate_sensor_key();
-        let sensor_dao = models::create_new_sensor(&self.db_conn, key.clone(), &name).await?;
-        let dao_id = sensor_dao.id();
-
-        // Create agents and persist
-        let factory = self.agent_factory.read().await;
-        match self.insert_sensor(&factory, sensor_dao, None).await {
-            Ok(id) => {
-                info!(APP_LOGGING, "Registered new sensor: {}", id);
-                Ok(Sensor { id, key })
-            }
-            Err(err) => {
-                models::delete_sensor(&self.db_conn, dao_id).await?; // Fallback delete
-                Err(ObserverError::from(err))
-            }
-        }
-    }
-
-    pub async fn unregister_sensor(
-        &self,
-        sensor_id: i32,
-        key_b64: &String,
-    ) -> Result<(), ObserverError> {
-        models::delete_sensor(&self.db_conn, sensor_id).await?;
-
-        let sensor_mtx = self
-            .container
-            .write()
-            .await
-            .remove_sensor(sensor_id, &key_b64)
-            .await?;
-        let sensor = sensor_mtx.lock().await;
-        self.mqtt_client.unsubscribe_sensor(&sensor).await?;
-
-        info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
-        Ok(())
-    }
-
-    pub async fn sensor_status(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        timezone: Tz,
-    ) -> Result<SensorStatusDto, ObserverError> {
-        // Cummulate and render sensors
-        let container = self.container.read().await;
-        let sensor = container
-            .sensor(sensor_id, key_b64.as_str())
-            .await
-            .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
-
-        // Get sensor data
-        let data = match models::get_latest_sensor_data(&self.db_conn, sensor_id, &key_b64).await? {
-            Some(dao) => dao.into(),
-            None => SensorDataMessage::default(),
-        };
-
-        let agents: Vec<AgentStatusDto> = sensor
-            .agents()
-            .iter()
-            .map(|a| AgentStatusDto {
-                domain: a.domain().clone(),
-                agent_name: a.agent_name().clone(),
-                ui: a.render_ui(&data, timezone),
-            })
-            .collect();
-
-        debug!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
-        Ok(SensorStatusDto {
-            name: sensor.name().clone(),
-            data: data,
-            agents: agents,
-            broker: self.mqtt_client.broker().into(),
-        })
-    }
-
-    /*
-     * Agent
-     */
-
-    pub async fn register_agent(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        domain: &String,
-        agent_name: &String,
-    ) -> Result<(), ObserverError> {
-        let container = self.container.read().await;
-        let mut sensor = container
-            .sensor(sensor_id, &key_b64)
-            .await
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-
-        let factory = self.agent_factory.read().await;
-        let agent = factory.create_agent(sensor_id, &agent_name, &domain, None)?;
-        models::create_agent_config(&self.db_conn, &agent.deserialize()).await?;
-
-        sensor.add_agent(agent);
-
-        info!(
-            APP_LOGGING,
-            "Added agent {}, {} to sensor {}", agent_name, domain, sensor_id
-        );
-        Ok(())
-    }
-
-    pub async fn unregister_agent(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        domain: String,
-        agent_name: String,
-    ) -> Result<AgentDto, ObserverError> {
-        let container = self.container.read().await;
-        let mut sensor = container
-            .sensor(sensor_id, &key_b64)
-            .await
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-
-        let agent = sensor
-            .remove_agent(&agent_name, &domain)
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-        models::delete_sensor_agent(&self.db_conn, sensor.id(), agent).await?;
-
-        info!(
-            APP_LOGGING,
-            "Removed agent {}, {} from sensor {}", agent_name, domain, sensor_id
-        );
-        Ok(AgentDto { domain, agent_name })
-    }
-
-    pub async fn on_agent_cmd(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        domain: String,
-        payload: i64,
-    ) -> Result<AgentDto, ObserverError> {
-        let container = self.container.read().await;
-        let mut sensor = container
-            .sensor(sensor_id, &key_b64)
-            .await
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-
-        let agent = sensor.handle_agent_cmd(&domain, payload)?;
-        Ok(AgentDto {
-            domain,
-            agent_name: agent.agent_name().clone(),
-        })
-    }
-
-    pub async fn agent_config(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        domain: String,
-        timezone: Tz,
-    ) -> Result<HashMap<String, (String, AgentConfigType)>, ObserverError> {
-        let container = self.container.read().await;
-        let sensor = container
-            .sensor(sensor_id, &key_b64)
-            .await
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-
-        Ok(sensor
-            .agent_config(&domain, timezone)
-            .ok_or(DBError::SensorNotFound(sensor_id))?)
-    }
-
-    pub async fn set_agent_config(
-        &self,
-        sensor_id: i32,
-        key_b64: String,
-        domain: String,
-        config: HashMap<String, AgentConfigType>,
-        timezone: Tz,
-    ) -> Result<AgentDto, ObserverError> {
-        let container = self.container.write().await;
-        let mut sensor = container
-            .sensor(sensor_id, &key_b64)
-            .await
-            .ok_or(DBError::SensorNotFound(sensor_id))?;
-
-        let agent = sensor.set_agent_config(&domain, config, timezone)?;
-        models::update_agent_config(&self.db_conn, &agent.deserialize()).await?;
-        Ok(AgentDto {
-            domain,
-            agent_name: agent.agent_name().clone(),
-        })
-    }
-
-    /*
-     * Helpers
-     */
 
     async fn insert_sensor(
         &self,
@@ -517,16 +320,5 @@ impl ConcurrentSensorObserver {
             }
         }
         Ok(())
-    }
-
-    fn generate_sensor_key(&self) -> String {
-        use rand::distributions::Alphanumeric;
-        use rand::{thread_rng, Rng};
-        let mut rng = thread_rng();
-        std::iter::repeat(())
-            .map(|()| rng.sample(Alphanumeric))
-            .map(char::from)
-            .take(6)
-            .collect()
     }
 }

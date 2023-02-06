@@ -1,12 +1,13 @@
 use super::{build_response, SwaggerHostDefinition};
-use crate::sensor::ConcurrentSensorObserver;
+use crate::sensor::AgentObserver;
+use crate::sensor::ConcurrentObserver;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
 use std::sync::Arc;
 use warp::Filter;
 
 pub fn routes(
-    observer: &Arc<ConcurrentSensorObserver>,
+    observer: &Arc<ConcurrentObserver>,
 ) -> (
     SwaggerHostDefinition,
     impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
@@ -23,17 +24,18 @@ pub fn routes(
         tags((name = "agent", description = "Agent related API"))
     )]
     struct ApiDoc;
+    let agent_observer = AgentObserver::new(observer.clone());
 
     (
         SwaggerHostDefinition {
             open_api: ApiDoc::openapi(),
         },
         get_active_agents(observer.clone())
-            .or(register_agent(observer.clone()))
-            .or(unregister_agent(observer.clone()))
-            .or(on_agent_cmd(observer.clone()))
-            .or(agent_config(observer.clone()))
-            .or(set_agent_config(observer.clone()))
+            .or(register_agent(agent_observer.clone()))
+            .or(unregister_agent(agent_observer.clone()))
+            .or(on_agent_cmd(agent_observer.clone()))
+            .or(agent_config(agent_observer.clone()))
+            .or(set_agent_config(agent_observer.clone()))
             .or(warp::path!("api" / "doc" / "agent-api.json")
                 .and(warp::get())
                 .map(|| warp::reply::json(&ApiDoc::openapi()))),
@@ -50,13 +52,13 @@ pub fn routes(
     tag = "agent",
 )]
 fn get_active_agents(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: Arc<ConcurrentObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
         .and(warp::path!("api" / "agent"))
-        .and_then(|observer: Arc<ConcurrentSensorObserver>| async move {
+        .and_then(|observer: Arc<ConcurrentObserver>| async move {
             let agents = observer.agent_factory.read().await.agents();
             build_response(Ok(agents))
         })
@@ -79,7 +81,7 @@ fn get_active_agents(
     tag = "agent",
 )]
 fn register_agent(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: AgentObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
@@ -89,14 +91,14 @@ fn register_agent(
         .and(warp::path!("api" / "agent" / i32))
         .and(warp::body::json())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: AgentObserver,
              key_b64: Option<String>,
              sensor_id: i32,
              body: dto::AgentDto| async move {
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .register_agent(sensor_id, key_b64.unwrap_or_default(), &domain, &agent_name)
+                    .register(sensor_id, key_b64.unwrap_or_default(), &domain, &agent_name)
                     .await
                     .map(|_| dto::AgentDto { domain, agent_name });
 
@@ -122,7 +124,7 @@ fn register_agent(
     tag = "agent",
 )]
 fn unregister_agent(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: AgentObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
@@ -132,14 +134,14 @@ fn unregister_agent(
         .and(warp::path!("api" / "agent" / i32))
         .and(warp::body::json())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: AgentObserver,
              key_b64: Option<String>,
              sensor_id: i32,
              body: dto::AgentDto| async move {
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .unregister_agent(sensor_id, key_b64.unwrap_or_default(), domain, agent_name)
+                    .unregister(sensor_id, key_b64.unwrap_or_default(), domain, agent_name)
                     .await;
                 build_response(resp)
             },
@@ -164,7 +166,7 @@ fn unregister_agent(
     ),
 )]
 fn on_agent_cmd(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: AgentObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
@@ -174,14 +176,14 @@ fn on_agent_cmd(
         .and(warp::path!("api" / "agent" / i32 / String))
         .and(warp::body::json())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: AgentObserver,
              key_b64: Option<String>,
              sensor_id: i32,
              domain_b64: String,
              body: dto::ForceRequest| async move {
                 //let key_b64 = Some("".to_owned());
                 let resp = observer
-                    .on_agent_cmd(
+                    .on_cmd(
                         sensor_id,
                         key_b64.unwrap_or_default(),
                         decode_b64(domain_b64),
@@ -211,7 +213,7 @@ fn on_agent_cmd(
     tag = "agent",
 )]
 fn agent_config(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: AgentObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
     let key_header = warp::header::optional::<String>("X-KEY");
@@ -222,14 +224,14 @@ fn agent_config(
         .and(key_header)
         .and(warp::path!("api" / "agent" / i32 / String / "config"))
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: AgentObserver,
              tz_opt: Option<String>,
              key_b64: Option<String>,
              sensor_id: i32,
              domain_b64: String| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp = observer
-                    .agent_config(
+                    .config(
                         sensor_id,
                         key_b64.unwrap_or_default(),
                         decode_b64(domain_b64),
@@ -260,7 +262,7 @@ fn agent_config(
     tag = "agent",
 )]
 fn set_agent_config(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: AgentObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
     let key_header = warp::header::optional::<String>("X-KEY");
@@ -272,7 +274,7 @@ fn set_agent_config(
         .and(warp::path!("api" / "agent" / i32 / String / "config"))
         .and(warp::body::json())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: AgentObserver,
              tz_opt: Option<String>,
              key_b64: Option<String>,
              sensor_id: i32,
@@ -280,7 +282,7 @@ fn set_agent_config(
              body: _| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp = observer
-                    .set_agent_config(
+                    .set_config(
                         sensor_id,
                         key_b64.unwrap_or_default(),
                         decode_b64(domain_b64),
@@ -311,6 +313,8 @@ pub mod dto {
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
 
+    use crate::sensor::observer::Agent;
+
     #[derive(Serialize, Deserialize, Debug, ToSchema)]
     pub struct AgentDto {
         pub domain: String,
@@ -322,6 +326,16 @@ pub mod dto {
         pub domain: String,
         pub agent_name: String,
         pub ui: AgentUI,
+    }
+
+    impl From<Agent> for AgentStatusDto {
+        fn from(other: Agent) -> Self {
+            AgentStatusDto {
+                domain: other.domain,
+                agent_name: other.name,
+                ui: other.ui,
+            }
+        }
     }
 
     #[derive(Serialize, Deserialize, ToSchema)]
@@ -338,19 +352,24 @@ mod test {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::{config::CONFIG, models::establish_db_connection};
+    use crate::{
+        config::CONFIG, models::establish_db_connection, sensor::observer::sensor::SensorObserver,
+    };
 
-    async fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
+    async fn build_mocked_observer() -> (Arc<ConcurrentObserver>, AgentObserver, SensorObserver) {
         let plugin_path = CONFIG.plugin_dir();
         let plugin_dir = std::path::Path::new(&plugin_path);
         let db_conn = establish_db_connection().await.unwrap();
-        ConcurrentSensorObserver::new(plugin_dir, db_conn)
+        let observer = ConcurrentObserver::new(plugin_dir, db_conn);
+        let agent_observer = AgentObserver::new(observer.clone());
+        let sensor_observer = SensorObserver::new(observer.clone());
+        (observer, agent_observer, sensor_observer)
     }
 
     #[tokio::test]
     async fn test_rest_agents() {
         // Prepare
-        let observer = build_mocked_observer().await;
+        let (observer, _agent_observer, _sensor_observer) = build_mocked_observer().await;
         let routes = routes(&observer).1;
 
         // Execute
@@ -377,8 +396,8 @@ mod test {
     #[tokio::test]
     async fn test_rest_register_agent() {
         // Prepare
-        let observer = build_mocked_observer().await;
-        let sensor = observer.register_sensor(None).await.unwrap();
+        let (observer, _agent_observer, sensor_observer) = build_mocked_observer().await;
+        let sensor = sensor_observer.register(None).await.unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
 
         // Execute
@@ -403,10 +422,10 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer().await;
-        let sensor = observer.register_sensor(None).await.unwrap();
-        observer
-            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
+        let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
+        let sensor = sensor_observer.register(None).await.unwrap();
+        agent_observer
+            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -430,10 +449,10 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer().await;
-        let sensor = observer.register_sensor(None).await.unwrap();
-        observer
-            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
+        let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
+        let sensor = sensor_observer.register(None).await.unwrap();
+        agent_observer
+            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -461,10 +480,10 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer().await;
-        let sensor = observer.register_sensor(None).await.unwrap();
-        observer
-            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
+        let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
+        let sensor = sensor_observer.register(None).await.unwrap();
+        agent_observer
+            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -491,10 +510,10 @@ mod test {
         // Prepare
         let agent_name = "MockAgent".to_owned();
         let domain = "Test".to_owned();
-        let observer = build_mocked_observer().await;
-        let sensor = observer.register_sensor(None).await.unwrap();
-        observer
-            .register_agent(sensor.id, sensor.key.clone(), &domain, &agent_name)
+        let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
+        let sensor = sensor_observer.register(None).await.unwrap();
+        agent_observer
+            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);

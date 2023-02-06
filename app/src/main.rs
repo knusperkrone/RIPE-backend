@@ -45,15 +45,15 @@ pub async fn main() -> std::io::Result<()> {
     let plugin_path = CONFIG.plugin_dir();
     let plugin_dir = std::path::Path::new(&plugin_path);
     let db_conn = connect_db().await;
-    let sensor_arc = sensor::ConcurrentSensorObserver::new(plugin_dir, db_conn);
+    let sensor_arc = sensor::ConcurrentObserver::new(plugin_dir, db_conn);
 
     // Prepare daemon tasks for current-thread
     let server_loop = rest::dispatch_server_daemon(sensor_arc.clone());
     let reveice_mqtt_loop =
-        sensor::ConcurrentSensorObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
-    let iac_loop = sensor::ConcurrentSensorObserver::dispatch_iac_loop(sensor_arc.clone());
+        sensor::ConcurrentObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
+    let iac_loop = sensor::ConcurrentObserver::dispatch_iac_loop(sensor_arc.clone());
     let plugin_loop =
-        sensor::ConcurrentSensorObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
+        sensor::ConcurrentObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
 
     let _ = tokio::join!(
         sensor_arc.init(),

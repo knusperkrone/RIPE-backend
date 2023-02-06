@@ -1,8 +1,10 @@
+use super::{AgentStatusDto, SensorStatusDto};
 use super::{build_response, SwaggerHostDefinition};
 use crate::error::DBError;
 use crate::error::ObserverError;
 use crate::models;
-use crate::sensor::ConcurrentSensorObserver;
+use crate::sensor::ConcurrentObserver;
+use crate::sensor::observer::sensor::SensorObserver;
 use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
@@ -11,13 +13,12 @@ use std::sync::Arc;
 use warp::Filter;
 
 pub fn routes(
-    observer: &Arc<ConcurrentSensorObserver>,
+    observer: &Arc<ConcurrentObserver>,
 ) -> (
     SwaggerHostDefinition,
     impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
 ) {
     use super::ErrorResponseDto;
-    use crate::rest::AgentStatusDto;
     use ripe_core::{AgentUI, AgentUIDecorator, AgentState};
     use utoipa::OpenApi;
     #[derive(OpenApi)]
@@ -29,14 +30,15 @@ pub fn routes(
         tags((name = "sensor", description = "Sensor related API"))
     )]
     struct ApiDoc;
+    let sensor_observer = SensorObserver::new(observer.clone());
 
     (
         SwaggerHostDefinition {
             open_api: ApiDoc::openapi(),
         },
-        register_sensor(observer.clone())
-            .or(unregister_sensor(observer.clone()))
-            .or(sensor_status(observer.clone()))
+        register_sensor(sensor_observer.clone())
+            .or(unregister_sensor(sensor_observer.clone()))
+            .or(sensor_status(sensor_observer.clone()))
             .or(sensor_logs(observer.clone()))
             .or(sensor_data(observer.clone()))
             .or(sensor_reload(observer.clone()))
@@ -58,7 +60,7 @@ pub fn routes(
     tag = "sensor",
 )]
 fn register_sensor(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::any()
         .map(move || observer.clone())
@@ -66,14 +68,14 @@ fn register_sensor(
         .and(warp::path!("api" / "sensor"))
         .and(warp::body::json())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>, body: dto::SensorRegisterRequestDto| async move {
-                let resp = observer.register_sensor(body.name)
+            |observer: SensorObserver, body: dto::SensorRegisterRequestDto| async move {
+                let resp = observer.register(body.name)
                     .await
                     .map( |sensor|  { 
                         dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
-                            broker: observer.mqtt_client.broker().into()
+                            broker: observer.inner.mqtt_client.broker().into()
                     }});
                 build_response(resp)
             },
@@ -93,7 +95,7 @@ fn register_sensor(
     tag = "sensor",
 )]
 fn unregister_sensor(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::any()
         .map(move || observer.clone())
@@ -101,8 +103,8 @@ fn unregister_sensor(
         .and(warp::path!("api" / "sensor"))
         .and(warp::body::json())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>, body: dto::SensorCredentialDto| async move {
-                let resp = observer.unregister_sensor(body.id, &body.key)
+            |observer: SensorObserver, body: dto::SensorCredentialDto| async move {
+                let resp = observer.unregister(body.id, &body.key)
                     .await
                     .map(|()| dto::SensorCredentialDto {
                     id: body.id, key: body.key, broker: dto::BrokerDto { tcp: None, wss: None }
@@ -129,7 +131,7 @@ fn unregister_sensor(
     tag = "sensor",
 )]
 fn sensor_status(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
     let key_header = warp::header::optional::<String>("X-KEY");
@@ -140,14 +142,20 @@ fn sensor_status(
         .and(key_header)
         .and(warp::path!("api" / "sensor" / i32))
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: SensorObserver,
              tz_opt: Option<String>,
              key_b64: Option<String>,
              sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp = observer
-                    .sensor_status(sensor_id, key_b64.unwrap_or_default(), tz)
-                    .await;
+                    .status(sensor_id, key_b64.unwrap_or_default(), tz)
+                    .await
+                    .map(|(data, mut agents)| SensorStatusDto {
+                        data,
+                        agents: agents.drain(..).map(|a| AgentStatusDto::from(a)).collect(),
+                        broker: observer.inner.mqtt_client.broker().into()
+                        
+                    });
                 build_response(resp)
             },
         )
@@ -170,7 +178,7 @@ fn sensor_status(
     tag = "sensor",
 )]
 fn sensor_logs(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: Arc<ConcurrentObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
     let key_header = warp::header::optional::<String>("X-KEY");
@@ -181,7 +189,7 @@ fn sensor_logs(
         .and(key_header)
         .and(warp::path!("api" / "sensor" / i32 / "log"))
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: Arc<ConcurrentObserver>,
              tz_opt: Option<String>,
              key_b64: Option<String>,
              sensor_id: i32| async move {
@@ -226,7 +234,7 @@ struct DataQuery {
     tag = "sensor",
 )]
 fn sensor_data(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: Arc<ConcurrentObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
@@ -236,7 +244,7 @@ fn sensor_data(
         .and(warp::path!("api" / "sensor" / i32 / "data"))
         .and(warp::query())
         .and_then(
-            |observer: Arc<ConcurrentSensorObserver>,
+            |observer: Arc<ConcurrentObserver>,
              key_b64: Option<String>,
              sensor_id: i32,
              _date: DateTime<chrono::Utc>| async move {
@@ -273,7 +281,7 @@ fn sensor_data(
     tag = "sensor",
 )]
 fn sensor_reload(
-    observer: Arc<ConcurrentSensorObserver>,
+    observer: Arc<ConcurrentObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
@@ -282,7 +290,7 @@ fn sensor_reload(
         .and(key_header)
         .and(warp::path!("api" / "sensor" / i32 / "reload"))
         .and_then(
-            |_observer: Arc<ConcurrentSensorObserver>,
+            |_observer: Arc<ConcurrentObserver>,
              _key_b64: Option<String>,
              _sensor_id: i32| async move {
                 // TODO: let resp = observer.reload_sensor(sensor_id, key_b64).await;
@@ -327,7 +335,6 @@ pub mod dto {
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorStatusDto {
-        pub name: String,
         pub data: SensorDataMessage,
         pub agents: Vec<AgentStatusDto>,
         pub broker: BrokerDto,
@@ -346,17 +353,19 @@ mod test {
     use super::*;
     use crate::{config::CONFIG, models::establish_db_connection};
 
-    async fn build_mocked_observer() -> Arc<ConcurrentSensorObserver> {
+    async fn build_mocked_observer() -> (Arc<ConcurrentObserver>, SensorObserver) {
         let plugin_path = CONFIG.plugin_dir();
         let plugin_dir = std::path::Path::new(&plugin_path);
         let db_conn = establish_db_connection().await.unwrap();
-        ConcurrentSensorObserver::new(plugin_dir, db_conn)
+        let observer = ConcurrentObserver::new(plugin_dir, db_conn);
+        let sensor_observer = SensorObserver::new(observer.clone());
+        (observer, sensor_observer)
     }
 
     #[tokio::test]
     async fn test_rest_register_sensor() {
         // Prepare
-        let observer = build_mocked_observer().await;
+        let (observer, _sensor_observer) = build_mocked_observer().await;
         let routes = routes(&observer).1;
 
         // Execute
@@ -376,9 +385,9 @@ mod test {
     #[tokio::test]
     async fn test_rest_unregister_sensor() {
         // Prepare
-        let observer = build_mocked_observer().await;
+        let (observer, sensor_observer) = build_mocked_observer().await;
         let routes = routes(&observer).1;
-        let sensor = observer.register_sensor(None).await.unwrap();
+        let sensor = sensor_observer.register(None).await.unwrap();
 
         // Execute
         let res = warp::test::request()
@@ -402,9 +411,9 @@ mod test {
     #[tokio::test]
     async fn test_rest_sensor_status() {
         // Prepare
-        let observer = build_mocked_observer().await;
+        let (observer, sensor_observer) = build_mocked_observer().await;
         let routes = routes(&observer).1;
-        let register = observer.register_sensor(None).await.unwrap();
+        let register = sensor_observer.register(None).await.unwrap();
 
         // Execute
         let res = warp::test::request()

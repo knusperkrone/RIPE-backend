@@ -141,8 +141,9 @@ fn unregister_agent(
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .unregister(sensor_id, key_b64.unwrap_or_default(), domain, agent_name)
-                    .await;
+                    .unregister(sensor_id, key_b64.unwrap_or_default(), &domain, &agent_name)
+                    .await
+                    .map(|()| dto::AgentDto { domain, agent_name });
                 build_response(resp)
             },
         )
@@ -160,7 +161,7 @@ fn unregister_agent(
     ),
     request_body(content = ForceRequest, description = "The payload for the agend", content_type = "application/json"),
     responses(
-        (status = 200, description = "Set forced command for Agent", body = AgentDto, content_type = "application/json"),
+        (status = 200, description = "Set forced command for Agent", content_type = "application/json"),
         (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
         (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
     ),
@@ -186,7 +187,7 @@ fn on_agent_cmd(
                     .on_cmd(
                         sensor_id,
                         key_b64.unwrap_or_default(),
-                        decode_b64(domain_b64),
+                        &decode_b64(domain_b64),
                         body.payload,
                     )
                     .await;
@@ -234,7 +235,7 @@ fn agent_config(
                     .config(
                         sensor_id,
                         key_b64.unwrap_or_default(),
-                        decode_b64(domain_b64),
+                        &decode_b64(domain_b64),
                         tz,
                     )
                     .await;
@@ -285,7 +286,7 @@ fn set_agent_config(
                     .set_config(
                         sensor_id,
                         key_b64.unwrap_or_default(),
-                        decode_b64(domain_b64),
+                        &decode_b64(domain_b64),
                         body,
                         tz,
                     )

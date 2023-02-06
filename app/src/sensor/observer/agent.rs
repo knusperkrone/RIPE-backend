@@ -1,10 +1,7 @@
 use super::ConcurrentObserver;
+use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
 use crate::models::{self};
-use crate::{
-    error::{DBError, ObserverError},
-    rest::AgentDto,
-};
 
 use chrono_tz::Tz;
 use ripe_core::AgentConfigType;
@@ -58,9 +55,9 @@ impl AgentObserver {
         &self,
         sensor_id: i32,
         key_b64: String,
-        domain: String,
-        agent_name: String,
-    ) -> Result<AgentDto, ObserverError> {
+        domain: &String,
+        agent_name: &String,
+    ) -> Result<(), ObserverError> {
         let container = self.inner.container.read().await;
         let mut sensor = container
             .sensor(sensor_id, &key_b64)
@@ -76,34 +73,31 @@ impl AgentObserver {
             APP_LOGGING,
             "Removed agent {}, {} from sensor {}", agent_name, domain, sensor_id
         );
-        Ok(AgentDto { domain, agent_name })
+        Ok(())
     }
 
     pub async fn on_cmd(
         &self,
         sensor_id: i32,
         key_b64: String,
-        domain: String,
+        domain: &String,
         payload: i64,
-    ) -> Result<AgentDto, ObserverError> {
+    ) -> Result<(), ObserverError> {
         let container = self.inner.container.read().await;
         let mut sensor = container
             .sensor(sensor_id, &key_b64)
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
-        let agent = sensor.handle_agent_cmd(&domain, payload)?;
-        Ok(AgentDto {
-            domain,
-            agent_name: agent.agent_name().clone(),
-        })
+        sensor.handle_agent_cmd(&domain, payload)?;
+        Ok(())
     }
 
     pub async fn config(
         &self,
         sensor_id: i32,
         key_b64: String,
-        domain: String,
+        domain: &String,
         timezone: Tz,
     ) -> Result<HashMap<String, (String, AgentConfigType)>, ObserverError> {
         let container = self.inner.container.read().await;
@@ -121,10 +115,10 @@ impl AgentObserver {
         &self,
         sensor_id: i32,
         key_b64: String,
-        domain: String,
+        domain: &String,
         config: HashMap<String, AgentConfigType>,
         timezone: Tz,
-    ) -> Result<AgentDto, ObserverError> {
+    ) -> Result<(), ObserverError> {
         let container = self.inner.container.write().await;
         let mut sensor = container
             .sensor(sensor_id, &key_b64)
@@ -133,10 +127,7 @@ impl AgentObserver {
 
         let agent = sensor.set_agent_config(&domain, config, timezone)?;
         models::update_agent_config(&self.inner.db_conn, &agent.deserialize()).await?;
-        Ok(AgentDto {
-            domain,
-            agent_name: agent.agent_name().clone(),
-        })
+        Ok(())
     }
 }
 
@@ -196,7 +187,7 @@ mod test {
 
         // execute
         let res = agent_observer
-            .unregister(sensor_res.id, sensor_res.key, domain, agent)
+            .unregister(sensor_res.id, sensor_res.key, &domain, &agent)
             .await;
 
         // validate
@@ -222,7 +213,7 @@ mod test {
 
         // execute
         let config_res = agent_observer
-            .config(sensor_res.id, sensor_res.key, domain, UTC)
+            .config(sensor_res.id, sensor_res.key, &domain, UTC)
             .await;
 
         // validate
@@ -249,7 +240,7 @@ mod test {
         // execute
         let expected_config = HashMap::new();
         let config_res = agent_observer
-            .set_config(sensor_res.id, sensor_res.key, domain, expected_config, UTC)
+            .set_config(sensor_res.id, sensor_res.key, &domain, expected_config, UTC)
             .await;
 
         // validate

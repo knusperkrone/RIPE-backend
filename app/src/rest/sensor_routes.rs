@@ -1,8 +1,8 @@
-use super::{AgentStatusDto, SensorStatusDto};
 use super::{build_response, SwaggerHostDefinition};
 use crate::error;
-use crate::sensor::{ConcurrentObserver};
+use crate::rest::AgentStatusDto;
 use crate::sensor::observer::sensor::SensorObserver;
+use crate::sensor::ConcurrentObserver;
 use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
@@ -16,13 +16,13 @@ pub fn routes(
     impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone,
 ) {
     use super::ErrorResponseDto;
-    use ripe_core::{AgentUI, AgentUIDecorator, AgentState};
+    use ripe_core::{AgentState, AgentUI, AgentUIDecorator};
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
         paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_data, sensor_reload),
-        components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, 
-            SensorStatusDto, ErrorResponseDto, AgentStatusDto, AgentUI, AgentUIDecorator, AgentState
+        components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto,
+            dto::SensorStatusDto, AgentStatusDto, ErrorResponseDto, AgentUI, AgentUIDecorator, AgentState
         )),
         tags((name = "sensor", description = "Sensor related API"))
     )]
@@ -66,14 +66,15 @@ fn register_sensor(
         .and(warp::body::json())
         .and_then(
             |observer: SensorObserver, body: dto::SensorRegisterRequestDto| async move {
-                let resp = observer.register(body.name)
-                    .await
-                    .map(|sensor|{ 
-                        dto::SensorCredentialDto {
+                let resp =
+                    observer
+                        .register(body.name)
+                        .await
+                        .map(|sensor| dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
-                            broker: observer.broker().into()
-                    }});
+                            broker: observer.broker().into(),
+                        });
                 build_response(resp)
             },
         )
@@ -101,10 +102,15 @@ fn unregister_sensor(
         .and(warp::body::json())
         .and_then(
             |observer: SensorObserver, body: dto::SensorCredentialDto| async move {
-                let resp = observer.unregister(body.id, &body.key)
-                    .await
-                    .map(|()| dto::SensorCredentialDto {
-                    id: body.id, key: body.key, broker: dto::BrokerDto { tcp: None, wss: None }
+                let resp = observer.unregister(body.id, &body.key).await.map(|()| {
+                    dto::SensorCredentialDto {
+                        id: body.id,
+                        key: body.key,
+                        broker: dto::BrokerDto {
+                            tcp: None,
+                            wss: None,
+                        },
+                    }
                 });
                 build_response(resp)
             },
@@ -147,11 +153,13 @@ fn sensor_status(
                 let resp = observer
                     .status(sensor_id, key_b64.unwrap_or_default(), tz)
                     .await
-                    .map(|(data, mut agents)| SensorStatusDto {
-                        data,
-                        agents: agents.drain(..).map(|a| AgentStatusDto::from(a)).collect(),
-                        broker: observer.broker().into()
-                        
+                    .map(|(data, mut agents)| dto::SensorStatusDto {
+                        data: dto::SensorDataDto::from(data),
+                        agents: agents
+                            .drain(..)
+                            .map(|a| AgentStatusDto::from(a))
+                            .collect(),
+                        broker: observer.broker().into(),
                     });
                 build_response(resp)
             },
@@ -191,14 +199,15 @@ fn sensor_logs(
              key_b64: Option<String>,
              sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
-                let resp: Result<Vec<String>, _> = observer.logs(sensor_id, &key_b64.unwrap_or_default(), tz).await;
-            
+                let resp: Result<Vec<String>, _> = observer
+                    .logs(sensor_id, &key_b64.unwrap_or_default(), tz)
+                    .await;
+
                 build_response(resp)
             },
         )
         .boxed()
 }
-
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DataQuery {
@@ -211,11 +220,12 @@ struct DataQuery {
     path = "/api/sensor/{id}/data",
     params(
         ("id" = i32, Path, description = "The sensor id"),
-        ("date" = DateTime, Query, description = "The date to fetch"),
         ("x-key" = String, Header, description = "The sensor key"),
+        ("from" = DateTime, Query, description = "The date to start"),
+        ("until" = DateTime, Query, description = "The date to end"),
     ),
     responses(
-        (status = 200, description = "The sensor data of a day", body = [SensorDataMessage], content_type = "application/json"),
+        (status = 200, description = "The sensor data of a day", body = [SensorDataDto], content_type = "application/json"),
         (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
         (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
     ),
@@ -236,10 +246,20 @@ fn sensor_data(
              key_b64: Option<String>,
              sensor_id: i32,
              query: DataQuery| async move {
-                if query.from >= query.until || query.until - query.from > chrono::Duration::days(1) {
-                    return build_response(Err(error::ObserverError::from(error::ApiError::ArgumentError())));
+                if query.from >= query.until || query.until - query.from > chrono::Duration::days(1)
+                {
+                    return build_response(Err(error::ObserverError::from(
+                        error::ApiError::ArgumentError(),
+                    )));
                 }
-                let resp: Result<Vec<dto::SensorDataDto>, _> = observer.data(sensor_id, &key_b64.unwrap_or_default(), query.from, query.until).await;
+                let resp: Result<Vec<dto::SensorDataDto>, _> = observer
+                    .data(
+                        sensor_id,
+                        &key_b64.unwrap_or_default(),
+                        query.from,
+                        query.until,
+                    )
+                    .await;
                 build_response(resp)
             },
         )
@@ -284,7 +304,7 @@ fn sensor_reload(
 /// DTO
 ///
 pub mod dto {
-    use crate::{rest::AgentStatusDto, models::dao::SensorDataDao};
+    use crate::{models::dao::SensorDataDao, rest::AgentStatusDto};
     use ripe_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -302,7 +322,10 @@ pub mod dto {
 
     impl From<crate::mqtt::Broker> for BrokerDto {
         fn from(from: crate::mqtt::Broker) -> Self {
-            BrokerDto { tcp: from.tcp, wss: from.wss }
+            BrokerDto {
+                tcp: from.tcp,
+                wss: from.wss,
+            }
         }
     }
 
@@ -315,7 +338,7 @@ pub mod dto {
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorStatusDto {
-        pub data: SensorDataMessage,
+        pub data: SensorDataDto,
         pub agents: Vec<AgentStatusDto>,
         pub broker: BrokerDto,
     }
@@ -324,10 +347,10 @@ pub mod dto {
     pub struct PageDto<T> {
         page: u32,
         total_pages: u32,
-        payload: T
+        payload: T,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorDataDto {
         pub timestamp: chrono::DateTime<chrono::Utc>,
         pub battery: Option<f64>,
@@ -347,7 +370,7 @@ pub mod dto {
                 temperature: other.temperature,
                 carbon: other.carbon,
                 conductivity: other.conductivity,
-                light: other.light
+                light: other.light,
             }
         }
     }
@@ -361,11 +384,10 @@ pub mod dto {
                 temperature: other.temperature,
                 carbon: other.carbon,
                 conductivity: other.conductivity,
-                light: other.light
+                light: other.light,
             }
-        } 
+        }
     }
-    
 }
 
 #[cfg(test)]
@@ -413,13 +435,13 @@ mod test {
         let res = warp::test::request()
             .path("/api/sensor")
             .method("DELETE")
-            .json(& dto::SensorCredentialDto {
+            .json(&dto::SensorCredentialDto {
                 id: sensor.id,
                 key: sensor.key,
                 broker: dto::BrokerDto {
                     tcp: None,
                     wss: None,
-                }
+                },
             })
             .reply(&routes)
             .await;

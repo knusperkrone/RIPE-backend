@@ -116,6 +116,25 @@ impl SensorObserver {
             .collect())
     }
 
+    pub async fn first_data<T>(
+        &self,
+        sensor_id: i32,
+        key_b64: &String,
+    ) -> Result<Option<T>, ObserverError>
+    where
+        T: From<SensorDataDao>,
+    {
+        if !models::sensor_exists(&self.inner.db_conn, sensor_id, key_b64).await {
+            return Err(DBError::SensorNotFound(sensor_id).into());
+        }
+
+        if let Ok(data) = models::get_first_sensor_data(&self.inner.db_conn, sensor_id).await {
+            Ok(Some(T::from(data)))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn data<T>(
         &self,
         sensor_id: i32,

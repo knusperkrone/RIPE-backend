@@ -433,7 +433,7 @@ pub async fn get_sensor_logs(
     .await?)
 }
 
-// READ sensor_log
+// READ sensor_data
 pub async fn get_sensor_data(
     conn: &sqlx::PgPool,
     sensor_id: i32,
@@ -452,6 +452,24 @@ pub async fn get_sensor_data(
         until.naive_utc()
     )
     .fetch_all(conn)
+    .await?)
+}
+
+// READ sensor_data
+pub async fn get_first_sensor_data(
+    conn: &sqlx::PgPool,
+    sensor_id: i32,
+) -> Result<dao::SensorDataDao, DBError> {
+    Ok(sql_stmnt!(
+        SensorDataDao,
+        r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light   
+            FROM sensor_data 
+            WHERE sensor_id = $1 
+            ORDER BY timestamp ASC
+            LIMIT 1"#,
+        sensor_id
+    )
+    .fetch_one(conn)
     .await?)
 }
 

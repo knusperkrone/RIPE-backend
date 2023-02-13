@@ -20,7 +20,7 @@ pub fn routes(
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
-        paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_data, sensor_reload),
+        paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_data, first_sensor_data, sensor_reload),
         components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto,
             dto::SensorStatusDto, AgentStatusDto, ErrorResponseDto, AgentUI, AgentUIDecorator, AgentState
         )),
@@ -37,7 +37,8 @@ pub fn routes(
             .or(unregister_sensor(sensor_observer.clone()))
             .or(sensor_status(sensor_observer.clone()))
             .or(sensor_logs(sensor_observer.clone()))
-            .or(sensor_data(sensor_observer))
+            .or(sensor_data(sensor_observer.clone()))
+            .or(first_sensor_data(sensor_observer))
             .or(sensor_reload(observer.clone()))
             .or(warp::path!("api" / "doc" / "sensor-api.json")
                 .and(warp::get())
@@ -155,10 +156,7 @@ fn sensor_status(
                     .await
                     .map(|(data, mut agents)| dto::SensorStatusDto {
                         data: dto::SensorDataDto::from(data),
-                        agents: agents
-                            .drain(..)
-                            .map(|a| AgentStatusDto::from(a))
-                            .collect(),
+                        agents: agents.drain(..).map(|a| AgentStatusDto::from(a)).collect(),
                         broker: observer.broker().into(),
                     });
                 build_response(resp)
@@ -259,6 +257,40 @@ fn sensor_data(
                         query.from,
                         query.until,
                     )
+                    .await;
+                build_response(resp)
+            },
+        )
+        .boxed()
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/sensor/{id}/data/first",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    responses(
+        (status = 200, description = "The first sensor data of a sensor", body = Option<SensorDataDto>, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
+fn first_sensor_data(
+    observer: SensorObserver,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::optional::<String>("X-KEY");
+    warp::any()
+        .map(move || observer.clone())
+        .and(warp::get())
+        .and(key_header)
+        .and(warp::path!("api" / "sensor" / i32 / "data" / "first"))
+        .and_then(
+            |observer: SensorObserver, key_b64: Option<String>, sensor_id: i32| async move {
+                let resp: Result<Option<dto::SensorDataDto>, _> = observer
+                    .first_data(sensor_id, &key_b64.unwrap_or_default())
                     .await;
                 build_response(resp)
             },

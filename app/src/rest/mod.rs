@@ -59,7 +59,6 @@ pub fn build_response_with_status<T: serde::Serialize>(
 
 pub async fn dispatch_server_daemon(observer: Arc<ConcurrentObserver>) {
     // Set up logging
-    std::env::set_var("RUST_LOG", "actix_web=info");
     let server_port = CONFIG.server_port();
     let (sensor_swagger_path, sensor_routes) = sensor_routes::routes(&observer);
     let (metric_swagger_path, metric_routes) = metric_routes::routes(&observer);

@@ -259,7 +259,7 @@ impl Agent {
                     );
 
                     let runtime = tokio::runtime::Handle::current();
-                    agent_task.build_future(runtime).await;
+                    let _ = agent_task.build_future(runtime).await;
 
                     task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                     debug!(
@@ -277,23 +277,22 @@ impl Agent {
 
             // Start abortable task, safe handle and remove handle after completion
             let future_agent = abortable_agent.clone();
-            tokio::spawn(async move {
-                let handle_addr = std::ptr::addr_of!(abort_handle) as usize;
-                {
-                    let mut handles = future_agent.task_handles.lock();
-                    handles.push((handle_addr, abort_handle));
-                }
-                let _ = task_future.await;
-
-                // remove all aborted handles from the list
+            let handle_addr = std::ptr::addr_of!(abort_handle) as usize;
+            {
                 let mut handles = future_agent.task_handles.lock();
-                for i in 0..handles.len() {
-                    if handles[i].0 == handle_addr {
-                        handles.remove(i);
-                    }
+                handles.push((handle_addr, abort_handle));
+            }
+
+            let _ = task_future.await;
+
+            // remove all aborted handles from the list
+            let mut handles = future_agent.task_handles.lock();
+            for i in 0..handles.len() {
+                if handles[i].0 == handle_addr {
+                    handles.remove(i);
                     break;
                 }
-            });
+            }
         }
     }
 
@@ -303,8 +302,7 @@ impl Agent {
         interval_task: Box<dyn FutBuilder>,
     ) {
         let repeat_agent = agent.clone();
-        let mut handle = agent.repeat_task_handle.write();
-        if handle.is_none() {
+        if agent.repeat_task_handle.read().is_none() {
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let repeating_future = Abortable::new(
                 async move {
@@ -315,33 +313,36 @@ impl Agent {
                         repeat_agent.agent_name,
                         delay,
                     );
-                    loop {
+
+                    let mut is_finished = false;
+
+                    while !is_finished {
                         let _ = TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
 
                         let runtime = tokio::runtime::Handle::current();
-                        let is_finished = interval_task.build_future(runtime).await;
+                        is_finished = interval_task.build_future(runtime).await;
+
                         let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                         if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
                             std::process::exit(0);
                         }
 
-                        if is_finished {
-                            break;
+                        if !is_finished {
+                            tokio::time::sleep(delay.into()).await;
                         }
-                        tokio::time::sleep(delay.into()).await;
                     }
 
                     debug!(
                         PLUGIN_LOGGING,
                         "Ended repeating task for sensor: {}", repeat_agent.sensor_id
                     );
-                    let mut handle = repeat_agent.repeat_task_handle.write();
-                    *handle = None;
                 },
                 abort_registration,
             );
-            tokio::spawn(repeating_future);
-            *handle = Some(abort_handle);
+
+            *agent.repeat_task_handle.write() = Some(abort_handle);
+            let _ = repeating_future.await;
+            *agent.repeat_task_handle.write() = None;
         } else {
             warn!(
                 APP_LOGGING,

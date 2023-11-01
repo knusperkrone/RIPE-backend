@@ -20,8 +20,7 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
  * Implementation
  */
 
-#[allow(improper_ctypes_definitions)]
-unsafe extern "C" fn build_agent(
+fn build_agent(
     _config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
@@ -41,7 +40,7 @@ unsafe extern "C" fn build_agent(
             is_oneshot: false,
             sender: sender.clone(),
             logger: logger.clone(),
-            counter: Arc::new(AtomicI32::new(2)),
+            counter: Arc::new(AtomicI32::new(5)),
         }),
     )) {
         panic!("TestAgent - failed to send RepeatedTask {}", e);
@@ -84,18 +83,18 @@ impl FutBuilder for TestFutBuilder {
         runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let logger = self.logger.clone();
+        let sender = self.sender.clone();
         if self.is_oneshot {
-            let oneshot_sender = self.sender.clone();
             std::boxed::Box::pin(async move {
-                let _guard = runtime.enter();
-                debug!(logger, "TASK IS SLEEPING");
-                ripe_core::sleep(&runtime, std::time::Duration::from_secs(5)).await;
-                debug!(logger, "TASK IS AWAKE");
+                error!(logger, "TASK IS SLEEPING");
+                ripe_core::sleep(&runtime, std::time::Duration::from_secs(5));
 
-                if let Ok(_) = oneshot_sender.clone().try_send(AgentMessage::Command(1)) {
-                    debug!(logger, "SENT MESSAGE");
+                error!(logger, "TASK IS AWAKE");
+
+                if let Ok(_) = sender.clone().try_send(AgentMessage::Command(1)) {
+                    error!(logger, "SENT MESSAGE ONESHOT");
                 } else {
-                    error!(logger, "FAILED SENDING 1");
+                    error!(logger, "FAILED SENDING ONESHOT");
                 }
 
                 true
@@ -103,10 +102,16 @@ impl FutBuilder for TestFutBuilder {
         } else {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
-                let _guard = runtime.enter();
-                ripe_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
-                debug!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
+                error!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
+
+                if i == 0 {
+                    if let Ok(_) = sender.clone().try_send(AgentMessage::Command(1)) {
+                        error!(logger, "SENT MESSAGE REPEATING");
+                    } else {
+                        error!(logger, "FAILED SENDING REPEATING");
+                    }
+                }
 
                 i == 0
             })

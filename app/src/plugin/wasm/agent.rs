@@ -45,7 +45,8 @@ impl WasmAgent {
             .map_err(|e| self.inidicate_error(&"write", e))? as u64;
         // write bytes
         let bytes = msg.bytes().clone().collect::<Vec<u8>>();
-        let view = memory.view(&mut store.as_store_mut());
+        let store = &mut store.as_store_mut();
+        let view = memory.view(store);
         let _ = view.write(ptr, &bytes);
 
         Ok(WasmerMallocPtr { agent: self, ptr })

@@ -410,7 +410,10 @@ pub mod dto {
     impl From<SensorDataDao> for SensorDataDto {
         fn from(other: SensorDataDao) -> Self {
             SensorDataDto {
-                timestamp: chrono::DateTime::from_utc(other.timestamp, chrono::Utc),
+                timestamp: chrono::DateTime::from_naive_utc_and_offset(
+                    other.timestamp,
+                    chrono::Utc,
+                ),
                 battery: other.battery,
                 moisture: other.moisture,
                 temperature: other.temperature,

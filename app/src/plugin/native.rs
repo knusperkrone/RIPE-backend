@@ -1,5 +1,5 @@
-use super::AgentLib;
 use super::logging::PLUGIN_LOGGING;
+use super::AgentLib;
 use super::{Agent, AgentFactoryTrait};
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
@@ -56,7 +56,10 @@ impl AgentFactoryTrait for NativeAgentFactory {
         }
 
         let ext = ext_res.unwrap().to_str().unwrap_or_default();
-        if (cfg!(unix) && ext.starts_with("so")) || (cfg!(windows) && ext.starts_with("dll")) {
+        if (cfg!(target_os = "macos") && ext.starts_with("dylib")
+            || cfg!(unix) && ext.starts_with("so"))
+            || (cfg!(windows) && ext.starts_with("dll"))
+        {
             let filename = path.to_str().unwrap();
             // UNSAFE: load and check native lib
             let res = unsafe { self.load_native_library(filename) };

@@ -124,6 +124,9 @@ impl From<wasmer::InstantiationError> for WasmPluginError {
             }
             wasmer::InstantiationError::DifferentStores => {
                 WasmPluginError::ContractMismatch(format!("Different Stores"))
+            },
+            wasmer::InstantiationError::DifferentArchOS => {
+                WasmPluginError::ContractMismatch(format!("Different Arch"))
             }
         }
     }

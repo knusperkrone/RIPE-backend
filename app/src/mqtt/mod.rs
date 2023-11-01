@@ -9,7 +9,7 @@ use crate::sensor::handle::SensorHandle;
 use crate::sensor::SensorMessage;
 use futures::future::{AbortHandle, Abortable};
 use futures::StreamExt;
-use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message};
+use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message, SslOptions};
 use parking_lot::Mutex;
 use ripe_core::SensorDataMessage;
 use tokio::sync::mpsc::UnboundedSender;
@@ -60,8 +60,8 @@ impl MqttSensorClient {
     pub fn broker(&self) -> Broker {
         if self.inner.is_connected() {
             Broker {
-                tcp: Some(CONFIG.mqtt_broker_tcp()),
-                wss: Some(CONFIG.mqtt_broker_wss()),
+                tcp: Some(CONFIG.mqtt_broker_internal()),
+                wss: Some(CONFIG.mqtt_broker_external()),
             }
         } else {
             Broker {
@@ -310,9 +310,10 @@ impl MqttSensorClientInner {
         self.is_connected
             .store(false, std::sync::atomic::Ordering::Relaxed);
         loop {
-            let mqtt_uri = vec![CONFIG.mqtt_broker_tcp().clone()];
-            let conn_opts = ConnectOptionsBuilder::new()
+            let mqtt_uri = vec![CONFIG.mqtt_broker_internal().clone()];
+            let conn_opts = ConnectOptionsBuilder::new_ws()
                 .server_uris(&mqtt_uri)
+                .ssl_options(SslOptions::new())
                 .keep_alive_interval(Duration::from_secs(3))
                 .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
                 .finalize();

@@ -122,7 +122,7 @@ pub mod dao {
     impl Into<SensorDataMessage> for SensorDataDao {
         fn into(self) -> SensorDataMessage {
             SensorDataMessage {
-                timestamp: DateTime::<Utc>::from_utc(self.timestamp, Utc),
+                timestamp: DateTime::<Utc>::from_naive_utc_and_offset(self.timestamp, Utc),
                 battery: self.battery,
                 moisture: self.moisture,
                 temperature: self.temperature,

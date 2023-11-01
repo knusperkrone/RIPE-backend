@@ -23,12 +23,12 @@ pub fn send_payload(
     }
 }
 
-pub async fn sleep(runtime: &tokio::runtime::Handle, duration: std::time::Duration) {
+pub fn sleep(runtime: &tokio::runtime::Handle, duration: std::time::Duration) {
     if tokio::runtime::Handle::try_current().is_ok() {
-        tokio::time::sleep(duration).await;
+        runtime.block_on(tokio::time::sleep(duration));
     } else {
         let _guard = runtime.enter();
-        tokio::time::sleep(duration).await;
+        runtime.block_on(tokio::time::sleep(duration));
     }
 }
 

@@ -24,8 +24,7 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
  * Implementation
  */
 
-#[allow(improper_ctypes_definitions)]
-unsafe extern "C" fn build_agent(
+fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,

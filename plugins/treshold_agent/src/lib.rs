@@ -8,6 +8,7 @@ use ripe_core::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
@@ -24,8 +25,7 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
  * Implementation
  */
 
-#[allow(improper_ctypes_definitions)]
-unsafe extern "C" fn build_agent(
+fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
     sender: Sender<AgentMessage>,
@@ -105,7 +105,7 @@ impl AgentTrait for ThresholdAgent {
         let watering_delta = Utc::now()
             - self
                 .last_action
-                .unwrap_or(DateTime::from_utc(NaiveDateTime::MIN, Utc));
+                .unwrap_or(DateTime::from_naive_utc_and_offset(NaiveDateTime::MIN, Utc));
         if watering_delta.num_milliseconds() < self.action_cooldown_ms {
             debug!(
                 self.logger,
@@ -371,7 +371,7 @@ impl FutBuilder for ThresholdTaskBuilder {
     fn build_future(
         &self,
         runtime: tokio::runtime::Handle,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let config = self.task_config.clone();
         Box::pin(async move {
             let start = Utc::now();
@@ -396,7 +396,7 @@ impl FutBuilder for ThresholdTaskBuilder {
             );
 
             while Utc::now() < config.until.load() && !config.aborted.load(Ordering::Relaxed) {
-                ripe_core::sleep(&runtime, std::time::Duration::from_secs(1)).await;
+                ripe_core::sleep(&runtime, std::time::Duration::from_secs(1));
             }
             // Race condition
             config.state.store(AgentState::Ready);

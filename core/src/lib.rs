@@ -18,7 +18,7 @@ pub struct PluginDeclaration {
     pub core_version: &'static str,
     pub agent_version: u32,
     pub agent_name: &'static str,
-    pub agent_builder: unsafe extern "C" fn(
+    pub agent_builder: fn(
         config: Option<&str>,
         logger: slog::Logger,
         sender: tokio::sync::mpsc::Sender<AgentMessage>,

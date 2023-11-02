@@ -45,8 +45,8 @@ impl AgentFactoryTrait for NativeAgentFactory {
         }
     }
 
-    fn agents(&self) -> Vec<String> {
-        self.libraries.keys().map(|name| name.clone()).collect()
+    fn agents(&self) -> Vec<&String> {
+        self.libraries.keys().map(|name| name).collect()
     }
 
     fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {
@@ -66,7 +66,7 @@ impl AgentFactoryTrait for NativeAgentFactory {
             return match res {
                 Ok((lib_name, _version)) => {
                     info!(APP_LOGGING, "Loaded native: {}", filename);
-                    Some(lib_name.to_owned())
+                    Some(lib_name)
                 }
                 Err(err) => {
                     warn!(APP_LOGGING, "Invalid native {}: {}", filename, err);

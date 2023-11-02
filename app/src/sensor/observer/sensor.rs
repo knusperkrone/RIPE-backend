@@ -31,7 +31,7 @@ impl SensorObserver {
     pub async fn register(&self, name: Option<String>) -> Result<Sensor, ObserverError> {
         // Create sensor dao
         let key = self.generate_sensor_key();
-        let sensor_dao = models::create_new_sensor(&self.inner.db_conn, key.clone(), &name).await?;
+        let sensor_dao = models::create_new_sensor(&self.inner.db_conn, &key, name).await?;
         let dao_id = sensor_dao.id();
 
         // Create agents and persist

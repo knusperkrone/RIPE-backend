@@ -176,12 +176,12 @@ pub async fn check_schema(conn: &sqlx::PgPool) -> Result<(), DBError> {
 /// CREATE sensors
 pub async fn create_new_sensor(
     conn: &sqlx::PgPool,
-    key_b64: String,
-    name_opt: &Option<String>,
+    key_b64: &String,
+    name_opt: Option<String>,
 ) -> Result<SensorDao, DBError> {
     let name: String;
     if let Some(opt_name) = name_opt {
-        name = opt_name.clone();
+        name = opt_name;
     } else {
         // generate name from current sensor count
         let rows = sql_stmnt!(CountRecord, "SELECT count(*) as count FROM sensors")
@@ -490,7 +490,7 @@ mod test {
         let conn = establish_db_connection().await.unwrap();
 
         // create
-        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), None)
             .await
             .unwrap();
 
@@ -504,7 +504,7 @@ mod test {
     #[tokio::test]
     async fn crud_agent_configs() {
         let conn = establish_db_connection().await.unwrap();
-        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), None)
             .await
             .unwrap();
         let mut dao = AgentConfigDao {
@@ -548,7 +548,7 @@ mod test {
     #[tokio::test]
     async fn crud_sensor_data() {
         let conn = establish_db_connection().await.unwrap();
-        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), None)
             .await
             .unwrap();
 
@@ -610,7 +610,7 @@ mod test {
     #[tokio::test]
     async fn crud_sensor_log() {
         let conn = establish_db_connection().await.unwrap();
-        let sensor = create_new_sensor(&conn, "123456".to_owned(), &None)
+        let sensor = create_new_sensor(&conn, "123456".to_owned(), None)
             .await
             .unwrap();
 

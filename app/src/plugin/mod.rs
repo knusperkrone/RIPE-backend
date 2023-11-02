@@ -32,7 +32,7 @@ pub trait AgentFactoryTrait {
         plugin_sender: Sender<AgentMessage>,
         plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, ripe_core::error::AgentError>;
-    fn agents(&self) -> Vec<String>;
+    fn agents(&self) -> Vec<&String>;
     fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String>;
 }
 
@@ -152,7 +152,7 @@ impl AgentFactory {
         }
     }
 
-    pub fn agents(&self) -> Vec<String> {
+    pub fn agents(&self) -> Vec<&String> {
         let mut agents = Vec::new();
         agents.append(&mut self.native_factory.agents());
         agents.append(&mut self.wasm_factory.agents());

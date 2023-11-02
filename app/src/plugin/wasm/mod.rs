@@ -85,12 +85,8 @@ impl AgentFactoryTrait for WasmAgentFactory {
         ))
     }
 
-    fn agents(&self) -> Vec<String> {
-        self.libraries
-            .keys()
-            .into_iter()
-            .map(|k| k.to_owned())
-            .collect()
+    fn agents(&self) -> Vec<&String> {
+        self.libraries.keys().into_iter().map(|k| k).collect()
     }
 
     fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {

@@ -63,7 +63,7 @@ fn health(
                 .unwrap_or(usize::MAX);
             let active_agents = results
                 .2
-                .map(|factory| factory.agents())
+                .map(|factory| factory.agents().drain(..).map(ToOwned::to_owned).collect())
                 .unwrap_or(vec!["TIMEOUT".to_owned()]);
             let status = if healthy {
                 StatusCode::OK

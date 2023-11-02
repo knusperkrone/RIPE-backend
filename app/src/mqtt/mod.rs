@@ -60,8 +60,8 @@ impl MqttSensorClient {
     pub fn broker(&self) -> Broker {
         if self.inner.is_connected() {
             Broker {
-                tcp: Some(CONFIG.mqtt_broker_internal()),
-                wss: Some(CONFIG.mqtt_broker_external()),
+                tcp: Some(CONFIG.mqtt_broker_internal().to_owned()),
+                wss: Some(CONFIG.mqtt_broker_external().to_owned()),
             }
         } else {
             Broker {
@@ -111,7 +111,7 @@ impl MqttSensorClientInner {
         let mut mqtt_stream = connect_cli.get_stream(16_384);
         drop(connect_cli);
 
-        Self::do_connect(&self.clone()).await;
+        Self::do_connect(self.clone()).await;
 
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
 
@@ -147,7 +147,7 @@ impl MqttSensorClientInner {
                         if is_reconnected {
                             info!(APP_LOGGING, "Reconnected to previous MQTT broker");
                         } else {
-                            Self::do_connect(&future_self.clone()).await;
+                            Self::do_connect(future_self.clone()).await;
                         }
                         while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
                             warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
@@ -306,7 +306,7 @@ impl MqttSensorClientInner {
         CreateOptionsBuilder::new().create_client().unwrap()
     }
 
-    async fn do_connect(self: &Arc<Self>) {
+    async fn do_connect(self: Arc<Self>) {
         self.is_connected
             .store(false, std::sync::atomic::Ordering::Relaxed);
         loop {

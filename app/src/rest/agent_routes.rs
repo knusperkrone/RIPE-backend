@@ -59,7 +59,8 @@ fn get_active_agents(
         .and(warp::get())
         .and(warp::path!("api" / "agent"))
         .and_then(|observer: Arc<ConcurrentObserver>| async move {
-            let agents = observer.agent_factory.read().await.agents();
+            let factory = observer.agent_factory.read().await;
+            let agents: Vec<String> = factory.agents().drain(..).map(ToOwned::to_owned).collect();
             build_response(Ok(agents))
         })
         .boxed()
@@ -98,7 +99,7 @@ fn register_agent(
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .register(sensor_id, key_b64.unwrap_or_default(), &domain, &agent_name)
+                    .register(sensor_id, &key_b64.unwrap_or_default(), &domain, &agent_name)
                     .await
                     .map(|_| dto::AgentDto { domain, agent_name });
 

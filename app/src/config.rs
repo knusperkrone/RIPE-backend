@@ -1,9 +1,8 @@
 use once_cell::sync::Lazy;
-use parking_lot::RwLock;
-use std::env;
+use std::{env, sync::Arc};
 
 pub struct Config {
-    inner: RwLock<InnerConfig>,
+    inner: Arc<InnerConfig>,
 }
 
 struct InnerConfig {
@@ -18,45 +17,40 @@ struct InnerConfig {
 }
 
 impl Config {
-    pub fn database_url(&self) -> String {
-        let inner = self.inner.read();
-        inner.database_url.clone()
+    pub fn database_url(&self) -> &String {
+        &self.inner.database_url
     }
 
-    pub fn mqtt_broker_internal(&self) -> String {
-        let inner = self.inner.read();
-        if let Some(str) = inner.mqtt_broker_internal.as_ref() {
-            str.clone()
+    pub fn mqtt_broker_internal(&self) -> &String {
+        if let Some(str) = self.inner.mqtt_broker_internal.as_ref() {
+            str
         } else {
-            inner.mqtt_broker_external.clone()
+            &self.inner.mqtt_broker_external
         }
     }
 
-    pub fn mqtt_broker_external(&self) -> String {
-        let inner = self.inner.read();
-        inner.mqtt_broker_external.clone()
+    pub fn mqtt_broker_external(&self) -> &String {
+        &self.inner.mqtt_broker_external
     }
 
     pub fn mqtt_timeout_ms(&self) -> u64 {
-        self.inner.read().mqtt_timeout_ms
+        self.inner.mqtt_timeout_ms
     }
 
     pub fn mqtt_send_retries(&self) -> usize {
-        self.inner.read().mqtt_send_retries
+        self.inner.mqtt_send_retries
     }
 
     pub fn mqtt_log_count(&self) -> i64 {
-        self.inner.read().mqtt_log_count
+        self.inner.mqtt_log_count
     }
 
-    pub fn plugin_dir(&self) -> String {
-        let inner = self.inner.read();
-        inner.plugin_dir.clone()
+    pub fn plugin_dir(&self) -> &String {
+        &self.inner.plugin_dir
     }
 
-    pub fn server_port(&self) -> String {
-        let inner = self.inner.read();
-        inner.server_port.clone()
+    pub fn server_port(&self) -> &String {
+        &self.inner.server_port
     }
 }
 
@@ -83,7 +77,7 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
         .unwrap();
 
     Config {
-        inner: RwLock::new(InnerConfig {
+        inner: Arc::new(InnerConfig {
             server_port,
             database_url,
             plugin_dir,

@@ -28,13 +28,13 @@ impl AgentObserver {
     pub async fn register(
         &self,
         sensor_id: i32,
-        key_b64: String,
+        key_b64: &String,
         domain: &String,
         agent_name: &String,
     ) -> Result<(), ObserverError> {
         let container = self.inner.container.read().await;
         let mut sensor = container
-            .sensor(sensor_id, &key_b64)
+            .sensor(sensor_id, key_b64)
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 

@@ -44,7 +44,7 @@ impl WasmAgent {
             .call(&mut store.as_store_mut(), len)
             .map_err(|e| self.inidicate_error(&"write", e))? as u64;
         // write bytes
-        let bytes = msg.bytes().clone().collect::<Vec<u8>>();
+        let bytes = msg.bytes().collect::<Vec<u8>>();
         let store = &mut store.as_store_mut();
         let view = memory.view(store);
         let _ = view.write(ptr, &bytes);

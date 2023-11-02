@@ -46,7 +46,7 @@ impl AgentFactoryTrait for NativeAgentFactory {
     }
 
     fn agents(&self) -> Vec<&String> {
-        self.libraries.keys().map(|name| name).collect()
+        self.libraries.keys().collect()
     }
 
     fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {

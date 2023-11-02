@@ -38,13 +38,13 @@ pub fn ms_to_hr(time_ms: u32) -> String {
     let hours = minutes / 60;
 
     let pad_fn = |x| {
-        return if x < 10 {
+        if x < 10 {
             format!("0{}", x)
         } else {
             format!("{}", x)
-        };
+        }
     };
-    return format!("{}:{}", pad_fn(hours), pad_fn(minutes % 60));
+    format!("{}:{}", pad_fn(hours), pad_fn(minutes % 60))
 }
 
 /*
@@ -52,8 +52,7 @@ pub fn ms_to_hr(time_ms: u32) -> String {
  */
 
 pub fn logger_sentinel() -> slog::Logger {
-    let sentinel = slog::Logger::root(slog::Discard, o!("" => ""));
-    sentinel
+    slog::Logger::root(slog::Discard, o!("" => ""))
 }
 
 pub fn sender_sentinel() -> tokio::sync::mpsc::Sender<AgentMessage> {

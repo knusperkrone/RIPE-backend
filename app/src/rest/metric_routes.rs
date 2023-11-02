@@ -47,9 +47,9 @@ fn health(
             use tokio::time::timeout;
             let duration = std::time::Duration::from_millis(500);
             let results = tokio::join!(
-                timeout(duration.clone(), models::check_schema(&observer.db_conn)),
-                timeout(duration.clone(), observer.container.read()),
-                timeout(duration.clone(), observer.agent_factory.read())
+                timeout(duration, models::check_schema(&observer.db_conn)),
+                timeout(duration, observer.container.read()),
+                timeout(duration, observer.agent_factory.read())
             );
             let healthy = results.0.is_ok() && results.1.is_ok() && results.2.is_ok();
             let mqtt_broker = observer.mqtt_client.broker().tcp;

@@ -13,16 +13,18 @@ pub use stubs::*;
 pub static CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static RUSTC_VERSION: &str = env!("RUSTC_VERSION");
 
+type AgentBuilder = fn(
+    config: Option<&str>,
+    logger: slog::Logger,
+    sender: tokio::sync::mpsc::Sender<AgentMessage>,
+) -> Box<dyn AgentTrait>;
+
 pub struct PluginDeclaration {
     pub rustc_version: &'static str,
     pub core_version: &'static str,
     pub agent_version: u32,
     pub agent_name: &'static str,
-    pub agent_builder: fn(
-        config: Option<&str>,
-        logger: slog::Logger,
-        sender: tokio::sync::mpsc::Sender<AgentMessage>,
-    ) -> Box<dyn AgentTrait>,
+    pub agent_builder: AgentBuilder,
 }
 
 #[macro_export]

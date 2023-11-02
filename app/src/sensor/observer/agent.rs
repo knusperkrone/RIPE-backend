@@ -28,7 +28,7 @@ impl AgentObserver {
     pub async fn register(
         &self,
         sensor_id: i32,
-        key_b64: &String,
+        key_b64: &str,
         domain: &String,
         agent_name: &String,
     ) -> Result<(), ObserverError> {
@@ -39,7 +39,7 @@ impl AgentObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         let factory = self.inner.agent_factory.read().await;
-        let agent = factory.create_agent(sensor_id, &agent_name, &domain, None)?;
+        let agent = factory.create_agent(sensor_id, agent_name, domain, None)?;
         models::create_agent_config(&self.inner.db_conn, &agent.deserialize()).await?;
 
         sensor.add_agent(agent);
@@ -65,7 +65,7 @@ impl AgentObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         let agent = sensor
-            .remove_agent(&agent_name, &domain)
+            .remove_agent(agent_name, domain)
             .ok_or(DBError::SensorNotFound(sensor_id))?;
         models::delete_sensor_agent(&self.inner.db_conn, sensor.id(), agent).await?;
 
@@ -89,7 +89,7 @@ impl AgentObserver {
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
-        sensor.handle_agent_cmd(&domain, payload)?;
+        sensor.handle_agent_cmd(domain, payload)?;
         Ok(())
     }
 
@@ -107,7 +107,7 @@ impl AgentObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         Ok(sensor
-            .agent_config(&domain, timezone)
+            .agent_config(domain, timezone)
             .ok_or(DBError::SensorNotFound(sensor_id))?)
     }
 
@@ -125,7 +125,7 @@ impl AgentObserver {
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
-        let agent = sensor.set_agent_config(&domain, config, timezone)?;
+        let agent = sensor.set_agent_config(domain, config, timezone)?;
         models::update_agent_config(&self.inner.db_conn, &agent.deserialize()).await?;
         Ok(())
     }

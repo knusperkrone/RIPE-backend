@@ -42,7 +42,7 @@ impl WasmAgent {
         let ptr = self
             .wasm_malloc
             .call(&mut store.as_store_mut(), len)
-            .map_err(|e| self.inidicate_error(&"write", e))? as u64;
+            .map_err(|e| self.inidicate_error("write", e))?;
         // write bytes
         let bytes = msg.bytes().collect::<Vec<u8>>();
         let store = &mut store.as_store_mut();
@@ -85,7 +85,7 @@ impl AgentTrait for WasmAgent {
         let _ = self
             .wasm_handle_data
             .call(&mut *self.store.write(), alloced.ptr)
-            .map_err(|e| self.inidicate_error(&"handle_data", e));
+            .map_err(|e| self.inidicate_error("handle_data", e));
     }
 
     fn handle_cmd(&mut self, payload: i64) {
@@ -96,7 +96,7 @@ impl AgentTrait for WasmAgent {
         let _ = self
             .wasm_handle_cmd
             .call(&mut *self.store.write(), payload)
-            .map_err(|e| self.inidicate_error(&"handle_cmd", e));
+            .map_err(|e| self.inidicate_error("handle_cmd", e));
     }
 
     fn render_ui(&self, data: &ripe_core::SensorDataMessage, _timezone: Tz) -> ripe_core::AgentUI {
@@ -122,16 +122,16 @@ impl AgentTrait for WasmAgent {
                     }
                 }
                 Err(e) => {
-                    self.inidicate_error(&"render_ui", e);
+                    self.inidicate_error("render_ui", e);
                 }
             };
         }
 
-        return ripe_core::AgentUI {
+        ripe_core::AgentUI {
             decorator: AgentUIDecorator::Text,
             rendered: "Failed serializing agent_ui".to_owned(),
             state: ripe_core::AgentState::Error,
-        };
+        }
     }
 
     fn state(&self) -> ripe_core::AgentState {
@@ -146,7 +146,7 @@ impl AgentTrait for WasmAgent {
                 }
             }
         }
-        self.inidicate_error(&"state", WasmPluginError::CallError);
+        self.inidicate_error("state", WasmPluginError::CallError);
         ripe_core::AgentState::Error
     }
 
@@ -167,7 +167,7 @@ impl AgentTrait for WasmAgent {
             }
         }
 
-        self.inidicate_error(&"deserialize", WasmPluginError::CallError);
+        self.inidicate_error("deserialize", WasmPluginError::CallError);
         "{}".to_owned()
     }
 
@@ -183,7 +183,7 @@ impl AgentTrait for WasmAgent {
             }
         }
 
-        self.inidicate_error(&"config", WasmPluginError::CallError);
+        self.inidicate_error("config", WasmPluginError::CallError);
         HashMap::new()
     }
 
@@ -209,7 +209,7 @@ impl AgentTrait for WasmAgent {
                 }
             }
         }
-        self.inidicate_error(&"set_config", WasmPluginError::CallError);
+        self.inidicate_error("set_config", WasmPluginError::CallError);
         false
     }
 }

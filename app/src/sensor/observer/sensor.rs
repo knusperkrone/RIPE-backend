@@ -43,12 +43,12 @@ impl SensorObserver {
             }
             Err(err) => {
                 models::delete_sensor(&self.inner.db_conn, dao_id).await?; // Fallback delete
-                Err(ObserverError::from(err))
+                Err(err)
             }
         }
     }
 
-    pub async fn unregister(&self, sensor_id: i32, key_b64: &String) -> Result<(), ObserverError> {
+    pub async fn unregister(&self, sensor_id: i32, key_b64: &str) -> Result<(), ObserverError> {
         models::delete_sensor(&self.inner.db_conn, sensor_id).await?;
 
         let sensor_mtx = self
@@ -56,7 +56,7 @@ impl SensorObserver {
             .container
             .write()
             .await
-            .remove_sensor(sensor_id, &key_b64)
+            .remove_sensor(sensor_id, key_b64)
             .await?;
         let sensor = sensor_mtx.lock().await;
         self.inner.mqtt_client.unsubscribe_sensor(&sensor).await?;
@@ -112,7 +112,7 @@ impl SensorObserver {
         let mut logs = models::get_sensor_logs(&self.inner.db_conn, sensor_id).await?;
         Ok(logs
             .drain(..)
-            .map(|l| format!("[{}] {}", l.time(&tz).format(&"%b %e %T %Y"), l.log()))
+            .map(|l| format!("[{}] {}", l.time(&tz).format("%b %e %T %Y"), l.log()))
             .collect())
     }
 

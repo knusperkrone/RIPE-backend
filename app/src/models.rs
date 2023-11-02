@@ -82,10 +82,10 @@ pub mod dao {
     impl AgentConfigDao {
         pub fn new(sensor_id: i32, domain: String, agent_impl: String, state_json: String) -> Self {
             AgentConfigDao {
-                sensor_id: sensor_id,
-                domain: domain,
-                agent_impl: agent_impl,
-                state_json: state_json,
+                sensor_id,
+                domain,
+                agent_impl,
+                state_json,
             }
         }
 
@@ -119,16 +119,16 @@ pub mod dao {
         pub(crate) light: Option<i32>,
     }
 
-    impl Into<SensorDataMessage> for SensorDataDao {
-        fn into(self) -> SensorDataMessage {
+    impl From<SensorDataDao> for SensorDataMessage {
+        fn from(val: SensorDataDao) -> Self {
             SensorDataMessage {
-                timestamp: DateTime::<Utc>::from_naive_utc_and_offset(self.timestamp, Utc),
-                battery: self.battery,
-                moisture: self.moisture,
-                temperature: self.temperature,
-                carbon: self.carbon,
-                conductivity: self.conductivity,
-                light: self.light,
+                timestamp: DateTime::<Utc>::from_naive_utc_and_offset(val.timestamp, Utc),
+                battery: val.battery,
+                moisture: val.moisture,
+                temperature: val.temperature,
+                carbon: val.carbon,
+                conductivity: val.conductivity,
+                light: val.light,
             }
         }
     }
@@ -161,7 +161,7 @@ use dao::*;
 pub async fn establish_db_connection() -> Option<sqlx::PgPool> {
     let database_url = CONFIG.database_url();
     sqlx::postgres::PgPoolOptions::new()
-        .connect(&database_url)
+        .connect(database_url)
         .await
         .ok()
 }

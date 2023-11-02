@@ -6,6 +6,7 @@ use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorMQTTCommand;
 use libloading::Library;
 use ripe_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
+use std::path::Path;
 use std::sync::Arc;
 use std::{collections::HashMap, fmt::Debug};
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
@@ -49,13 +50,9 @@ impl AgentFactoryTrait for NativeAgentFactory {
         self.libraries.keys().collect()
     }
 
-    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {
-        let ext_res = path.extension();
-        if ext_res.is_none() {
-            return None;
-        }
+    fn load_plugin_file(&mut self, path: &Path) -> Option<String> {
+        let ext = path.extension()?.to_str()?;
 
-        let ext = ext_res.unwrap().to_str().unwrap_or_default();
         if (cfg!(target_os = "macos") && ext.starts_with("dylib")
             || cfg!(unix) && ext.starts_with("so"))
             || (cfg!(windows) && ext.starts_with("dll"))
@@ -126,7 +123,7 @@ impl NativeAgentFactory {
 
         self.libraries
             .insert(decl.agent_name.to_owned(), Arc::new(library));
-        return Ok((decl.agent_name.to_owned(), decl.agent_version));
+        Ok((decl.agent_name.to_owned(), decl.agent_version))
     }
 
     unsafe fn build_native_agent(

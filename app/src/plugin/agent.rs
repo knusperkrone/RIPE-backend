@@ -121,7 +121,7 @@ impl Agent {
             Agent::dispatch_iac(inner.clone(), iac_sender, plugin_receiver),
             abort_registration,
         );
-        tokio::spawn(async move { ipc_future.await });
+        tokio::spawn(ipc_future);
 
         Agent { inner, agent_proxy }
     }
@@ -328,7 +328,7 @@ impl Agent {
                         }
 
                         if !is_finished {
-                            tokio::time::sleep(delay.into()).await;
+                            tokio::time::sleep(delay).await;
                         }
                     }
 

@@ -59,7 +59,7 @@ impl ConcurrentObserver {
             agent_factory: RwLock::new(agent_factory),
             iac_receiver: Mutex::new(iac_receiver),
             data_receveiver: Mutex::new(data_receiver),
-            db_conn: db_conn,
+            db_conn,
         };
         Arc::new(observer)
     }
@@ -82,7 +82,7 @@ impl ConcurrentObserver {
     /// After a successful connection, the agent's get inited from the database
     /// On each message event the according sensor get's called and the data get's persistet
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_mqtt_receive_loop(self: Arc<ConcurrentObserver>) -> () {
+    pub async fn dispatch_mqtt_receive_loop(self: Arc<ConcurrentObserver>) {
         let reveiver_res = self.data_receveiver.try_lock();
         if reveiver_res.is_err() {
             error!(APP_LOGGING, "dispatch_mqtt_receive_loop() already called!");
@@ -117,7 +117,7 @@ impl ConcurrentObserver {
     /// Dispatches the inter-agent-communication (iac) stream
     /// Each agent sends it's mqtt command over this channel
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_iac_loop(self: Arc<ConcurrentObserver>) -> () {
+    pub async fn dispatch_iac_loop(self: Arc<ConcurrentObserver>) {
         let receiver_res = self.iac_receiver.try_lock();
         if receiver_res.is_err() {
             error!(APP_LOGGING, "dispatch_mqtt_send_loop() already called!");
@@ -131,8 +131,7 @@ impl ConcurrentObserver {
             while let Some(item) = receiver.recv().await {
                 let container = self.container.read().await;
                 let sensor_opt = container.sensor_unchecked(item.sensor_id).await;
-                if sensor_opt.is_some() {
-                    let sensor = sensor_opt.unwrap();
+                if let Some(sensor) = sensor_opt {
                     for i in 0..max_retries {
                         match self.mqtt_client.send_cmd(&sensor).await {
                             Ok(_) => break,
@@ -156,7 +155,7 @@ impl ConcurrentObserver {
     /// Dispatches a interval checking loop
     /// checks if the plugin libary files got updated
     /// Blocks caller thread in infinite loop
-    pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentObserver>) -> () {
+    pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentObserver>) {
         let plugin_dir = self.plugin_dir.as_path();
 
         // watch plugin dir
@@ -169,7 +168,7 @@ impl ConcurrentObserver {
         )
         .unwrap();
 
-        if let Err(e) = watcher.watch(&plugin_dir, notify::RecursiveMode::NonRecursive) {
+        if let Err(e) = watcher.watch(plugin_dir, notify::RecursiveMode::NonRecursive) {
             crit!(APP_LOGGING, "Cannot watch plugin dir: {}", e);
             return;
         }
@@ -298,7 +297,7 @@ impl ConcurrentObserver {
         configs: Option<Vec<AgentConfigDao>>,
     ) -> Result<i32, ObserverError> {
         let sensor_id = sensor_dao.id();
-        let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or(vec![]), &agent_factory)?;
+        let sensor = SensorHandle::from(sensor_dao, configs.unwrap_or_default(), agent_factory)?;
 
         self.subscribe_sensor(&sensor).await?;
         self.container.write().await.insert_sensor(sensor);

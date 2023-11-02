@@ -67,7 +67,7 @@ impl SensorHandle {
                 // update new agent
                 if let Ok(updated) = factory.create_agent(
                     self.dao.id(),
-                    &updated_lib,
+                    updated_lib,
                     outdated.domain(),
                     Some(outdated.deserialize().state_json()),
                 ) {
@@ -176,6 +176,6 @@ impl SensorHandle {
     }
 
     pub fn key_b64(&self) -> &String {
-        &self.dao.key_b64()
+        self.dao.key_b64()
     }
 }

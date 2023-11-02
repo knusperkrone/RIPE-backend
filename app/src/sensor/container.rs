@@ -22,7 +22,7 @@ impl SensorContainer {
     pub fn sensors(
         &self,
     ) -> std::collections::hash_map::Values<'_, i32, tokio::sync::Mutex<SensorHandle>> {
-        self.sensors.values().into_iter()
+        self.sensors.values()
     }
 
     pub async fn sensor_unchecked(
@@ -57,7 +57,7 @@ impl SensorContainer {
         sensor_id: i32,
         key_b64: &str,
     ) -> Result<Mutex<SensorHandle>, DBError> {
-        if let None = self.sensor(sensor_id, key_b64).await {
+        if self.sensor(sensor_id, key_b64).await.is_none() {
             return Err(DBError::SensorNotFound(sensor_id));
         }
 

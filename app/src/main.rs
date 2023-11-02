@@ -24,7 +24,7 @@ async fn connect_db() -> sqlx::PgPool {
         )
         .await
         {
-            if let Ok(_) = MIGRATOR.run(&db_conn).await {
+            if MIGRATOR.run(&db_conn).await.is_ok() {
                 info!(APP_LOGGING, "Run migrations");
                 return db_conn;
             }
@@ -52,8 +52,7 @@ pub async fn main() -> std::io::Result<()> {
     let reveice_mqtt_loop =
         sensor::ConcurrentObserver::dispatch_mqtt_receive_loop(sensor_arc.clone());
     let iac_loop = sensor::ConcurrentObserver::dispatch_iac_loop(sensor_arc.clone());
-    let plugin_loop =
-        sensor::ConcurrentObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
+    let plugin_loop = sensor::ConcurrentObserver::dispatch_plugin_refresh_loop(sensor_arc.clone());
 
     let _ = tokio::join!(
         sensor_arc.init(),

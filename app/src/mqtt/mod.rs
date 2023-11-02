@@ -171,11 +171,12 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
-        if let Err(_) = cli
-            .subscribe_many(&topics, &vec![QOS, QOS])
+        if cli
+            .subscribe_many(&topics, &[QOS, QOS])
             .wait_for(self.default_timeout())
+            .is_err()
         {
-            return Err(MQTTError::TimeoutError());
+            return Err(MQTTError::Timeout());
         }
 
         debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
@@ -189,11 +190,12 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
-        if let Err(_) = cli
+        if cli
             .unsubscribe_many(&topics)
             .wait_for(self.default_timeout())
+            .is_err()
         {
-            return Err(MQTTError::TimeoutError());
+            return Err(MQTTError::Timeout());
         }
 
         debug!(APP_LOGGING, "Unsubscribed topics: {:?}", topics);
@@ -215,8 +217,8 @@ impl MqttSensorClientInner {
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
         let publ = Message::new_retained(cmd_topic, payload, QOS);
-        if let Err(_) = cli.publish(publ).wait_for(self.default_timeout()) {
-            return Err(MQTTError::TimeoutError());
+        if cli.publish(publ).wait_for(self.default_timeout()).is_err() {
+            return Err(MQTTError::Timeout());
         }
         Ok(())
     }
@@ -228,20 +230,20 @@ impl MqttSensorClientInner {
         // parse message
         let path: Vec<&str> = msg.topic().splitn(4, '/').collect();
         if path.len() != 4 {
-            return Err(MQTTError::PathError(format!(
+            return Err(MQTTError::Path(format!(
                 "Couldn't split topic: {}",
                 msg.topic()
             )));
         } else if path[0] != Self::SENSOR_TOPIC {
-            return Err(MQTTError::PathError(format!("Invalid topic: {}", path[0])));
+            return Err(MQTTError::Path(format!("Invalid topic: {}", path[0])));
         }
 
         let endpoint = path[1];
-        let sensor_id: i32 = path[2].parse().or(Err(MQTTError::PathError(format!(
+        let sensor_id: i32 = path[2].parse().or(Err(MQTTError::Path(format!(
             "Couldn't parse sensor_id: {}",
             path[2]
         ))))?;
-        let payload: &str = std::str::from_utf8(msg.payload()).or(Err(MQTTError::PayloadError(
+        let payload: &str = std::str::from_utf8(msg.payload()).or(Err(MQTTError::Payload(
             "Couldn't decode payload".to_string(),
         )))?;
 
@@ -271,10 +273,7 @@ impl MqttSensorClientInner {
                 }
                 Ok(())
             }
-            _ => Err(MQTTError::PathError(format!(
-                "Invalid endpoint: {}",
-                endpoint
-            ))),
+            _ => Err(MQTTError::Path(format!("Invalid endpoint: {}", endpoint))),
         }
     }
 
@@ -283,24 +282,24 @@ impl MqttSensorClientInner {
      */
 
     fn default_timeout(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.timeout_ms.into())
+        std::time::Duration::from_millis(self.timeout_ms)
     }
 
     async fn read_cli(&self) -> Result<RwLockReadGuard<'_, AsyncClient>, MQTTError> {
         tokio::time::timeout(self.default_timeout(), self.cli.read())
             .await
-            .map_err(|_| MQTTError::ReadLockError())
+            .map_err(|_| MQTTError::ReadLock())
     }
 
     async fn write_cli(&self) -> Result<RwLockWriteGuard<'_, AsyncClient>, MQTTError> {
         let duration = std::time::Duration::from_secs(1);
         tokio::time::timeout(duration, self.cli.write())
             .await
-            .map_err(|_| MQTTError::WriteLockError())
+            .map_err(|_| MQTTError::WriteLock())
     }
 
     fn create_client() -> AsyncClient {
-        if let Err(_) = tokio::runtime::Handle::try_current() {
+        if tokio::runtime::Handle::try_current().is_err() {
             panic!("PahoMqtt needs async context here");
         }
         CreateOptionsBuilder::new().create_client().unwrap()

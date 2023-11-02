@@ -156,7 +156,7 @@ fn sensor_status(
                     .await
                     .map(|(data, mut agents)| dto::SensorStatusDto {
                         data: dto::SensorDataDto::from(data),
-                        agents: agents.drain(..).map(|a| AgentStatusDto::from(a)).collect(),
+                        agents: agents.drain(..).map(AgentStatusDto::from).collect(),
                         broker: observer.broker().into(),
                     });
                 build_response(resp)

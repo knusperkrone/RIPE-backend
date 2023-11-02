@@ -6,6 +6,7 @@ use parking_lot::{Mutex, RwLock};
 use ripe_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
 use std::fs::{self, File};
 use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 use std::{collections::HashMap, ffi::OsStr};
 use ticker::TimerFuture;
@@ -86,10 +87,10 @@ impl AgentFactoryTrait for WasmAgentFactory {
     }
 
     fn agents(&self) -> Vec<&String> {
-        self.libraries.keys().into_iter().collect()
+        self.libraries.keys().collect()
     }
 
-    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String> {
+    fn load_plugin_file(&mut self, path: &Path) -> Option<String> {
         let ext_res = path.extension();
         let stem_res = path.file_stem();
         if ext_res.is_none() || stem_res.is_none() {
@@ -198,7 +199,7 @@ impl WasmAgentFactory {
                 "log" => Function::new_typed_with_env(&mut store.as_store_mut(), &env, stubs::log),
             }
         };
-        let instance = Instance::new(&mut store.as_store_mut(), &module, &import_object)?;
+        let instance = Instance::new(&mut store.as_store_mut(), module, &import_object)?;
 
         // check if module fullfills contract
 
@@ -231,7 +232,7 @@ impl WasmAgentFactory {
 
         // init wasmer_agent with prev_state
         if let Some(old_state) = old_state_opt {
-            let alloced = agent.write(&old_state)?;
+            let alloced = agent.write(old_state)?;
             build_agent.call(&mut store.as_store_mut(), alloced.ptr)?
         } else {
             build_agent.call(&mut store.as_store_mut(), 0)?
@@ -262,9 +263,9 @@ impl WasmAgentFactory {
 
     fn read_wasm_bytes(filename: &str, ext: &OsStr) -> Result<Vec<u8>, std::io::Error> {
         let mut f = File::open(filename)?;
-        let metadata = fs::metadata(&filename)?;
+        let metadata = fs::metadata(filename)?;
         let mut buffer = vec![0; metadata.len() as usize];
-        f.read(&mut buffer)?;
+        let _ = f.read(&mut buffer)?;
 
         if ext == "wasm" {
             if let Ok(bytes) = wat2wasm(&buffer) {
@@ -343,15 +344,11 @@ mod stubs {
     pub fn read_c_str(store: &impl AsStoreRef, memory: &Memory, mut ptr: u64) -> Option<String> {
         let view = memory.view(store);
         let mut buffer = Vec::with_capacity(128);
-        loop {
-            if let Ok(byte) = view.read_u8(ptr) {
-                if byte == 0 {
-                    break;
-                }
-                buffer.push(byte);
-            } else {
+        while let Ok(byte) = view.read_u8(ptr) {
+            if byte == 0 {
                 break;
             }
+            buffer.push(byte);
             ptr += 1;
         }
 

@@ -33,7 +33,7 @@ pub trait AgentFactoryTrait {
         plugin_receiver: Receiver<AgentMessage>,
     ) -> Result<Agent, ripe_core::error::AgentError>;
     fn agents(&self) -> Vec<&String>;
-    fn load_plugin_file(&mut self, path: &std::path::PathBuf) -> Option<String>;
+    fn load_plugin_file(&mut self, path: &Path) -> Option<String>;
 }
 
 pub struct AgentFactory {
@@ -62,9 +62,8 @@ impl AgentFactory {
 
         let entries = entries_res
             .unwrap()
-            .into_iter()
             .filter_map(Result::ok)
-            .filter_map(|entry| {
+            .map(|entry| {
                 if let Ok(metadata) = entry.metadata() {
                     let mut modified = SystemTime::UNIX_EPOCH;
                     if let Ok(created) = metadata.created() {
@@ -72,10 +71,10 @@ impl AgentFactory {
                     } else {
                         warn!(APP_LOGGING, "No created metadata for {:?}", entry);
                     }
-                    Some((entry, modified))
+                    (entry, modified)
                 } else {
                     warn!(APP_LOGGING, "No metadata for {:?}", entry);
-                    Some((entry, SystemTime::UNIX_EPOCH))
+                    (entry, SystemTime::UNIX_EPOCH)
                 }
             })
             .filter_map(|(entry, modified)| {

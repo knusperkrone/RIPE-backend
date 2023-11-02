@@ -42,20 +42,15 @@ impl AgentUIDecorator {
     }
 }
 
-#[derive(PartialEq, Debug, Deserialize, Serialize, Clone, Copy, ToSchema)]
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone, Copy, ToSchema, Default)]
 pub enum AgentState {
     Disabled,
+    #[default]
     Ready,
     Executing(DateTime<Utc>),
     Stopped(DateTime<Utc>),
     Forced(DateTime<Utc>),
     Error,
-}
-
-impl Default for AgentState {
-    fn default() -> Self {
-        AgentState::Ready
-    }
 }
 
 pub trait AgentTrait: std::fmt::Debug + Send + Sync {

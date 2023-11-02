@@ -7,12 +7,13 @@ use crate::{
 };
 use chrono_tz::Tz;
 use ripe_core::{error::AgentError, AgentConfigType, SensorDataMessage};
+use std::sync::Arc;
 use std::{collections::HashMap, vec::Vec};
 
 #[derive(Debug)]
 pub struct SensorMQTTCommand {
     pub sensor_id: i32,
-    pub domain: String,
+    pub domain: Arc<String>,
     pub payload: i32,
 }
 

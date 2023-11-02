@@ -57,8 +57,8 @@ pub struct Agent {
 
 pub struct AgentInner {
     sensor_id: i32,
-    domain: String,
-    agent_name: String,
+    domain: Arc<String>,
+    agent_name: Arc<String>,
     agent_lib: AgentLib,
     iac_abort_handle: AbortHandle,
     repeat_task_handle: RwLock<Option<AbortHandle>>,
@@ -109,8 +109,8 @@ impl Agent {
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
         let inner = Arc::new(AgentInner {
             sensor_id,
-            domain,
-            agent_name,
+            domain: Arc::new(domain),
+            agent_name: Arc::new(agent_name),
             agent_lib,
             iac_abort_handle: abort_handle,
             repeat_task_handle,
@@ -163,8 +163,8 @@ impl Agent {
         let deserialized = self.agent_proxy.deserialize();
         AgentConfigDao::new(
             self.inner.sensor_id,
-            self.inner.domain.clone(),
-            self.inner.agent_name.clone(),
+            (*self.inner.domain).clone(),
+            (*self.inner.agent_name).clone(),
             deserialized,
         )
     }

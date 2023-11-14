@@ -18,7 +18,7 @@ use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 #[cfg(test)]
 mod test;
 
-const QOS: i32 = 1;
+const QOS: i32 = 2;
 
 pub struct Broker {
     pub tcp: Option<String>,
@@ -190,6 +190,11 @@ impl MqttSensorClientInner {
         }
 
         let topics = Self::build_topics(sensor);
+        for topic in topics.clone() {
+            cli.publish(Message::new(topic, vec![], QOS))
+                .wait_for(self.default_timeout())?;
+        }
+
         if cli
             .unsubscribe_many(&topics)
             .wait_for(self.default_timeout())

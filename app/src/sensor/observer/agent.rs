@@ -135,7 +135,7 @@ impl AgentObserver {
 mod test {
     use super::*;
     use crate::{
-        config::CONFIG, models::establish_db_connection, sensor::observer::sensor::SensorObserver,
+        config::CONFIG, models::establish_db_connection, sensor::observer::controller::SensorObserver,
     };
     use chrono_tz::UTC;
 

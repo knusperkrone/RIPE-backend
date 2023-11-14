@@ -361,7 +361,7 @@ mod test {
     }
 
     use crate::{
-        config::CONFIG, models::establish_db_connection, sensor::observer::sensor::SensorObserver,
+        config::CONFIG, models::establish_db_connection, sensor::observer::controller::SensorObserver,
     };
 
     async fn build_mocked_observer() -> (Arc<ConcurrentObserver>, AgentObserver, SensorObserver) {

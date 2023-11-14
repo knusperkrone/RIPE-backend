@@ -1,12 +1,14 @@
 use super::{build_response, SwaggerHostDefinition};
 use crate::error;
 use crate::rest::AgentStatusDto;
-use crate::sensor::observer::sensor::SensorObserver;
+use crate::sensor::observer::controller::SensorObserver;
 use crate::sensor::ConcurrentObserver;
 use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
+use ripe_core::SensorDataMessage;
 use std::sync::Arc;
+use warp::hyper::body::Bytes;
 use warp::Filter;
 
 pub fn routes(
@@ -20,7 +22,7 @@ pub fn routes(
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
-        paths(register_sensor, unregister_sensor, sensor_status, sensor_logs, sensor_data, first_sensor_data, sensor_reload),
+        paths(register_sensor, unregister_sensor, sensor_status, add_sensor_logs, sensor_logs, add_sensor_data, sensor_data_within, first_sensor_data, sensor_reload),
         components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto,
             dto::SensorStatusDto, AgentStatusDto, ErrorResponseDto, AgentUI, AgentUIDecorator, AgentState
         )),
@@ -36,8 +38,10 @@ pub fn routes(
         register_sensor(sensor_observer.clone())
             .or(unregister_sensor(sensor_observer.clone()))
             .or(sensor_status(sensor_observer.clone()))
+            .or(add_sensor_logs(sensor_observer.clone()))
             .or(sensor_logs(sensor_observer.clone()))
-            .or(sensor_data(sensor_observer.clone()))
+            .or(add_sensor_data(sensor_observer.clone()))
+            .or(sensor_data_within(sensor_observer.clone()))
             .or(first_sensor_data(sensor_observer))
             .or(sensor_reload(observer.clone()))
             .or(warp::path!("api" / "doc" / "sensor-api.json")
@@ -138,21 +142,20 @@ fn sensor_status(
     observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
-    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
         .and(timezone_header)
-        .and(key_header)
+        .and(warp::header::<String>("X-KEY"))
         .and(warp::path!("api" / "sensor" / i32))
         .and_then(
             |observer: SensorObserver,
              tz_opt: Option<String>,
-             key_b64: Option<String>,
+             key_b64: String,
              sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp = observer
-                    .status(sensor_id, key_b64.unwrap_or_default(), tz)
+                    .status(sensor_id, key_b64, tz)
                     .await
                     .map(|(data, mut agents)| dto::SensorStatusDto {
                         data: dto::SensorDataDto::from(data),
@@ -160,6 +163,42 @@ fn sensor_status(
                         broker: observer.broker().into(),
                     });
                 build_response(resp)
+            },
+        )
+        .boxed()
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/sensor/{id}/data",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    responses(
+        (status = 200, description = "The sensor data was updated"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
+fn add_sensor_logs(
+    observer: SensorObserver,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::any()
+        .map(move || observer.clone())
+        .and(warp::post())
+        .and(warp::header::<String>("X-KEY"))
+        .and(warp::path!("api" / "sensor" / i32 / "data"))
+        .and(warp::body::bytes())
+        .and_then(
+            |observer: SensorObserver, key_b64: String, sensor_id: i32, body: Bytes| async move {
+                if let Ok(msg) = String::from_utf8(body.to_vec()) {
+                    let res = observer.add_log(sensor_id, &key_b64, msg).await;
+                    build_response(res)
+                } else {
+                    build_response(Ok(()))
+                }
             },
         )
         .boxed()
@@ -184,21 +223,20 @@ fn sensor_logs(
     observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let timezone_header = warp::header::optional::<String>("X-TZ");
-    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
         .and(timezone_header)
-        .and(key_header)
+        .and(warp::header::<String>("X-KEY"))
         .and(warp::path!("api" / "sensor" / i32 / "log"))
         .and_then(
             |observer: SensorObserver,
              tz_opt: Option<String>,
-             key_b64: Option<String>,
+             key_b64: String,
              sensor_id: i32| async move {
                 let tz: Tz = tz_opt.unwrap_or("UTC".to_owned()).parse().unwrap_or(UTC);
                 let resp: Result<Vec<String>, _> = observer
-                    .logs(sensor_id, &key_b64.unwrap_or_default(), tz)
+                    .logs(sensor_id, &key_b64, tz)
                     .await;
 
                 build_response(resp)
@@ -211,6 +249,41 @@ fn sensor_logs(
 struct DataQuery {
     from: DateTime<chrono::Utc>,
     until: DateTime<chrono::Utc>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/sensor/{id}/data",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+    ),
+    responses(
+        (status = 200, description = "The sensor data was updated"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+    tag = "sensor",
+)]
+fn add_sensor_data(
+    observer: SensorObserver,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::any()
+        .map(move || observer.clone())
+        .and(warp::post())
+        .and(warp::header::<String>("X-KEY"))
+        .and(warp::path!("api" / "sensor" / i32 / "data"))
+        .and(warp::body::json())
+        .and_then(
+            |observer: SensorObserver,
+             key_b64: String,
+             sensor_id: i32,
+             body: SensorDataMessage| async move {
+                let res = observer.add_data(sensor_id, &key_b64, body).await;
+                build_response(res)
+            },
+        )
+        .boxed()
 }
 
 #[utoipa::path(
@@ -229,19 +302,18 @@ struct DataQuery {
     ),
     tag = "sensor",
 )]
-fn sensor_data(
+fn sensor_data_within(
     observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
-        .and(key_header)
+        .and(warp::header::<String>("X-KEY"))
         .and(warp::path!("api" / "sensor" / i32 / "data"))
         .and(warp::query())
         .and_then(
             |observer: SensorObserver,
-             key_b64: Option<String>,
+             key_b64: String,
              sensor_id: i32,
              query: DataQuery| async move {
                 if query.from >= query.until || query.until - query.from > chrono::Duration::days(1)
@@ -253,7 +325,7 @@ fn sensor_data(
                 let resp: Result<Vec<dto::SensorDataDto>, _> = observer
                     .data(
                         sensor_id,
-                        &key_b64.unwrap_or_default(),
+                        &key_b64,
                         query.from,
                         query.until,
                     )
@@ -281,17 +353,15 @@ fn sensor_data(
 fn first_sensor_data(
     observer: SensorObserver,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::get())
-        .and(key_header)
+        .and(warp::header::<String>("X-KEY"))
         .and(warp::path!("api" / "sensor" / i32 / "data" / "first"))
         .and_then(
-            |observer: SensorObserver, key_b64: Option<String>, sensor_id: i32| async move {
-                let resp: Result<Option<dto::SensorDataDto>, _> = observer
-                    .first_data(sensor_id, &key_b64.unwrap_or_default())
-                    .await;
+            |observer: SensorObserver, key_b64: String, sensor_id: i32| async move {
+                let resp: Result<Option<dto::SensorDataDto>, _> =
+                    observer.first_data(sensor_id, &key_b64).await;
                 build_response(resp)
             },
         )
@@ -315,16 +385,13 @@ fn first_sensor_data(
 fn sensor_reload(
     observer: Arc<ConcurrentObserver>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let key_header = warp::header::optional::<String>("X-KEY");
     warp::any()
         .map(move || observer.clone())
         .and(warp::post())
-        .and(key_header)
+        .and(warp::header::<String>("X-KEY"))
         .and(warp::path!("api" / "sensor" / i32 / "reload"))
         .and_then(
-            |_observer: Arc<ConcurrentObserver>,
-             _key_b64: Option<String>,
-             _sensor_id: i32| async move {
+            |_observer: Arc<ConcurrentObserver>, _key_b64: String, _sensor_id: i32| async move {
                 // TODO: let resp = observer.reload_sensor(sensor_id, key_b64).await;
                 build_response(Ok(()))
             },

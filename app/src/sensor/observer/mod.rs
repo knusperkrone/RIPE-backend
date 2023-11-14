@@ -21,7 +21,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
 
 pub mod agent;
-pub mod sensor;
+pub mod controller;
 
 pub struct Sensor {
     pub id: i32,

@@ -1,6 +1,6 @@
 use crate::{
     mqtt::{MqttSensorClient, MqttSensorClientInner},
-    sensor::SensorMessage,
+    sensor::MqttMessage,
 };
 use paho_mqtt::Message;
 use ripe_core::SensorDataMessage;
@@ -46,7 +46,7 @@ async fn test_send_path() {
     // validate
     println!("{:?}", result);
     assert_eq!(result.is_ok(), true);
-    if let Ok(Some((actual_id, SensorMessage::Data(actual_data)))) =
+    if let Ok(Some((actual_id, MqttMessage::Data(actual_data)))) =
         timeout(Duration::from_millis(10), rx.recv()).await
     {
         assert_eq!(sensor_id, actual_id);

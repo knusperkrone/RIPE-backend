@@ -1,4 +1,5 @@
 use super::ConcurrentObserver;
+use crate::config::CONFIG;
 use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::SensorDataDao;
@@ -99,6 +100,22 @@ impl SensorObserver {
         Ok((data, agents))
     }
 
+    pub async fn add_log(
+        &self,
+        sensor_id: i32,
+        key: &str,
+        log_msg: std::string::String,
+    ) -> Result<(), ObserverError> {
+        let max_logs = CONFIG.mqtt_log_count();
+        let container = self.inner.container.read().await;
+        let _ = container
+            .sensor(sensor_id, key)
+            .await
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+        models::insert_sensor_log(&self.inner.db_conn, sensor_id, log_msg, max_logs).await?;
+        Ok(())
+    }
+
     pub async fn logs(
         &self,
         sensor_id: i32,
@@ -114,6 +131,29 @@ impl SensorObserver {
             .drain(..)
             .map(|l| format!("[{}] {}", l.time(&tz).format("%b %e %T %Y"), l.log()))
             .collect())
+    }
+
+    pub async fn add_data(
+        &self,
+        sensor_id: i32,
+        key_b64: &str,
+        data: SensorDataMessage,
+    ) -> Result<(), ObserverError> {
+        let container = self.inner.container.read().await;
+        let mut sensor = container
+            .sensor(sensor_id, key_b64)
+            .await
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        sensor.handle_data(&data);
+        models::insert_sensor_data(
+            &self.inner.db_conn,
+            sensor_id,
+            data,
+            chrono::Duration::minutes(30),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn first_data<T>(

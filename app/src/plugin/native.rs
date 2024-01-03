@@ -99,8 +99,8 @@ impl NativeAgentFactory {
             .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
             .read();
 
-        if decl.rustc_version != ripe_core::RUSTC_VERSION
-            || decl.core_version != ripe_core::CORE_VERSION
+        if decl.rustc_version > ripe_core::RUSTC_VERSION
+            || decl.core_version > ripe_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
             return Err(PluginError::CompilerMismatch(

@@ -68,14 +68,14 @@ impl From<Yaml> for Broker {
         let password = yaml["password"].as_str();
         match (username, password) {
             (Some(username), Some(password)) => Broker {
-                uri: uri,
+                uri: uri.to_string(),
                 credentails: Some(Credentials {
                     username: username.to_owned(),
                     password: password.to_owned(),
                 }),
             },
             (None, None) => Broker {
-                uri: uri,
+                uri: uri.to_string(),
                 credentails: None,
             },
             _ => panic!("mqtt.brokers.username and password must be set together."),
@@ -85,8 +85,8 @@ impl From<Yaml> for Broker {
 
 impl From<Yaml> for MappedBroker {
     fn from(yaml: Yaml) -> Self {
-        let internal = yaml["internal"];
-        let external = yaml["external"];
+        let internal = yaml["internal"].clone();
+        let external = yaml["external"].clone();
         MappedBroker {
             internal: internal.into(),
             external: external.into(),

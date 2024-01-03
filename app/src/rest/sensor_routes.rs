@@ -419,7 +419,7 @@ pub mod dto {
     impl From<Vec<&crate::mqtt::Broker>> for BrokerDto {
         fn from(mut from: Vec<&crate::mqtt::Broker>) -> Self {
             BrokerDto {
-                items: from.drain(..).map(|b| b.external.clone()).collect(),
+                items: from.drain(..).map(|b| b.uri.clone()).collect(),
             }
         }
     }

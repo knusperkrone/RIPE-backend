@@ -80,7 +80,7 @@ impl From<wasmer::InstantiationError> for WasmPluginError {
 
 #[derive(Debug, Error)]
 pub enum PluginError {
-    #[error("Compiler needed {0}, but was {1}")]
+    #[error("Plugin was compliled with {1}, but needed > {0}")]
     CompilerMismatch(std::string::String, std::string::String),
     #[error("Duplicate {0}, version = {1}")]
     Duplicate(std::string::String, u32),

@@ -9,12 +9,13 @@ use crate::sensor::handle::SensorHandle;
 use crate::sensor::SensorMessage;
 use futures::future::{AbortHandle, Abortable};
 use futures::StreamExt;
-use paho_mqtt::{AsyncClient, ConnectOptionsBuilder, CreateOptionsBuilder, Message, SslOptions};
+use paho_mqtt::{
+    AsyncClient, ConnectOptions, ConnectOptionsBuilder, CreateOptionsBuilder, Message, SslOptions,
+};
 use parking_lot::Mutex;
 use ripe_core::SensorDataMessage;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use warp::http::Uri;
 
 #[cfg(test)]
 mod test;
@@ -29,7 +30,7 @@ pub struct Credentials {
 
 #[derive(Debug, serde::Serialize, utoipa::ToSchema, Clone)]
 pub struct Broker {
-    pub uri: Uri,
+    pub uri: String,
     pub credentails: Option<Credentials>,
 }
 
@@ -67,7 +68,7 @@ impl MqttSensorClient {
 
     pub fn broker(&self) -> Option<&Broker> {
         if self.inner.is_connected() {
-            Some(&CONFIG.brokers()[0])
+            Some(&CONFIG.brokers()[0].external)
         } else {
             None
         }
@@ -224,9 +225,9 @@ impl MqttSensorClientInner {
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
         let publ = Message::new_retained(cmd_topic, payload, QOS);
-        //if cli.publish(publ).wait_for(self.default_timeout()).is_err() {
-        //return Err(MQTTError::Timeout());
-        //}
+        if cli.publish(publ).wait_for(self.default_timeout()).is_err() {
+            return Err(MQTTError::Timeout());
+        }
         Ok(())
     }
 
@@ -317,49 +318,53 @@ impl MqttSensorClientInner {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         loop {
             let brokers = CONFIG.brokers();
-            let mqtt_uri = brokers
-                .iter()
-                .map(|b| b.internal.clone())
-                .collect::<Vec<_>>();
-            let conn_opts = ConnectOptionsBuilder::new_ws()
-                .server_uris(&mqtt_uri)
-                .ssl_options(SslOptions::new())
-                .keep_alive_interval(Duration::from_secs(3))
-                .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
-                .finalize();
+            let broker = &brokers[0].internal;
+            let mqtt_uri = &broker.uri;
+
+            let conn_opts = Self::build_connection(&broker);
 
             if let Ok(cli) = self.read_cli().await {
-                info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri[0]);
+                info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri);
                 if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(5)) {
                     error!(
                         APP_LOGGING,
-                        "Coulnd't connect to broker {} with {}", mqtt_uri[0], e
+                        "Coulnd't connect to broker {} with {}", mqtt_uri, e
                     );
                 } else {
                     self.is_connected
                         .store(true, std::sync::atomic::Ordering::Relaxed);
-                    info!(APP_LOGGING, "connected to broker {}", mqtt_uri[0]);
+                    info!(APP_LOGGING, "connected to broker {}", mqtt_uri);
                     break;
                 }
             } else {
                 crit!(
                     APP_LOGGING,
                     "Failed aquiring lock to connect on broker {}",
-                    mqtt_uri[0]
+                    mqtt_uri
                 );
             }
         }
     }
 
-    fn build_connection(mqtt_uri: &str) {
-        let conn_opts = ConnectOptionsBuilder::new_ws()
-            .server_uris(&mqtt_uri)
+    fn build_connection(broker: &Broker) -> ConnectOptions {
+        let mut builder = if broker.uri.starts_with("ws") {
+            ConnectOptionsBuilder::new_ws()
+        } else {
+            ConnectOptionsBuilder::new()
+        };
+
+        let mut builder = builder
+            .server_uris(&vec![broker.uri.clone()])
             .ssl_options(SslOptions::new())
             .keep_alive_interval(Duration::from_secs(3))
-            .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
-            .user_name(None)
-            .password(None)
-            .finalize();
+            .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2));
+
+        if let Some(credentials) = &broker.credentails {
+            builder = builder
+                .user_name(credentials.username.clone())
+                .password(credentials.password.clone());
+        }
+        builder.finalize()
     }
 
     fn build_topics(sensor: &SensorHandle) -> Vec<String> {

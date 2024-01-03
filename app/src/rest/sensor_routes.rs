@@ -1,3 +1,4 @@
+use super::BrokerDto;
 use super::{build_response, SwaggerHostDefinition};
 use crate::error;
 use crate::rest::AgentStatusDto;
@@ -23,7 +24,7 @@ pub fn routes(
     #[derive(OpenApi)]
     #[openapi(
         paths(register_sensor, unregister_sensor, sensor_status, add_sensor_logs, sensor_logs, add_sensor_data, sensor_data_within, first_sensor_data, sensor_reload),
-        components(schemas(dto::SensorRegisterRequestDto, dto::BrokerDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto,
+        components(schemas(dto::SensorRegisterRequestDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto,
             dto::SensorStatusDto, AgentStatusDto, ErrorResponseDto, AgentUI, AgentUIDecorator, AgentState
         )),
         tags((name = "sensor", description = "Sensor related API"))
@@ -78,7 +79,7 @@ fn register_sensor(
                         .map(|sensor| dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
-                            broker: observer.broker().into(),
+                            broker: observer.brokers().into(),
                         });
                 build_response(resp)
             },
@@ -111,10 +112,7 @@ fn unregister_sensor(
                     dto::SensorCredentialDto {
                         id: body.id,
                         key: body.key,
-                        broker: dto::BrokerDto {
-                            tcp: None,
-                            wss: None,
-                        },
+                        broker: BrokerDto { items: vec![] },
                     }
                 });
                 build_response(resp)
@@ -160,7 +158,7 @@ fn sensor_status(
                     .map(|(data, mut agents)| dto::SensorStatusDto {
                         data: dto::SensorDataDto::from(data),
                         agents: agents.drain(..).map(AgentStatusDto::from).collect(),
-                        broker: observer.broker().into(),
+                        broker: observer.brokers().into(),
                     });
                 build_response(resp)
             },
@@ -415,15 +413,13 @@ pub mod dto {
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct BrokerDto {
-        pub tcp: Option<String>,
-        pub wss: Option<String>,
+        pub items: Vec<String>,
     }
 
-    impl From<crate::mqtt::Broker> for BrokerDto {
-        fn from(from: crate::mqtt::Broker) -> Self {
+    impl From<Vec<&crate::mqtt::Broker>> for BrokerDto {
+        fn from(mut from: Vec<&crate::mqtt::Broker>) -> Self {
             BrokerDto {
-                tcp: from.tcp,
-                wss: from.wss,
+                items: from.drain(..).map(|b| b.external.clone()).collect(),
             }
         }
     }

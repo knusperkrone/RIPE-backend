@@ -52,7 +52,7 @@ fn health(
                 timeout(duration, observer.agent_factory.read())
             );
             let healthy = results.0.is_ok() && results.1.is_ok() && results.2.is_ok();
-            let mqtt_broker = observer.mqtt_client.broker().tcp;
+            let mqtt_broker = observer.mqtt_client.broker();
             let database_state = results
                 .0
                 .map(|_| "HEALTHY".to_owned())
@@ -73,8 +73,8 @@ fn health(
 
             build_response_with_status(
                 Ok(dto::HealthyDto {
+                    mqtt_broker: mqtt_broker.map(ToOwned::to_owned),
                     healthy,
-                    mqtt_broker,
                     database_state,
                     sensor_count,
                     active_agents,
@@ -88,10 +88,12 @@ fn health(
 mod dto {
     use serde::Serialize;
     use utoipa::ToSchema;
+
+    use crate::mqtt::Broker;
     #[derive(Debug, Serialize, ToSchema)]
     pub struct HealthyDto {
         pub healthy: bool,
-        pub mqtt_broker: Option<String>,
+        pub mqtt_broker: Option<Broker>,
         pub database_state: String,
         pub sensor_count: usize,
         pub active_agents: Vec<String>,

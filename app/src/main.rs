@@ -4,6 +4,7 @@ use sqlx::migrate::Migrator;
 
 #[macro_use]
 extern crate slog;
+extern crate yaml_rust;
 
 mod config;
 mod error;

@@ -195,8 +195,12 @@ impl SensorObserver {
         Ok(transformed)
     }
 
-    pub fn broker(&self) -> Broker {
-        self.inner.mqtt_client.broker()
+    pub fn brokers(&self) -> Vec<&Broker> {
+        if let Some(broker) = self.inner.mqtt_client.broker() {
+            vec![broker]
+        } else {
+            vec![]
+        }
     }
 
     /*

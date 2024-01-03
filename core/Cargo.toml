@@ -11,7 +11,7 @@ crate_type = ["lib"]
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.8"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1.33", features = ["full"] }
+tokio = { version = "1.34", features = ["full"] }
 slog = "2.7" 
 utoipa = "4"
 

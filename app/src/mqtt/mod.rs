@@ -14,15 +14,23 @@ use parking_lot::Mutex;
 use ripe_core::SensorDataMessage;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use warp::http::Uri;
 
 #[cfg(test)]
 mod test;
 
 const QOS: i32 = 2;
 
+#[derive(Debug, serde::Serialize, utoipa::ToSchema, Clone)]
+pub struct Credentials {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema, Clone)]
 pub struct Broker {
-    pub tcp: Option<String>,
-    pub wss: Option<String>,
+    pub uri: Uri,
+    pub credentails: Option<Credentials>,
 }
 
 type MqttSender = UnboundedSender<(i32, SensorMessage)>;
@@ -57,17 +65,11 @@ impl MqttSensorClient {
         MqttSensorClientInner::connect(self.inner.clone()).await
     }
 
-    pub fn broker(&self) -> Broker {
+    pub fn broker(&self) -> Option<&Broker> {
         if self.inner.is_connected() {
-            Broker {
-                tcp: Some(CONFIG.mqtt_broker_internal().to_owned()),
-                wss: Some(CONFIG.mqtt_broker_external().to_owned()),
-            }
+            Some(&CONFIG.brokers()[0])
         } else {
-            Broker {
-                tcp: None,
-                wss: None,
-            }
+            None
         }
     }
 
@@ -222,9 +224,9 @@ impl MqttSensorClientInner {
         let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
 
         let publ = Message::new_retained(cmd_topic, payload, QOS);
-        if cli.publish(publ).wait_for(self.default_timeout()).is_err() {
-            return Err(MQTTError::Timeout());
-        }
+        //if cli.publish(publ).wait_for(self.default_timeout()).is_err() {
+        //return Err(MQTTError::Timeout());
+        //}
         Ok(())
     }
 
@@ -314,7 +316,11 @@ impl MqttSensorClientInner {
         self.is_connected
             .store(false, std::sync::atomic::Ordering::Relaxed);
         loop {
-            let mqtt_uri = vec![CONFIG.mqtt_broker_internal().clone()];
+            let brokers = CONFIG.brokers();
+            let mqtt_uri = brokers
+                .iter()
+                .map(|b| b.internal.clone())
+                .collect::<Vec<_>>();
             let conn_opts = ConnectOptionsBuilder::new_ws()
                 .server_uris(&mqtt_uri)
                 .ssl_options(SslOptions::new())
@@ -343,6 +349,17 @@ impl MqttSensorClientInner {
                 );
             }
         }
+    }
+
+    fn build_connection(mqtt_uri: &str) {
+        let conn_opts = ConnectOptionsBuilder::new_ws()
+            .server_uris(&mqtt_uri)
+            .ssl_options(SslOptions::new())
+            .keep_alive_interval(Duration::from_secs(3))
+            .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2))
+            .user_name(None)
+            .password(None)
+            .finalize();
     }
 
     fn build_topics(sensor: &SensorHandle) -> Vec<String> {

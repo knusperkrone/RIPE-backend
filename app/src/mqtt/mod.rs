@@ -1,6 +1,6 @@
-use std::sync::atomic::AtomicBool;
+use async_recursion::async_recursion;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::config::CONFIG;
 use crate::error::MQTTError;
@@ -8,19 +8,20 @@ use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorHandle;
 use crate::sensor::SensorMessage;
 use futures::future::{AbortHandle, Abortable};
-use futures::StreamExt;
-use paho_mqtt::{
-    AsyncClient, ConnectOptions, ConnectOptionsBuilder, CreateOptionsBuilder, Message, SslOptions,
-};
-use parking_lot::Mutex;
 use ripe_core::SensorDataMessage;
+use rumqttc::tokio_rustls::rustls::ClientConfig;
+use rumqttc::{
+    AsyncClient, ConnectReturnCode, Event, EventLoop, LastWill, MqttOptions, OptionError, Packet,
+    Publish, QoS, TlsConfiguration, Transport,
+};
+
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use tokio::sync::{RwLock, RwLockReadGuard};
 
 #[cfg(test)]
 mod test;
 
-const QOS: i32 = 2;
+const QOS: QoS = QoS::ExactlyOnce;
 
 #[derive(Debug, serde::Serialize, utoipa::ToSchema, Clone)]
 pub struct Credentials {
@@ -41,8 +42,8 @@ pub struct MqttSensorClient {
 }
 
 struct MqttSensorClientInner {
-    cli: RwLock<AsyncClient>,
-    listen_abort_handle: Mutex<Option<AbortHandle>>,
+    cli: RwLock<Option<(AsyncClient, AbortHandle)>>,
+    broker_index: AtomicUsize,
     is_connected: AtomicBool,
     sender: MqttSender,
     timeout_ms: u64,
@@ -50,11 +51,10 @@ struct MqttSensorClientInner {
 
 impl MqttSensorClient {
     pub fn new(sender: MqttSender) -> Self {
-        let cli = MqttSensorClientInner::create_client();
         MqttSensorClient {
             inner: Arc::new(MqttSensorClientInner {
-                cli: RwLock::new(cli),
-                listen_abort_handle: Mutex::new(None),
+                cli: RwLock::new(None),
+                broker_index: AtomicUsize::new(0),
                 timeout_ms: CONFIG.mqtt_timeout_ms(),
                 is_connected: AtomicBool::new(false),
                 sender,
@@ -68,7 +68,8 @@ impl MqttSensorClient {
 
     pub fn broker(&self) -> Option<&Broker> {
         if self.inner.is_connected() {
-            Some(&CONFIG.brokers()[0].external)
+            let brokers = CONFIG.brokers();
+            Some(&brokers[self.inner.broker_index.load(Relaxed) % brokers.len()].external)
         } else {
             None
         }
@@ -89,9 +90,21 @@ impl MqttSensorClient {
 
 impl Drop for MqttSensorClientInner {
     fn drop(&mut self) {
-        if let Some(handle) = self.listen_abort_handle.lock().take() {
-            handle.abort();
+        /*
+        use tokio::runtime::Handle;
+        if let Ok(handle) = Handle::try_current() {
+            let guard = handle.block_on(self.cli.read());
+            if let Some((client, abort_handle)) = guard.as_ref() {
+                abort_handle.abort();
+                let _ = handle.block_on(client.disconnect());
+            } else {
+                warn!(
+                    APP_LOGGING,
+                    "No async context, client may leak connection ressources"
+                );
+            }
         }
+         */
     }
 }
 
@@ -102,65 +115,75 @@ impl MqttSensorClientInner {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
+    #[async_recursion]
     pub async fn connect(self: Arc<MqttSensorClientInner>) {
-        let write_res = self.write_cli().await;
-        if write_res.is_err() {
-            crit!(APP_LOGGING, "Failed aquiring lock on connect");
-            return;
+        let brokers = CONFIG.brokers();
+        let i = self.broker_index.fetch_add(1, Relaxed);
+        let broker = &brokers[i % brokers.len()].internal;
+
+        info!(APP_LOGGING, "Connecting to MQTT broker: {}", broker.uri);
+        let mqttoptions = Self::build_connection(broker).expect("Invalid broker uri");
+        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
+
+        match eventloop.poll().await {
+            Ok(Event::Incoming(Packet::ConnAck(connack))) => {
+                if connack.code == ConnectReturnCode::Success {
+                    info!(APP_LOGGING, "Connected to MQTT broker");
+                } else {
+                    error!(APP_LOGGING, "Couldn't connect to MQTT broker");
+                    return self.connect().await;
+                }
+            }
+            Err(e) => {
+                error!(APP_LOGGING, "Couldn't connect to MQTT broker {}", e);
+                return self.connect().await;
+            }
+            e => unreachable!("Unexpected event: {:?}", e),
         }
-        let mut connect_cli = write_res.unwrap();
 
-        // Message callback
-        let mut mqtt_stream = connect_cli.get_stream(16_384);
-        drop(connect_cli);
+        let handle = self.clone().listen(eventloop);
+        self.cli.write().await.replace((client, handle));
+        self.is_connected.store(true, Relaxed);
+    }
 
-        Self::do_connect(self.clone()).await;
-
+    fn listen(self: Arc<MqttSensorClientInner>, mut mqtt_stream: EventLoop) -> AbortHandle {
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
-
-        let mut current_abort = self.listen_abort_handle.lock();
-        if let Some(handle) = current_abort.take() {
-            warn!(APP_LOGGING, "MQTT already has a listen task - aborting..");
-            handle.abort();
-        }
-        *current_abort = Some(abort_handle);
-
         let future_self = self.clone();
+
         tokio::spawn(Abortable::new(
             async move {
-                while let Some(msg_opt) = mqtt_stream.next().await {
-                    if let Some(msg) = msg_opt {
-                        debug!(
-                            APP_LOGGING,
-                            "Received topic: {}, {:?}",
-                            msg.topic(),
-                            std::str::from_utf8(msg.payload())
-                        );
-                        if let Err(e) = Self::on_sensor_message(&future_self.sender, msg) {
-                            error!(APP_LOGGING, "Received message threw error: {}", e);
+                while let Ok(event) = mqtt_stream.poll().await {
+                    match event {
+                        Event::Incoming(Packet::Publish(msg)) => {
+                            debug!(
+                                APP_LOGGING,
+                                "Received topic: {}, {:?}",
+                                msg.topic,
+                                std::str::from_utf8(&msg.payload)
+                            );
+                            if let Err(e) = Self::on_sensor_message(&future_self.sender, msg) {
+                                error!(APP_LOGGING, "Received message threw error: {}", e);
+                            }
                         }
-                    } else {
-                        // Try reconnect
-                        let is_reconnected = if let Ok(cli) = future_self.read_cli().await {
-                            cli.reconnect().wait_for(Duration::from_secs(5)).is_ok()
-                        } else {
-                            false
-                        };
-
-                        if is_reconnected {
-                            info!(APP_LOGGING, "Reconnected to previous MQTT broker");
-                        } else {
-                            Self::do_connect(future_self.clone()).await;
+                        Event::Incoming(Packet::Disconnect) => {
+                            error!(APP_LOGGING, "MQTT disconnected");
+                            break;
                         }
-                        while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
-                            warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
-                        }
+                        _ => {}
                     }
                 }
-                crit!(APP_LOGGING, "Ended MQTT message loop");
+
+                error!(APP_LOGGING, "Reconnecting to MQTT broker");
+                self.is_connected.store(false, Relaxed);
+                Self::connect(future_self.clone()).await;
+                while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
+                    warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
+                }
             },
             abort_registration,
         ));
+
+        abort_handle
     }
 
     pub(crate) fn is_connected(&self) -> bool {
@@ -168,79 +191,72 @@ impl MqttSensorClientInner {
     }
 
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli = self.read_cli().await?;
-        if cfg!(test) && !cli.is_connected() {
+        if cfg!(test) {
             return Ok(());
         }
 
-        let topics = Self::build_topics(sensor);
-        if cli
-            .subscribe_many(&topics, &[QOS, QOS])
-            .wait_for(self.default_timeout())
-            .is_err()
-        {
-            return Err(MQTTError::Timeout());
-        }
+        let guard = self.client().await?;
+        if let Some((client, _)) = guard.as_ref() {
+            let topics = Self::build_topics(sensor);
+            for topic in &topics {
+                client.subscribe(topic, QOS.into()).await?;
+            }
 
-        debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
-        Ok(())
+            debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
+            Ok(())
+        } else {
+            return Err(MQTTError::NotConnected());
+        }
     }
 
     pub async fn unsubscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli = self.read_cli().await?;
-        if cfg!(test) && !cli.is_connected() {
+        if cfg!(test) {
             return Ok(());
         }
 
-        let topics = Self::build_topics(sensor);
-        for topic in topics.clone() {
-            cli.publish(Message::new(topic, vec![], QOS))
-                .wait_for(self.default_timeout())?;
-        }
+        let guard = self.client().await?;
+        if let Some((client, _)) = guard.as_ref() {
+            let topics = Self::build_topics(sensor);
+            for topic in &topics {
+                client.unsubscribe(topic).await?;
+            }
 
-        if cli
-            .unsubscribe_many(&topics)
-            .wait_for(self.default_timeout())
-            .is_err()
-        {
-            return Err(MQTTError::Timeout());
+            debug!(APP_LOGGING, "Unsubscribed topics {:?}", topics);
+            Ok(())
+        } else {
+            return Err(MQTTError::NotConnected());
         }
-
-        debug!(APP_LOGGING, "Unsubscribed topics: {:?}", topics);
-        Ok(())
     }
 
     pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
-        let cli = self.read_cli().await?;
-        if cfg!(test) && !cli.is_connected() {
+        if cfg!(test) {
             return Ok(());
         }
 
-        let cmd_topic = Self::build_topic(sensor, Self::CMD_TOPIC);
-        let mut cmds = sensor.format_cmds();
-        debug!(
-            APP_LOGGING,
-            "Send command to sensor {} - {:?}", cmd_topic, cmds
-        );
-        let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
+        let guard = self.client().await?;
+        if let Some((client, _)) = guard.as_ref() {
+            let cmd_topic = Self::build_topic(sensor, Self::CMD_TOPIC);
+            let mut cmds = sensor.format_cmds();
+            let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
+            client.publish(&cmd_topic, QOS, true, payload).await?;
 
-        let publ = Message::new_retained(cmd_topic, payload, QOS);
-        if cli.publish(publ).wait_for(self.default_timeout()).is_err() {
-            return Err(MQTTError::Timeout());
+            debug!(APP_LOGGING, "Published command {:?}", cmd_topic);
+            Ok(())
+        } else {
+            return Err(MQTTError::NotConnected());
         }
-        Ok(())
     }
 
     /// Parses and dispatches a mqtt message
     ///
     /// Returns nothing on submitted command, or the submitted sensor data
-    fn on_sensor_message(sensor_data_sender: &MqttSender, msg: Message) -> Result<(), MQTTError> {
+    fn on_sensor_message(sensor_data_sender: &MqttSender, msg: Publish) -> Result<(), MQTTError> {
         // parse message
-        let path: Vec<&str> = msg.topic().splitn(4, '/').collect();
+        let path: Vec<&str> = msg.topic.splitn(4, '/').collect();
         if path.len() != 4 {
             return Err(MQTTError::Path(format!(
                 "Couldn't split topic: {}",
-                msg.topic()
+                msg.topic
             )));
         } else if path[0] != Self::SENSOR_TOPIC {
             return Err(MQTTError::Path(format!("Invalid topic: {}", path[0])));
@@ -251,7 +267,7 @@ impl MqttSensorClientInner {
             "Couldn't parse sensor_id: {}",
             path[2]
         ))))?;
-        let payload: &str = std::str::from_utf8(msg.payload()).or(Err(MQTTError::Payload(
+        let payload: &str = std::str::from_utf8(&msg.payload).or(Err(MQTTError::Payload(
             "Couldn't decode payload".to_string(),
         )))?;
 
@@ -289,82 +305,64 @@ impl MqttSensorClientInner {
      * Helpers
      */
 
+    async fn client(
+        &self,
+    ) -> Result<RwLockReadGuard<Option<(AsyncClient, AbortHandle)>>, MQTTError> {
+        if !self.is_connected() {
+            Err(MQTTError::NotConnected())
+        } else {
+            tokio::time::timeout(self.default_timeout(), self.cli.read())
+                .await
+                .map_err(|_| MQTTError::ReadLock())
+        }
+    }
+
     fn default_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.timeout_ms)
     }
 
-    async fn read_cli(&self) -> Result<RwLockReadGuard<'_, AsyncClient>, MQTTError> {
-        tokio::time::timeout(self.default_timeout(), self.cli.read())
-            .await
-            .map_err(|_| MQTTError::ReadLock())
-    }
-
-    async fn write_cli(&self) -> Result<RwLockWriteGuard<'_, AsyncClient>, MQTTError> {
-        let duration = std::time::Duration::from_secs(1);
-        tokio::time::timeout(duration, self.cli.write())
-            .await
-            .map_err(|_| MQTTError::WriteLock())
-    }
-
-    fn create_client() -> AsyncClient {
-        if tokio::runtime::Handle::try_current().is_err() {
-            panic!("PahoMqtt needs async context here");
-        }
-        CreateOptionsBuilder::new().create_client().unwrap()
-    }
-
-    async fn do_connect(self: Arc<Self>) {
-        self.is_connected
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        loop {
-            let brokers = CONFIG.brokers();
-            let broker = &brokers[0].internal;
-            let mqtt_uri = &broker.uri;
-
-            let conn_opts = Self::build_connection(&broker);
-
-            if let Ok(cli) = self.read_cli().await {
-                info!(APP_LOGGING, "Attempt connecting on broker {}", mqtt_uri);
-                if let Err(e) = cli.connect(conn_opts).wait_for(Duration::from_secs(5)) {
-                    error!(
-                        APP_LOGGING,
-                        "Coulnd't connect to broker {} with {}", mqtt_uri, e
-                    );
-                } else {
-                    self.is_connected
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    info!(APP_LOGGING, "connected to broker {}", mqtt_uri);
-                    break;
-                }
-            } else {
-                crit!(
-                    APP_LOGGING,
-                    "Failed aquiring lock to connect on broker {}",
-                    mqtt_uri
-                );
+    fn build_connection(broker: &Broker) -> Result<MqttOptions, OptionError> {
+        let url = broker.uri.parse::<url::Url>()?;
+        let mut options = match url.scheme() {
+            "tcp" => MqttOptions::new(
+                "master",
+                format!("{}", url.host().expect("No Host was set")),
+                url.port().unwrap_or(1883),
+            ),
+            "wss" => {
+                let mut options =
+                    MqttOptions::new("master", &broker.uri, url.port().unwrap_or(443));
+                options.set_transport(Transport::wss_with_config(Self::build_tls_config()));
+                options
             }
-        }
-    }
-
-    fn build_connection(broker: &Broker) -> ConnectOptions {
-        let mut builder = if broker.uri.starts_with("ws") {
-            ConnectOptionsBuilder::new_ws()
-        } else {
-            ConnectOptionsBuilder::new()
+            _ => unreachable!("Invalid scheme: {}", url.scheme()),
         };
 
-        let mut builder = builder
-            .server_uris(&vec![broker.uri.clone()])
-            .ssl_options(SslOptions::new())
-            .keep_alive_interval(Duration::from_secs(3))
-            .will_message(Message::new(Self::TESTAMENT_TOPIC, vec![], 2));
-
+        options.set_keep_alive(std::time::Duration::from_secs(5));
+        options.set_last_will(LastWill::new(
+            Self::TESTAMENT_TOPIC,
+            "master".as_bytes(),
+            QOS,
+            false,
+        ));
         if let Some(credentials) = &broker.credentails {
-            builder = builder
-                .user_name(credentials.username.clone())
-                .password(credentials.password.clone());
+            options.set_credentials(credentials.username.clone(), credentials.password.clone());
         }
-        builder.finalize()
+        Ok(options)
+    }
+
+    fn build_tls_config() -> TlsConfiguration {
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs().expect("Couldn't load native certs") {
+            root_cert_store
+                .add(&rustls::Certificate(cert.0))
+                .expect("Couldn't add cert");
+        }
+        ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth()
+            .into()
     }
 
     fn build_topics(sensor: &SensorHandle) -> Vec<String> {

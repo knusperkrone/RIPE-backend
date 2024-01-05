@@ -19,13 +19,11 @@ pub enum MQTTError {
     #[error("Invalid JSON: {0}")]
     Parse(#[from] serde_json::error::Error),
     #[error("Send Failed: {0}")]
-    Send(#[from] paho_mqtt::Error),
-    #[error("Timeout")]
-    Timeout(),
+    Send(#[from] rumqttc::ClientError),
     #[error("Failed acquiring read lock")]
     ReadLock(),
-    #[error("Failed acquiring write lock")]
-    WriteLock(),
+    #[error("Not connected to a mqtt broker")]
+    NotConnected(),
 }
 
 #[derive(Debug, Clone, Error)]

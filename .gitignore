@@ -7,5 +7,6 @@
 
 iot-master*
 
-config.yaml
+config.prod.yaml
 .env
+deploy.sh

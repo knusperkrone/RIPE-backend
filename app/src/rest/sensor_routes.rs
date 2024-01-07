@@ -1,4 +1,3 @@
-use super::BrokerDto;
 use super::{build_response, SwaggerHostDefinition};
 use crate::error;
 use crate::rest::AgentStatusDto;
@@ -24,7 +23,7 @@ pub fn routes(
     #[derive(OpenApi)]
     #[openapi(
         paths(register_sensor, unregister_sensor, sensor_status, add_sensor_logs, sensor_logs, add_sensor_data, sensor_data_within, first_sensor_data, sensor_reload),
-        components(schemas(dto::SensorRegisterRequestDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto,
+        components(schemas(dto::SensorRegisterRequestDto, dto::SensorCredentialDto, dto::SensorStatusDto, dto::SensorDataDto, dto::BrokersDto,
             dto::SensorStatusDto, AgentStatusDto, ErrorResponseDto, AgentUI, AgentUIDecorator, AgentState
         )),
         tags((name = "sensor", description = "Sensor related API"))
@@ -79,7 +78,7 @@ fn register_sensor(
                         .map(|sensor| dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
-                            broker: observer.brokers().into(),
+                            broker: observer.brokers().unwrap_or(&vec![]).clone().into(),
                         });
                 build_response(resp)
             },
@@ -112,7 +111,7 @@ fn unregister_sensor(
                     dto::SensorCredentialDto {
                         id: body.id,
                         key: body.key,
-                        broker: BrokerDto { items: vec![] },
+                        broker: dto::BrokersDto { items: vec![] },
                     }
                 });
                 build_response(resp)
@@ -158,7 +157,7 @@ fn sensor_status(
                     .map(|(data, mut agents)| dto::SensorStatusDto {
                         data: dto::SensorDataDto::from(data),
                         agents: agents.drain(..).map(AgentStatusDto::from).collect(),
-                        broker: observer.brokers().into(),
+                        broker: observer.brokers().unwrap_or(&vec![]).clone().into(),
                     });
                 build_response(resp)
             },
@@ -401,7 +400,7 @@ fn sensor_reload(
 /// DTO
 ///
 pub mod dto {
-    use crate::{models::dao::SensorDataDao, rest::AgentStatusDto};
+    use crate::{models::dao::SensorDataDao, mqtt::MqttScheme, rest::AgentStatusDto};
     use ripe_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
@@ -412,14 +411,39 @@ pub mod dto {
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct BrokerDto {
-        pub items: Vec<String>,
+    pub struct BrokerCredentialsDto {
+        pub username: String,
+        pub password: String,
     }
 
-    impl From<Vec<&crate::mqtt::Broker>> for BrokerDto {
-        fn from(mut from: Vec<&crate::mqtt::Broker>) -> Self {
-            BrokerDto {
-                items: from.drain(..).map(|b| b.uri.clone()).collect(),
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub struct BrokerDto {
+        scheme: MqttScheme,
+        host: String,
+        port: u16,
+        credentials: Option<BrokerCredentialsDto>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub struct BrokersDto {
+        pub items: Vec<BrokerDto>,
+    }
+
+    impl From<Vec<crate::mqtt::MqttBroker>> for BrokersDto {
+        fn from(mut from: Vec<crate::mqtt::MqttBroker>) -> Self {
+            BrokersDto {
+                items: from
+                    .drain(..)
+                    .map(|b| BrokerDto {
+                        scheme: b.connection.scheme,
+                        host: b.connection.host,
+                        port: b.connection.port,
+                        credentials: b.credentials.map(|c| BrokerCredentialsDto {
+                            username: c.username,
+                            password: c.password,
+                        }),
+                    })
+                    .collect(),
             }
         }
     }
@@ -428,14 +452,14 @@ pub mod dto {
     pub struct SensorCredentialDto {
         pub id: i32,
         pub key: String,
-        pub broker: BrokerDto,
+        pub broker: BrokersDto,
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SensorStatusDto {
         pub data: SensorDataDto,
         pub agents: Vec<AgentStatusDto>,
-        pub broker: BrokerDto,
+        pub broker: BrokersDto,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -536,7 +560,7 @@ mod test {
             .json(&dto::SensorCredentialDto {
                 id: sensor.id,
                 key: sensor.key,
-                broker: dto::BrokerDto {
+                broker: dto::BrokersDto {
                     tcp: None,
                     wss: None,
                 },

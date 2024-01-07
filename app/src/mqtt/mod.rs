@@ -9,10 +9,8 @@ use crate::sensor::handle::SensorHandle;
 use crate::sensor::SensorMessage;
 use futures::future::{AbortHandle, Abortable};
 use ripe_core::SensorDataMessage;
-use rumqttc::tokio_rustls::rustls::ClientConfig;
 use rumqttc::{
-    AsyncClient, ConnectReturnCode, Event, EventLoop, LastWill, MqttOptions, OptionError, Packet,
-    Publish, QoS, TlsConfiguration, Transport,
+    AsyncClient, Event, EventLoop, LastWill, MqttOptions, Packet, Publish, QoS, Transport,
 };
 
 use tokio::sync::mpsc::UnboundedSender;
@@ -23,16 +21,30 @@ mod test;
 
 const QOS: QoS = QoS::ExactlyOnce;
 
-#[derive(Debug, serde::Serialize, utoipa::ToSchema, Clone)]
-pub struct Credentials {
+#[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema, Clone)]
+#[serde(rename_all(serialize = "lowercase", deserialize = "lowercase"))]
+pub enum MqttScheme {
+    Tcp,
+    Wss,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrokerCredentials {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, serde::Serialize, utoipa::ToSchema, Clone)]
-pub struct Broker {
-    pub uri: String,
-    pub credentails: Option<Credentials>,
+#[derive(Debug, Clone)]
+pub struct MqttConnectionDetail {
+    pub scheme: MqttScheme,
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct MqttBroker {
+    pub connection: MqttConnectionDetail,
+    pub credentials: Option<BrokerCredentials>,
 }
 
 type MqttSender = UnboundedSender<(i32, SensorMessage)>;
@@ -66,7 +78,7 @@ impl MqttSensorClient {
         MqttSensorClientInner::connect(self.inner.clone()).await
     }
 
-    pub fn broker(&self) -> Option<&Broker> {
+    pub fn external_brokers(&self) -> Option<&Vec<MqttBroker>> {
         if self.inner.is_connected() {
             let brokers = CONFIG.brokers();
             Some(&brokers[self.inner.broker_index.load(Relaxed) % brokers.len()].external)
@@ -121,18 +133,19 @@ impl MqttSensorClientInner {
         let i = self.broker_index.fetch_add(1, Relaxed);
         let broker = &brokers[i % brokers.len()].internal;
 
-        info!(APP_LOGGING, "Connecting to MQTT broker: {}", broker.uri);
+        info!(
+            APP_LOGGING,
+            "Connecting to MQTT broker: {:?}://{}:{}",
+            broker.connection.scheme,
+            broker.connection.host,
+            broker.connection.port
+        );
         let mqttoptions = Self::build_connection(broker).expect("Invalid broker uri");
-        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 10);
+        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 1024);
 
         match eventloop.poll().await {
-            Ok(Event::Incoming(Packet::ConnAck(connack))) => {
-                if connack.code == ConnectReturnCode::Success {
-                    info!(APP_LOGGING, "Connected to MQTT broker");
-                } else {
-                    error!(APP_LOGGING, "Couldn't connect to MQTT broker");
-                    return self.connect().await;
-                }
+            Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                info!(APP_LOGGING, "Connected to MQTT broker");
             }
             Err(e) => {
                 error!(APP_LOGGING, "Couldn't connect to MQTT broker {}", e);
@@ -153,31 +166,26 @@ impl MqttSensorClientInner {
         tokio::spawn(Abortable::new(
             async move {
                 while let Ok(event) = mqtt_stream.poll().await {
-                    match event {
-                        Event::Incoming(Packet::Publish(msg)) => {
-                            debug!(
-                                APP_LOGGING,
-                                "Received topic: {}, {:?}",
-                                msg.topic,
-                                std::str::from_utf8(&msg.payload)
-                            );
-                            if let Err(e) = Self::on_sensor_message(&future_self.sender, msg) {
-                                error!(APP_LOGGING, "Received message threw error: {}", e);
-                            }
+                    if let Event::Incoming(Packet::Publish(msg)) = event {
+                        debug!(
+                            APP_LOGGING,
+                            "Received topic: {}, {:?}",
+                            msg.topic,
+                            std::str::from_utf8(&msg.payload)
+                        );
+                        if let Err(e) = Self::on_sensor_message(&future_self.sender, msg) {
+                            error!(APP_LOGGING, "Received message threw error: {}", e);
                         }
-                        Event::Incoming(Packet::Disconnect) => {
-                            error!(APP_LOGGING, "MQTT disconnected");
-                            break;
-                        }
-                        _ => {}
                     }
                 }
 
-                error!(APP_LOGGING, "Reconnecting to MQTT broker");
                 self.is_connected.store(false, Relaxed);
+                error!(APP_LOGGING, "MQTT disconnected - reconnecting");
+
                 Self::connect(future_self.clone()).await;
                 while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
                     warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             },
             abort_registration,
@@ -199,13 +207,13 @@ impl MqttSensorClientInner {
         if let Some((client, _)) = guard.as_ref() {
             let topics = Self::build_topics(sensor);
             for topic in &topics {
-                client.subscribe(topic, QOS.into()).await?;
+                client.subscribe(topic, QOS).await?;
             }
 
             debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
             Ok(())
         } else {
-            return Err(MQTTError::NotConnected());
+            Err(MQTTError::NotConnected())
         }
     }
 
@@ -224,7 +232,7 @@ impl MqttSensorClientInner {
             debug!(APP_LOGGING, "Unsubscribed topics {:?}", topics);
             Ok(())
         } else {
-            return Err(MQTTError::NotConnected());
+            Err(MQTTError::NotConnected())
         }
     }
 
@@ -243,7 +251,7 @@ impl MqttSensorClientInner {
             debug!(APP_LOGGING, "Published command {:?}", cmd_topic);
             Ok(())
         } else {
-            return Err(MQTTError::NotConnected());
+            Err(MQTTError::NotConnected())
         }
     }
 
@@ -321,21 +329,23 @@ impl MqttSensorClientInner {
         std::time::Duration::from_millis(self.timeout_ms)
     }
 
-    fn build_connection(broker: &Broker) -> Result<MqttOptions, OptionError> {
-        let url = broker.uri.parse::<url::Url>()?;
-        let mut options = match url.scheme() {
-            "tcp" => MqttOptions::new(
-                "master",
-                format!("{}", url.host().expect("No Host was set")),
-                url.port().unwrap_or(1883),
+    fn build_connection(broker: &MqttBroker) -> Result<MqttOptions, MQTTError> {
+        let mut options = match broker.connection.scheme {
+            MqttScheme::Tcp => MqttOptions::new(
+                CONFIG.mqtt_client_id(),
+                &broker.connection.host,
+                broker.connection.port,
             ),
-            "wss" => {
+            MqttScheme::Wss => {
+                let uri = format!(
+                    "wss://{}:{}",
+                    broker.connection.host, broker.connection.port
+                ); // Weird flex, but ok
                 let mut options =
-                    MqttOptions::new("master", &broker.uri, url.port().unwrap_or(443));
-                options.set_transport(Transport::wss_with_config(Self::build_tls_config()));
+                    MqttOptions::new(CONFIG.mqtt_client_id(), uri, broker.connection.port);
+                options.set_transport(Transport::wss_with_default_config());
                 options
             }
-            _ => unreachable!("Invalid scheme: {}", url.scheme()),
         };
 
         options.set_keep_alive(std::time::Duration::from_secs(5));
@@ -345,24 +355,14 @@ impl MqttSensorClientInner {
             QOS,
             false,
         ));
-        if let Some(credentials) = &broker.credentails {
+        if let Some(credentials) = &broker.credentials {
+            debug!(
+                APP_LOGGING,
+                "Authentication to broker as: {}", credentials.username
+            );
             options.set_credentials(credentials.username.clone(), credentials.password.clone());
         }
         Ok(options)
-    }
-
-    fn build_tls_config() -> TlsConfiguration {
-        let mut root_cert_store = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().expect("Couldn't load native certs") {
-            root_cert_store
-                .add(&rustls::Certificate(cert.0))
-                .expect("Couldn't add cert");
-        }
-        ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(root_cert_store)
-            .with_no_client_auth()
-            .into()
     }
 
     fn build_topics(sensor: &SensorHandle) -> Vec<String> {

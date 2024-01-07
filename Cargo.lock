@@ -2156,7 +2156,6 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
- "url",
  "utoipa 4.1.0",
  "utoipa-swagger-ui",
  "warp",
@@ -2252,7 +2251,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
- "url",
  "ws_stream_tungstenite",
 ]
 

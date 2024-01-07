@@ -4,7 +4,7 @@ use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
 use crate::models::dao::SensorDataDao;
 use crate::models::{self};
-use crate::mqtt::Broker;
+use crate::mqtt::MqttBroker;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use ripe_core::SensorDataMessage;
@@ -195,11 +195,11 @@ impl SensorObserver {
         Ok(transformed)
     }
 
-    pub fn brokers(&self) -> Vec<&Broker> {
-        if let Some(broker) = self.inner.mqtt_client.broker() {
-            vec![broker]
+    pub fn brokers(&self) -> Option<&Vec<MqttBroker>> {
+        if let Some(brokers) = self.inner.mqtt_client.external_brokers() {
+            Some(brokers)
         } else {
-            vec![]
+            None
         }
     }
 

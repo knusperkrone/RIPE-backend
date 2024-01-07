@@ -2,15 +2,15 @@ use once_cell::sync::Lazy;
 use std::sync::Arc;
 use yaml_rust::{Yaml, YamlLoader};
 
-use crate::mqtt::{Broker, Credentials};
+use crate::mqtt::{BrokerCredentials, MqttBroker, MqttConnectionDetail, MqttScheme};
 
 pub struct Config {
     inner: Arc<InnerConfig>,
 }
 
 pub struct MappedBroker {
-    pub internal: Broker,
-    pub external: Broker,
+    pub internal: MqttBroker,
+    pub external: Vec<MqttBroker>,
 }
 
 struct InnerConfig {
@@ -18,6 +18,7 @@ struct InnerConfig {
     brokers: Vec<MappedBroker>,
     plugin_dir: String,
     server_port: String,
+    mqtt_client_id: String,
     mqtt_timeout_ms: u64,
     mqtt_send_retries: usize,
     mqtt_log_count: i64,
@@ -30,6 +31,10 @@ impl Config {
 
     pub fn brokers(&self) -> &Vec<MappedBroker> {
         &self.inner.brokers
+    }
+
+    pub fn mqtt_client_id(&self) -> &String {
+        &self.inner.mqtt_client_id
     }
 
     pub fn mqtt_timeout_ms(&self) -> u64 {
@@ -53,32 +58,59 @@ impl Config {
     }
 }
 
-impl From<Yaml> for Broker {
+impl From<Yaml> for MqttConnectionDetail {
     fn from(yaml: Yaml) -> Self {
-        let uri_str = yaml["uri"]
+        let scheme: MqttScheme = match yaml["scheme"]
             .as_str()
-            .expect("mqtt.brokers.internal|external.uri must be set");
-        let uri = uri_str.parse::<warp::http::Uri>().expect("Invalid uri");
-        match uri.scheme_str() {
-            Some("tcp") | Some("wss") => (),
-            _ => panic!("mqtt.brokers.uri must be specify tcp or wss scheme."),
-        }
+            .expect("mqtt.brokers.scheme must be set")
+        {
+            "tcp" => MqttScheme::Tcp,
+            "wss" => MqttScheme::Wss,
+            _ => panic!("mqtt.brokers.scheme must be specify tcp or wss scheme."),
+        };
+        let host = yaml["host"]
+            .as_str()
+            .expect("mqtt.brokers.internal|external.uri must be set")
+            .to_owned();
+        let port = yaml["port"]
+            .as_i64()
+            .expect("mqtt.brokers.port must be set") as u16;
 
-        let username = yaml["username"].as_str();
-        let password = yaml["password"].as_str();
-        match (username, password) {
-            (Some(username), Some(password)) => Broker {
-                uri: uri.to_string(),
-                credentails: Some(Credentials {
-                    username: username.to_owned(),
-                    password: password.to_owned(),
-                }),
-            },
-            (None, None) => Broker {
-                uri: uri.to_string(),
-                credentails: None,
-            },
-            _ => panic!("mqtt.brokers.username and password must be set together."),
+        MqttConnectionDetail { scheme, port, host }
+    }
+}
+
+impl From<Yaml> for BrokerCredentials {
+    fn from(yaml: Yaml) -> Self {
+        let username = yaml["username"]
+            .as_str()
+            .expect("mqtt.brokers.username must be set");
+        let password = yaml["password"]
+            .as_str()
+            .expect("mqtt.brokers.password must be set");
+        BrokerCredentials {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        }
+    }
+}
+
+impl From<Yaml> for MqttBroker {
+    fn from(yaml: Yaml) -> Self {
+        let connection = yaml["connection"].clone().into();
+        let credentials = yaml["credentials"].clone();
+        let credentials = if credentials.is_badvalue() {
+            if !cfg!(debug_assertions) {
+                panic!("mqtt.brokers.credentials must be set in production mode");
+            }
+            None
+        } else {
+            Some(BrokerCredentials::from(credentials))
+        };
+
+        MqttBroker {
+            connection,
+            credentials,
         }
     }
 }
@@ -87,12 +119,45 @@ impl From<Yaml> for MappedBroker {
     fn from(yaml: Yaml) -> Self {
         let internal = yaml["internal"].clone();
         let external = yaml["external"].clone();
-        MappedBroker {
+        let broker = MappedBroker {
             internal: internal.into(),
-            external: external.into(),
+            external: from_external_brokers(external),
+        };
+
+        if broker.external.is_empty() {
+            panic!("mqtt.brokers.external cannot be empty");
         }
+        broker
     }
 }
+
+fn from_external_brokers(yaml: Yaml) -> Vec<MqttBroker> {
+    let credentials = yaml["credentials"].clone();
+    let credentials = if credentials.is_badvalue() {
+        if !cfg!(debug_assertions) {
+            panic!("mqtt.brokers.credentials must be set in production mode");
+        }
+        None
+    } else {
+        Some(BrokerCredentials::from(credentials))
+    };
+
+    let connections = yaml["connections"]
+        .as_vec()
+        .expect("mqtt.external.connections is not set")
+        .clone();
+
+    connections
+        .into_iter()
+        .map(|c| MqttBroker {
+            connection: c.into(),
+            credentials: credentials.clone(),
+        })
+        .collect()
+}
+
+// Usage:
+//let external_brokers: Vec<MqttBroker> = yaml["external"].into();
 
 impl From<Yaml> for Config {
     fn from(yaml: Yaml) -> Self {
@@ -106,6 +171,10 @@ impl From<Yaml> for Config {
             .as_str()
             .expect("server.port must be set");
 
+        let mqtt_client_id = yaml["mqtt"]["client_id"]
+            .as_str()
+            .map(|s| s.to_owned())
+            .expect("mqtt.client_id must be set.");
         let mqtt_timeout_ms = yaml["mqtt"]["timeout_ms"]
             .as_i64()
             .map(|s| s.to_owned())
@@ -133,6 +202,7 @@ impl From<Yaml> for Config {
                 server_port: server_port.to_owned(),
                 database_url: database_url.to_string(),
                 brokers,
+                mqtt_client_id,
                 mqtt_timeout_ms,
                 mqtt_send_retries,
                 mqtt_log_count,

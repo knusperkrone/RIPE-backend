@@ -161,7 +161,7 @@ mod test {
         // execute
 
         let res = agent_observer
-            .register(sensor_res.id, sensor_res.key, &domain, &agent)
+            .register(sensor_res.id, &sensor_res.key, &domain, &agent)
             .await;
 
         // validate
@@ -178,7 +178,7 @@ mod test {
         agent_observer
             .register(
                 sensor_res.id,
-                sensor_res.key.clone(),
+                &sensor_res.key.clone(),
                 &domain.clone(),
                 &agent.clone(),
             )
@@ -204,7 +204,7 @@ mod test {
         agent_observer
             .register(
                 sensor_res.id,
-                sensor_res.key.clone(),
+                &sensor_res.key.clone(),
                 &domain.clone(),
                 &agent.clone(),
             )
@@ -230,7 +230,7 @@ mod test {
         agent_observer
             .register(
                 sensor_res.id,
-                sensor_res.key.clone(),
+                &sensor_res.key.clone(),
                 &domain.clone(),
                 &agent.clone(),
             )

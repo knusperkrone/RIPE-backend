@@ -433,7 +433,7 @@ mod test {
         let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
         let sensor = sensor_observer.register(None).await.unwrap();
         agent_observer
-            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
+            .register(sensor.id, &sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -460,7 +460,7 @@ mod test {
         let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
         let sensor = sensor_observer.register(None).await.unwrap();
         agent_observer
-            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
+            .register(sensor.id, &sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -487,7 +487,7 @@ mod test {
         let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
         let sensor = sensor_observer.register(None).await.unwrap();
         agent_observer
-            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
+            .register(sensor.id, &sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);
@@ -517,7 +517,7 @@ mod test {
         let (observer, agent_observer, sensor_observer) = build_mocked_observer().await;
         let sensor = sensor_observer.register(None).await.unwrap();
         agent_observer
-            .register(sensor.id, sensor.key.clone(), &domain, &agent_name)
+            .register(sensor.id, &sensor.key.clone(), &domain, &agent_name)
             .await
             .unwrap();
         let routes = routes(&observer).1.recover(handle_rejection);

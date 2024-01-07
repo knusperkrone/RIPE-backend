@@ -212,10 +212,19 @@ impl From<Yaml> for Config {
 }
 
 pub static CONFIG: Lazy<Config> = Lazy::new(|| {
-    let docs = &YamlLoader::load_from_str(
-        &std::fs::read_to_string("config.yaml").expect("Couldn't read config.yaml"),
-    )
-    .expect("Couldn't parse config.yaml")[0];
+    let config = if cfg!(test) {
+        YamlLoader::load_from_str(
+            &std::fs::read_to_string("../config.yaml").expect("Couldn't read config.yaml"),
+        )
+        .expect("Couldn't parse config.yaml")[0]
+            .clone()
+    } else {
+        YamlLoader::load_from_str(
+            &std::fs::read_to_string("config.yaml").expect("Couldn't read config.yaml"),
+        )
+        .expect("Couldn't parse config.yaml")[0]
+            .clone()
+    };
 
-    Config::from(docs.clone())
+    Config::from(config)
 });

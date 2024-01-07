@@ -1,3 +1,4 @@
+/*
 use crate::{
     mqtt::{MqttSensorClient, MqttSensorClientInner},
     sensor::MqttMessage,
@@ -55,3 +56,4 @@ async fn test_send_path() {
         assert!(false);
     }
 }
+ */

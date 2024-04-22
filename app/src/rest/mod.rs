@@ -14,7 +14,6 @@ mod metric_routes;
 mod sensor_routes;
 
 pub use agent_routes::dto::*;
-pub use sensor_routes::dto::*;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ErrorResponseDto {

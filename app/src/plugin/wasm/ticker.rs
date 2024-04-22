@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use std::{
     future::Future,
     pin::Pin,
@@ -6,8 +7,6 @@ use std::{
     thread,
     time::Duration,
 };
-
-use parking_lot::Mutex;
 
 pub struct TimerFuture {
     shared_state: Arc<Mutex<SharedState>>,

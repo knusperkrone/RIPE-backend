@@ -9,7 +9,6 @@ use std::{collections::HashMap, pin::Pin};
 
 use chrono_tz::Tz;
 use ripe_core::*;
-use tokio::sync::mpsc::Sender;
 
 const NAME: &str = "TestAgent";
 const VERSION_CODE: u32 = 2;
@@ -19,37 +18,16 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 /*
  * Implementation
  */
-
-fn build_agent(
+#[no_mangle]
+extern "Rust" fn build_agent(
     _config: Option<&str>,
     logger: slog::Logger,
-    sender: Sender<AgentMessage>,
+    sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
-    if let Err(e) = sender.try_send(AgentMessage::Command(0)) {
-        panic!("TestAgent - failed to send Command {}", e);
-    } else if let Err(e) = sender.try_send(AgentMessage::OneshotTask(Box::new(TestFutBuilder {
-        is_oneshot: true,
-        sender: sender.clone(),
-        logger: logger.clone(),
-        counter: Arc::new(AtomicI32::new(5)),
-    }))) {
-        panic!("TestAgent - failed to send OneshotTask {}", e);
-    } else if let Err(e) = sender.try_send(AgentMessage::RepeatedTask(
-        std::time::Duration::from_secs(1),
-        Box::new(TestFutBuilder {
-            is_oneshot: false,
-            sender: sender.clone(),
-            logger: logger.clone(),
-            counter: Arc::new(AtomicI32::new(5)),
-        }),
-    )) {
-        panic!("TestAgent - failed to send RepeatedTask {}", e);
-    }
-
     Box::new(TestAgent {
         val: 0.5,
         logger: logger,
-        _sender: sender,
+        sender: Arc::new(sender),
         config_active: true,
         config_daytime_ms: 0,
         config_time_slider_hour: 0,
@@ -62,7 +40,7 @@ fn build_agent(
 struct TestAgent {
     val: f32,
     logger: slog::Logger,
-    _sender: Sender<AgentMessage>,
+    sender: Arc<AgentStreamSender>,
     config_active: bool,
     config_daytime_ms: u64,
     config_time_slider_hour: i64,
@@ -74,7 +52,7 @@ struct TestFutBuilder {
     is_oneshot: bool,
     logger: slog::Logger,
     counter: Arc<AtomicI32>,
-    sender: Sender<AgentMessage>,
+    sender: Arc<AgentStreamSender>,
 }
 
 impl FutBuilder for TestFutBuilder {
@@ -90,28 +68,18 @@ impl FutBuilder for TestFutBuilder {
                 ripe_core::sleep(&runtime, std::time::Duration::from_secs(5));
 
                 error!(logger, "TASK IS AWAKE");
-
-                if let Ok(_) = sender.clone().try_send(AgentMessage::Command(1)) {
-                    error!(logger, "SENT MESSAGE ONESHOT");
-                } else {
-                    error!(logger, "FAILED SENDING ONESHOT");
-                }
+                sender.send(AgentMessage::Command(1));
 
                 true
             })
         } else {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
-                error!(logger, "REPEATING {}", counter.load(Ordering::Relaxed));
+                let count = counter.load(Ordering::Relaxed);
+                error!(logger, "REPEATING {}", count);
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
-                if i == 0 {
-                    if let Ok(_) = sender.clone().try_send(AgentMessage::Command(1)) {
-                        error!(logger, "SENT MESSAGE REPEATING");
-                    } else {
-                        error!(logger, "FAILED SENDING REPEATING");
-                    }
-                }
+                sender.send(AgentMessage::Command(count));
 
                 i == 0
             })
@@ -120,6 +88,44 @@ impl FutBuilder for TestFutBuilder {
 }
 
 impl AgentTrait for TestAgent {
+    fn init(&mut self) {
+        /*
+        if let Err(e) = sender.try_send(AgentMessage::Command(0)) {
+            panic!("TestAgent - failed to send Command {}", e);
+        } else if let Err(e) = sender.try_send(AgentMessage::Command(1)) {
+            panic!("TestAgent - failed to send Command {}", e);
+        } else if lett Err(e) = sender.try_send(AgentMessage::OneshotTask(Box::new(TestFutBuilder {
+            is_oneshot: true,
+            sender: sender.clone(),
+            logger: logger.clone(),
+            counter: Arc::new(AtomicI32::new(5)),
+        }))) {
+            panic!("TestAgent - failed to send OneshotTask {}", e);
+        } else if let Err(e) = sender.try_send(AgentMessage::RepeatedTask(
+            std::time::Duration::from_secs(1),
+            Box::new(TestFutBuilder {
+                is_oneshot: false,
+                sender: sender.clone(),
+                logger: logger.clone(),
+                counter: Arc::new(AtomicI32::new(5)),
+            }),
+        )) {
+            panic!("TestAgent - failed to send RepeatedTask {}", e);
+        }
+        */
+
+        let sender_arc = self.sender.clone();
+        sender_arc.clone().send(AgentMessage::RepeatedTask(
+            std::time::Duration::from_secs(1),
+            Box::new(TestFutBuilder {
+                is_oneshot: false,
+                sender: sender_arc.clone(),
+                logger: self.logger.clone(),
+                counter: Arc::new(AtomicI32::new(5)),
+            }),
+        ));
+    }
+
     fn handle_data(&mut self, data: &SensorDataMessage) {
         debug!(self.logger, "Received data: {:?}", data);
     }
@@ -128,7 +134,7 @@ impl AgentTrait for TestAgent {
         let val = AgentUIDecorator::transform_cmd_slider(payload);
         if val >= 0.0 && val <= 1.0 {
             self.val = val;
-            info!(self.logger, "Received cmd val: {}", self.val);
+            //  info!(self.logger, "Received cmd val: {}", self.val);
         }
     }
 
@@ -239,6 +245,7 @@ impl AgentTrait for TestAgent {
         self.config_time_slider_hour = time_slider_hour;
         self.config_time_slider_min = time_slider_min;
         self.config_int_slider = int_slider;
+        /*
         info!(
             self.logger,
             "Set config: {}, {}, {}, {}, {}",
@@ -248,6 +255,7 @@ impl AgentTrait for TestAgent {
             time_slider_min,
             int_slider
         );
+         */
         true
     }
 }

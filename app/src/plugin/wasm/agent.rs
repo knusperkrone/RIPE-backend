@@ -74,6 +74,8 @@ impl std::fmt::Debug for WasmAgent {
 }
 
 impl AgentTrait for WasmAgent {
+    fn init(&mut self) {}
+
     fn handle_data(&mut self, data: &ripe_core::SensorDataMessage) {
         if self.has_error() {
             return;

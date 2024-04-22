@@ -550,8 +550,8 @@ mod test {
     async fn test_rest_unregister_sensor() {
         // Prepare
         let (observer, sensor_observer) = build_mocked_observer().await;
-        let routes = routes(&observer).1;
-        let sensor = sensor_observer.register(None).await.unwrap();
+        let _routes = routes(&observer).1;
+        let _sensor = sensor_observer.register(None).await.unwrap();
 
         // Execute
         // TOOD: FIx

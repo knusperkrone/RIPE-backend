@@ -54,12 +54,14 @@ pub enum AgentState {
 }
 
 pub trait AgentTrait: std::fmt::Debug + Send + Sync {
-    // event busness logic
+    fn init(&mut self);
+
+    // event buisness logic
     fn handle_data(&mut self, data: &SensorDataMessage);
     fn handle_cmd(&mut self, payload: i64);
 
     // ui related
-    fn render_ui(&self, data: &SensorDataMessage, timezone: chrono_tz::Tz) -> AgentUI;
+    fn render_ui(&self, args: &SensorDataMessage, timezone: chrono_tz::Tz) -> AgentUI;
 
     // framework logic
     fn state(&self) -> AgentState;
@@ -70,7 +72,7 @@ pub trait AgentTrait: std::fmt::Debug + Send + Sync {
     fn config(&self, timezone: chrono_tz::Tz) -> HashMap<String, (String, AgentConfigType)>; // key, translation, ui
     fn set_config(
         &mut self,
-        values: &HashMap<String, AgentConfigType>,
+        args: &HashMap<String, AgentConfigType>,
         timezone: chrono_tz::Tz,
     ) -> bool;
 }

@@ -5,7 +5,7 @@ mod logging;
 mod native;
 mod wasm;
 
-use ripe_core::error::AgentError;
+use ripe_core::{error::AgentError, AgentStream};
 use std::{collections::HashMap, ffi::OsString, path::Path, time::SystemTime};
 use test::MockAgent;
 
@@ -14,8 +14,7 @@ pub(crate) use native::NativeAgentFactory;
 pub(crate) use wasm::WasmAgentFactory;
 
 use crate::{logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
-use ripe_core::AgentMessage;
-use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Clone)]
 pub struct AgentLib(std::sync::Arc<dyn std::any::Any>);
@@ -29,8 +28,7 @@ pub trait AgentFactoryTrait {
         agent_name: &str,
         domain: &str,
         state_json: Option<&str>,
-        plugin_sender: Sender<AgentMessage>,
-        plugin_receiver: Receiver<AgentMessage>,
+        stream: AgentStream,
     ) -> Result<Agent, ripe_core::error::AgentError>;
     fn agents(&self) -> Vec<&String>;
     fn load_plugin_file(&mut self, path: &Path) -> Option<String>;
@@ -90,7 +88,6 @@ impl AgentFactory {
         for (path, modified_time) in entries {
             if let Some(old_time) = self.timestamps.get(path.as_os_str()) {
                 if old_time == &modified_time {
-                    debug!(APP_LOGGING, "Skipped updating {:?}", path);
                     continue;
                 }
             }
@@ -114,35 +111,23 @@ impl AgentFactory {
         domain: &str,
         state_json: Option<&str>,
     ) -> Result<Agent, ripe_core::error::AgentError> {
-        let (plugin_sender, plugin_receiver) = channel::<AgentMessage>(256);
+        let stream = AgentStream::new(APP_LOGGING.clone());
         if cfg!(test) && agent_name == "MockAgent" {
             Ok(Agent::new(
                 self.sender.clone(),
-                plugin_receiver,
+                stream.receiver,
                 sensor_id,
                 domain.to_owned(),
                 AgentLib(std::sync::Arc::new(0)),
                 agent_name.to_owned(),
-                Box::new(MockAgent::new(plugin_sender)),
+                Box::new(MockAgent::new(stream.sender)),
             ))
         } else if self.wasm_factory.has_agent(agent_name) {
-            self.wasm_factory.create_agent(
-                sensor_id,
-                agent_name,
-                domain,
-                state_json,
-                plugin_sender,
-                plugin_receiver,
-            )
+            self.wasm_factory
+                .create_agent(sensor_id, agent_name, domain, state_json, stream)
         } else if self.native_factory.has_agent(agent_name) {
-            self.native_factory.create_agent(
-                sensor_id,
-                agent_name,
-                domain,
-                state_json,
-                plugin_sender,
-                plugin_receiver,
-            )
+            self.native_factory
+                .create_agent(sensor_id, agent_name, domain, state_json, stream)
         } else {
             Err(AgentError::InvalidIdentifier(format!(
                 "Agent not found {}",

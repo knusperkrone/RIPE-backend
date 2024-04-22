@@ -3,21 +3,23 @@ mod ticker;
 
 use crate::{error::WasmPluginError, logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
 use parking_lot::{Mutex, RwLock};
-use ripe_core::{error::AgentError, AgentMessage, AgentTrait, SensorDataMessage};
-use std::fs::{self, File};
-use std::io::Read;
-use std::path::Path;
-use std::sync::Arc;
-use std::{collections::HashMap, ffi::OsStr};
+use ripe_core::{error::AgentError, AgentStream, AgentStreamSender, AgentTrait, SensorDataMessage};
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    fs::{self, File},
+    io::Read,
+    path::Path,
+    sync::Arc,
+};
 use ticker::TimerFuture;
-use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use wasmer::{
     imports, wat2wasm, AsStoreMut, Function, FunctionEnv, Instance, Memory, MemoryType, Module,
     Store, TypedFunction, WasmTypeList,
 };
 
 use self::agent::WasmAgent;
-
 use super::{Agent, AgentFactoryTrait, AgentLib};
 
 #[derive(Clone)]
@@ -54,8 +56,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
         agent_name: &str,
         domain: &str,
         state_json: Option<&str>,
-        plugin_sender: Sender<AgentMessage>,
-        plugin_receiver: Receiver<AgentMessage>,
+        stream: AgentStream,
     ) -> Result<Agent, AgentError> {
         let module = self
             .libraries
@@ -65,7 +66,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
         let proxy = self
             .build_wasm_agent(
                 module,
-                plugin_sender,
+                stream.sender,
                 sensor_id,
                 agent_name,
                 state_json,
@@ -77,7 +78,7 @@ impl AgentFactoryTrait for WasmAgentFactory {
 
         Ok(Agent::new(
             self.agent_sender.clone(),
-            plugin_receiver,
+            stream.receiver,
             sensor_id,
             domain.to_owned(),
             AgentLib(module.clone()),
@@ -141,7 +142,7 @@ impl WasmAgentFactory {
         }
 
         let module = Module::new(&self.store.write().as_store_mut(), bytes)?;
-        let (mock_sender, _mock_receiver) = channel::<AgentMessage>(64);
+        let mock_sender = AgentStreamSender::sentinel();
         let test_agent = self.build_wasm_agent(&module, mock_sender, 0, agent_name, None, true)?;
         if self.test_agent_contract(test_agent) {
             self.libraries
@@ -169,7 +170,7 @@ impl WasmAgentFactory {
     fn build_wasm_agent(
         &self,
         module: &Module,
-        _sender: Sender<AgentMessage>,
+        _sender: AgentStreamSender,
         sensor_id: i32,
         agent_name: &str,
         old_state_opt: Option<&str>,
@@ -336,9 +337,8 @@ mod stubs {
             PLUGIN_LOGGING,
             "sensor[{}][{}] sleep for {}", env.sensor_id, env.agent_name, ms
         );
-        futures::executor::block_on(async move {
-            TimerFuture::new(std::time::Duration::from_millis(ms)).await
-        });
+        tokio::runtime::Handle::current()
+            .block_on(TimerFuture::new(std::time::Duration::from_millis(ms)));
     }
 
     pub fn read_c_str(store: &impl AsStoreRef, memory: &Memory, mut ptr: u64) -> Option<String> {

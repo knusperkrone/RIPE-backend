@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate slog;
 
-use chrono::{DateTime, Duration, Offset, Timelike, Utc};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use chrono_tz::Tz;
 use ripe_core::*;
 use serde::{Deserialize, Serialize};
@@ -10,10 +10,12 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, Mutex, MutexGuard, RwLock,
+        Arc, RwLock,
     },
 };
-use tokio::sync::mpsc::Sender;
+
+mod time;
+use crate::time::*;
 
 const NAME: &str = "TimeAgent";
 const VERSION_CODE: u32 = 2;
@@ -24,10 +26,11 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
  * Implementation
  */
 
-fn build_agent(
+#[no_mangle]
+extern "Rust" fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
-    sender: Sender<AgentMessage>,
+    sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     let mut inner_agent = TimeAgentInner::default();
     if let Some(config_json) = config {
@@ -42,14 +45,13 @@ fn build_agent(
         }
     }
 
-    inner_agent.logger = logger;
-    inner_agent.sender = sender;
-    let agent = TimeAgent {
-        inner: Arc::new(inner_agent),
-    };
-    agent.dispatch_task();
-
-    Box::new(agent)
+    Box::new(TimeAgent {
+        inner: Arc::new(TimeAgentInner {
+            logger: logger,
+            sender: sender,
+            ..inner_agent
+        }),
+    })
 }
 
 #[derive(Debug)]
@@ -57,45 +59,11 @@ pub struct TimeAgent {
     inner: Arc<TimeAgentInner>,
 }
 
-impl TimeAgent {
-    fn ms_add_offset(&self, ms: u32, tz: Tz) -> u32 {
-        let offset_ms = Utc::now()
-            .with_timezone(&tz)
-            .offset()
-            .fix()
-            .utc_minus_local()
-            * 1000;
-
-        let added = ms as i32 - offset_ms;
-        if added < 0 {
-            (DAY_MS as i32 + added) as u32
-        } else if added > DAY_MS as i32 {
-            (added - DAY_MS as i32) as u32
-        } else {
-            added as u32
-        }
-    }
-
-    fn ms_clear_offset(&self, ms: u32, tz: Tz) -> u32 {
-        let offset_ms = Utc::now()
-            .with_timezone(&tz)
-            .offset()
-            .fix()
-            .utc_minus_local()
-            * 1000;
-
-        let added = ms as i32 + offset_ms;
-        if added < 0 {
-            (DAY_MS as i32 + added) as u32
-        } else if added > DAY_MS as i32 {
-            (added - DAY_MS as i32) as u32
-        } else {
-            added as u32
-        }
-    }
-}
-
 impl AgentTrait for TimeAgent {
+    fn init(&mut self) {
+        self.dispatch_task();
+    }
+
     fn handle_data(&mut self, _data: &SensorDataMessage) {
         // no-op
     }
@@ -118,8 +86,8 @@ impl AgentTrait for TimeAgent {
     }
 
     fn render_ui(&self, _: &SensorDataMessage, timezone: Tz) -> AgentUI {
-        let start_time_ms = self.ms_add_offset(self.inner.start_time_ms(), timezone);
-        let end_time_ms = self.ms_add_offset(self.inner.end_time_ms(), timezone);
+        let start_time_ms = ms_add_offset(self.inner.start_time_ms(), timezone);
+        let end_time_ms = ms_add_offset(self.inner.end_time_ms(), timezone);
         AgentUI {
             decorator: AgentUIDecorator::TimePane(60),
             state: self.state(),
@@ -157,7 +125,7 @@ impl AgentTrait for TimeAgent {
             (
                 format!("Startuhrzeit ({})", timezone),
                 AgentConfigType::DayTime(
-                    self.ms_add_offset(self.inner.start_time_ms(), timezone) as u64
+                    ms_add_offset(self.inner.start_time_ms(), timezone) as u64
                 ),
             ),
         );
@@ -187,7 +155,7 @@ impl AgentTrait for TimeAgent {
             return false;
         }
         if let AgentConfigType::DayTime(val) = &values["02_start_time"] {
-            time = self.ms_clear_offset(*val as u32, timezone);
+            time = ms_clear_offset(*val as u32, timezone);
         } else {
             error!(self.inner.logger, "No start_time");
             return false;
@@ -211,16 +179,12 @@ impl AgentTrait for TimeAgent {
 impl TimeAgent {
     fn dispatch_task(&self) {
         let task_inner = self.inner.clone();
-        ripe_core::send_payload(
-            &self.inner.logger,
-            &self.inner.sender,
-            AgentMessage::RepeatedTask(
-                std::time::Duration::from_secs(1),
-                Box::new(TickerFutBuilder {
-                    inner: task_inner.clone(),
-                }),
-            ),
-        );
+        self.inner.sender.send(AgentMessage::RepeatedTask(
+            std::time::Duration::from_secs(1),
+            Box::new(TickerFutBuilder {
+                inner: task_inner.clone(),
+            }),
+        ));
     }
 }
 
@@ -246,11 +210,9 @@ pub struct TimeAgentInner {
     #[serde(skip, default = "ripe_core::logger_sentinel")]
     logger: slog::Logger,
     #[serde(skip, default = "ripe_core::sender_sentinel")]
-    sender: Sender<AgentMessage>,
+    sender: AgentStreamSender,
     #[serde(skip, default)]
     last_state: RwLock<AgentState>,
-    #[serde(skip, default)]
-    last_command_mtx: Mutex<i32>,
     start_time_ms: AtomicU32,
     end_time_ms: AtomicU32,
 }
@@ -261,7 +223,6 @@ impl Default for TimeAgentInner {
             logger: ripe_core::logger_sentinel(),
             sender: ripe_core::sender_sentinel(),
             last_state: RwLock::new(AgentState::default()),
-            last_command_mtx: Mutex::new(CMD_INACTIVE),
             start_time_ms: AtomicU32::new(0),
             end_time_ms: AtomicU32::new(0),
         }
@@ -271,53 +232,48 @@ impl Default for TimeAgentInner {
 impl TimeAgentInner {
     fn tick(&self) {
         let curr_state = *self.last_state.read().unwrap();
-        if let AgentState::Executing(until) | AgentState::Forced(until) = curr_state {
+        if let AgentState::Executing(until)
+        | AgentState::Forced(until)
+        | AgentState::Stopped(until) = curr_state
+        {
             if until > Utc::now() {
                 return; // still forced
-            }
-        } else if let AgentState::Stopped(until) = curr_state {
-            if until > Utc::now() {
-                return; // still paused
             }
         }
 
         return if self.now_in_range() {
-            let guard = self.last_command_mtx.lock().unwrap();
-            self.set_state(guard, AgentState::Executing(self.until()));
+            self.set_state(AgentState::Executing(self.until()));
         } else {
-            let guard = self.last_command_mtx.lock().unwrap();
-            self.set_state(guard, AgentState::Ready);
+            self.set_state(AgentState::Ready);
         };
     }
 
     fn force(&self, until: DateTime<Utc>) {
-        let guard = self.last_command_mtx.lock().unwrap();
         let curr_state = *self.last_state.read().unwrap();
 
         if let AgentState::Executing(_) = curr_state {
             // no-op
         } else if let AgentState::Forced(_) | AgentState::Ready = curr_state {
-            self.set_state(guard, AgentState::Forced(until));
+            self.set_state(AgentState::Forced(until));
         } else if let AgentState::Stopped(_) = curr_state {
             if self.now_in_range() {
-                self.set_state(guard, AgentState::Executing(self.until()));
+                self.set_state(AgentState::Executing(self.until()));
             } else {
-                self.set_state(guard, AgentState::Ready);
+                self.set_state(AgentState::Ready);
             }
         }
     }
 
     fn stop(&self, until: DateTime<Utc>) {
-        let guard = self.last_command_mtx.lock().unwrap();
         let curr_state = *self.last_state.read().unwrap();
 
         if let AgentState::Executing(_) = curr_state {
-            self.set_state(guard, AgentState::Stopped(until));
+            self.set_state(AgentState::Stopped(until));
         } else if let AgentState::Forced(_) = curr_state {
             if self.now_in_range() {
-                self.set_state(guard, AgentState::Executing(self.until()));
+                self.set_state(AgentState::Executing(self.until()));
             } else {
-                self.set_state(guard, AgentState::Ready);
+                self.set_state(AgentState::Ready);
             }
         }
     }
@@ -335,22 +291,22 @@ impl TimeAgentInner {
         self.end_time_ms.store(end_time_ms, Ordering::Relaxed);
     }
 
-    fn set_state(&self, mut last_cmd_guard: MutexGuard<i32>, state: AgentState) {
-        let last_cmd = *last_cmd_guard;
+    fn set_state(&self, state: AgentState) {
         let curr_cmd = match state {
             AgentState::Executing(_) | AgentState::Forced(_) => CMD_ACTIVE,
             _ => CMD_INACTIVE,
         };
-        *self.last_state.write().unwrap() = state;
 
-        if last_cmd != curr_cmd {
-            *last_cmd_guard = curr_cmd;
-            send_payload(&self.logger, &self.sender, AgentMessage::Command(curr_cmd));
-        }
+        *self.last_state.write().unwrap() = state;
+        self.sender.send(AgentMessage::Command(curr_cmd));
     }
 
     fn cmd(&self) -> i32 {
-        *self.last_command_mtx.lock().unwrap()
+        let guard = self.last_state.read().unwrap();
+        match *guard {
+            AgentState::Executing(_) | AgentState::Forced(_) => CMD_ACTIVE,
+            _ => CMD_INACTIVE,
+        }
     }
 
     fn until(&self) -> DateTime<Utc> {

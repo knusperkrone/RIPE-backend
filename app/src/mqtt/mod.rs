@@ -1,20 +1,25 @@
 use async_recursion::async_recursion;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
+    Arc,
+};
 
 use crate::config::CONFIG;
 use crate::error::MQTTError;
 use crate::logging::APP_LOGGING;
-use crate::sensor::handle::SensorHandle;
-use crate::sensor::SensorMessage;
-use futures::future::{AbortHandle, Abortable};
+use crate::sensor::{handle::SensorHandle, SensorMessage};
 use ripe_core::SensorDataMessage;
 use rumqttc::{
     AsyncClient, Event, EventLoop, LastWill, MqttOptions, Packet, Publish, QoS, Transport,
 };
 
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{RwLock, RwLockReadGuard};
+use tokio::{
+    sync::{
+        mpsc::UnboundedSender,
+        {RwLock, RwLockReadGuard},
+    },
+    task::JoinHandle,
+};
 
 #[cfg(test)]
 mod test;
@@ -54,7 +59,7 @@ pub struct MqttSensorClient {
 }
 
 struct MqttSensorClientInner {
-    cli: RwLock<Option<(AsyncClient, AbortHandle)>>,
+    cli: RwLock<Option<(AsyncClient, JoinHandle<()>)>>,
     broker_index: AtomicUsize,
     is_connected: AtomicBool,
     sender: MqttSender,
@@ -102,21 +107,16 @@ impl MqttSensorClient {
 
 impl Drop for MqttSensorClientInner {
     fn drop(&mut self) {
-        /*
-        use tokio::runtime::Handle;
-        if let Ok(handle) = Handle::try_current() {
-            let guard = handle.block_on(self.cli.read());
-            if let Some((client, abort_handle)) = guard.as_ref() {
+        if let Ok(guard) = self.cli.try_read() {
+            if let Some((_, abort_handle)) = guard.as_ref() {
                 abort_handle.abort();
-                let _ = handle.block_on(client.disconnect());
             } else {
-                warn!(
+                crit!(
                     APP_LOGGING,
                     "No async context, client may leak connection ressources"
                 );
             }
         }
-         */
     }
 }
 
@@ -159,39 +159,31 @@ impl MqttSensorClientInner {
         self.is_connected.store(true, Relaxed);
     }
 
-    fn listen(self: Arc<MqttSensorClientInner>, mut mqtt_stream: EventLoop) -> AbortHandle {
-        let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        let future_self = self.clone();
-
-        tokio::spawn(Abortable::new(
-            async move {
-                while let Ok(event) = mqtt_stream.poll().await {
-                    if let Event::Incoming(Packet::Publish(msg)) = event {
-                        debug!(
-                            APP_LOGGING,
-                            "Received topic: {}, {:?}",
-                            msg.topic,
-                            std::str::from_utf8(&msg.payload)
-                        );
-                        if let Err(e) = Self::on_sensor_message(&future_self.sender, msg) {
-                            error!(APP_LOGGING, "Received message threw error: {}", e);
-                        }
+    fn listen(self: Arc<MqttSensorClientInner>, mut mqtt_stream: EventLoop) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Ok(event) = mqtt_stream.poll().await {
+                if let Event::Incoming(Packet::Publish(msg)) = event {
+                    debug!(
+                        APP_LOGGING,
+                        "Received topic: {}, {:?}",
+                        msg.topic,
+                        std::str::from_utf8(&msg.payload)
+                    );
+                    if let Err(e) = Self::on_sensor_message(&self.sender, msg) {
+                        error!(APP_LOGGING, "Received message threw error: {}", e);
                     }
                 }
+            }
 
-                self.is_connected.store(false, Relaxed);
-                error!(APP_LOGGING, "MQTT disconnected - reconnecting");
+            self.is_connected.store(false, Relaxed);
+            error!(APP_LOGGING, "MQTT disconnected - reconnecting");
 
-                Self::connect(future_self.clone()).await;
-                while let Err(e) = future_self.sender.send((0, SensorMessage::Reconnect)) {
-                    warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-            },
-            abort_registration,
-        ));
-
-        abort_handle
+            Self::connect(self.clone()).await;
+            while let Err(e) = self.sender.send((0, SensorMessage::Reconnect)) {
+                warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        })
     }
 
     pub(crate) fn is_connected(&self) -> bool {
@@ -315,7 +307,7 @@ impl MqttSensorClientInner {
 
     async fn client(
         &self,
-    ) -> Result<RwLockReadGuard<Option<(AsyncClient, AbortHandle)>>, MQTTError> {
+    ) -> Result<RwLockReadGuard<Option<(AsyncClient, JoinHandle<()>)>>, MQTTError> {
         if !self.is_connected() {
             Err(MQTTError::NotConnected())
         } else {

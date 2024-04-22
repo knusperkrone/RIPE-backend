@@ -9,6 +9,13 @@ pub trait FutBuilder: Send + Sync {
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>>;
 }
 
+impl std::fmt::Debug for dyn FutBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FutBuilder").finish()
+    }
+}
+
+#[derive(Debug)]
 pub enum AgentMessage {
     Command(i32),
     OneshotTask(Box<dyn FutBuilder>),

@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use chrono_tz::Tz;
 use ripe_core::*;
-use tokio::sync::mpsc::Sender;
 
 const NAME: &str = "PercentAgent";
 const VERSION_CODE: u32 = 1;
@@ -16,11 +15,11 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 /*
  * Implementation
  */
-
-fn build_agent(
+#[no_mangle]
+extern "Rust" fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
-    sender: Sender<AgentMessage>,
+    sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     let mut agent = PercentAgent::default();
     if let Some(config_json) = config {
@@ -29,9 +28,11 @@ fn build_agent(
         }
     }
 
-    agent.logger = logger;
-    agent.sender = sender;
-    Box::new(agent)
+    Box::new(PercentAgent {
+        logger,
+        sender,
+        ..agent
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -40,7 +41,7 @@ struct PercentAgent {
     #[serde(skip, default = "ripe_core::logger_sentinel")]
     logger: slog::Logger,
     #[serde(skip, default = "ripe_core::sender_sentinel")]
-    sender: Sender<AgentMessage>,
+    sender: AgentStreamSender,
 }
 
 impl Default for PercentAgent {
@@ -54,8 +55,10 @@ impl Default for PercentAgent {
 }
 
 impl AgentTrait for PercentAgent {
+    fn init(&mut self) {}
+
     fn handle_data(&mut self, _data: &SensorDataMessage) {
-        // nop
+        // no-op
     }
 
     fn handle_cmd(&mut self, mut payload: i64) {
@@ -66,7 +69,7 @@ impl AgentTrait for PercentAgent {
         }
 
         self.val = payload as i32;
-        send_payload(&self.logger, &self.sender, AgentMessage::Command(self.val));
+        self.sender.send(AgentMessage::Command(self.val));
     }
 
     fn render_ui(&self, _data: &SensorDataMessage, _timezone: Tz) -> AgentUI {
@@ -109,7 +112,7 @@ impl AgentTrait for PercentAgent {
 
         if !active {
             self.val = 0;
-            send_payload(&self.logger, &self.sender, AgentMessage::Command(self.val));
+            self.sender.send(AgentMessage::Command(self.val));
         }
         true
     }

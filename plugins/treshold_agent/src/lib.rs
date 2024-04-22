@@ -14,7 +14,6 @@ use std::{
         Arc, RwLock,
     },
 };
-use tokio::sync::mpsc::Sender;
 
 const NAME: &str = "ThresholdAgent";
 const VERSION_CODE: u32 = 1;
@@ -25,10 +24,11 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
  * Implementation
  */
 
-fn build_agent(
+#[no_mangle]
+extern "Rust" fn build_agent(
     config: Option<&str>,
     logger: slog::Logger,
-    sender: Sender<AgentMessage>,
+    sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     let mut agent: ThresholdAgent = ThresholdAgent::default();
     if let Some(config_json) = config {
@@ -41,21 +41,21 @@ fn build_agent(
                 "{} coulnd't get restored from config {}", NAME, config_json
             );
         }
-    } else {
-        debug!(logger, "Created new {}", NAME);
-    }
+    };
 
-    agent.logger = logger;
-    agent.sender = sender;
-    Box::new(agent)
+    Box::new(ThresholdAgent {
+        logger,
+        sender: Arc::new(sender),
+        ..agent
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ThresholdAgent {
     #[serde(skip, default = "ripe_core::logger_sentinel")]
     logger: slog::Logger,
-    #[serde(skip, default = "ripe_core::sender_sentinel")]
-    sender: Sender<AgentMessage>,
+    #[serde(skip, default = "ripe_core::sender_sentinel_arc")]
+    sender: Arc<AgentStreamSender>,
     #[serde(skip)]
     task_cell: RwLock<ThresholdTask>,
     state: AgentState,
@@ -81,7 +81,7 @@ impl Default for ThresholdAgent {
     fn default() -> Self {
         ThresholdAgent {
             logger: ripe_core::logger_sentinel(),
-            sender: ripe_core::sender_sentinel(),
+            sender: ripe_core::sender_sentinel_arc(),
             task_cell: RwLock::default(),
             state: AgentState::Ready.into(),
             min_threshold: 20,
@@ -94,6 +94,8 @@ impl Default for ThresholdAgent {
 }
 
 impl AgentTrait for ThresholdAgent {
+    fn init(&mut self) {}
+
     fn handle_data(&mut self, data: &SensorDataMessage) {
         if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
@@ -187,10 +189,10 @@ impl AgentTrait for ThresholdAgent {
     fn cmd(&self) -> i32 {
         if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
-                return 1;
+                return CMD_ACTIVE;
             }
         }
-        0
+        CMD_INACTIVE
     }
 
     fn deserialize(&self) -> String {
@@ -282,9 +284,9 @@ struct ThresholdTaskBuilder {
 struct ThresholdTaskInner {
     aborted: Arc<AtomicBool>,
     state: AtomicCell<AgentState>,
+    sender: Arc<AgentStreamSender>,
     until: AtomicCell<DateTime<Utc>>,
     logger: slog::Logger,
-    sender: Sender<AgentMessage>,
     is_forced: bool,
 }
 
@@ -296,7 +298,7 @@ impl Default for ThresholdTask {
                 state: AtomicCell::new(AgentState::Ready),
                 until: AtomicCell::new(Utc::now()),
                 logger: ripe_core::logger_sentinel(),
-                sender: ripe_core::sender_sentinel(),
+                sender: Arc::new(ripe_core::sender_sentinel()),
                 is_forced: false,
             }),
         }
@@ -309,24 +311,17 @@ impl ThresholdTask {
         is_forced: bool,
         until: DateTime<Utc>,
         logger: slog::Logger,
-        sender: Sender<AgentMessage>,
+        sender: Arc<AgentStreamSender>,
     ) {
         if self.is_active() {
-            // racecondtion, between busy while loop and this set
-            // 500ms window should be enough, as thread will sleep.
-            let race_window = self.task_config.until.load() - Utc::now();
-            if race_window.num_milliseconds() > 500 {
-                // internal update and broadcast new value
-                let running_state = if is_forced {
-                    AgentState::Forced(until)
-                } else {
-                    AgentState::Executing(until)
-                };
-                self.task_config.until.store(until);
-                self.task_config.state.store(running_state);
-                ripe_core::send_payload(&logger, &sender, AgentMessage::Command(CMD_ACTIVE));
-                return;
-            }
+            let running_state = if is_forced {
+                AgentState::Forced(until)
+            } else {
+                AgentState::Executing(until)
+            };
+            self.task_config.until.store(until);
+            self.task_config.state.store(running_state);
+            return;
         }
 
         // send new task
@@ -339,13 +334,11 @@ impl ThresholdTask {
             is_forced,
         });
 
-        send_payload(
-            &self.task_config.logger,
-            &self.task_config.sender,
-            AgentMessage::OneshotTask(Box::new(ThresholdTaskBuilder {
+        self.task_config
+            .sender
+            .send(AgentMessage::OneshotTask(Box::new(ThresholdTaskBuilder {
                 task_config: self.task_config.clone(),
-            })),
-        )
+            })));
     }
 
     pub fn abort(&mut self) {
@@ -357,13 +350,11 @@ impl ThresholdTask {
     }
 
     fn is_active(&self) -> bool {
-        return if let AgentState::Executing(_) | AgentState::Forced(_) =
-            self.task_config.state.load()
-        {
+        if let AgentState::Executing(_) | AgentState::Forced(_) = self.task_config.state.load() {
             true
         } else {
             false
-        };
+        }
     }
 }
 
@@ -375,19 +366,15 @@ impl FutBuilder for ThresholdTaskBuilder {
         let config = self.task_config.clone();
         Box::pin(async move {
             let start = Utc::now();
-
             let running_state = if config.is_forced {
                 AgentState::Forced(config.until.load())
             } else {
                 AgentState::Executing(config.until.load())
             };
-            config.state.store(running_state);
 
-            ripe_core::send_payload(
-                &config.logger,
-                &config.sender,
-                AgentMessage::Command(CMD_ACTIVE),
-            );
+            config.state.store(running_state);
+            config.sender.send(AgentMessage::Command(CMD_ACTIVE));
+
             debug!(
                 config.logger,
                 "{} started Task until {}",
@@ -398,13 +385,9 @@ impl FutBuilder for ThresholdTaskBuilder {
             while Utc::now() < config.until.load() && !config.aborted.load(Ordering::Relaxed) {
                 ripe_core::sleep(&runtime, std::time::Duration::from_secs(1));
             }
-            // Race condition
+
             config.state.store(AgentState::Ready);
-            ripe_core::send_payload(
-                &config.logger,
-                &config.sender,
-                AgentMessage::Command(CMD_INACTIVE),
-            );
+            config.sender.send(AgentMessage::Command(CMD_INACTIVE));
 
             let delta_secs = (Utc::now() - start).num_seconds();
             if config.aborted.load(Ordering::Relaxed) {

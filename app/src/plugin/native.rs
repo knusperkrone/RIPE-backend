@@ -1,15 +1,15 @@
-use super::logging::PLUGIN_LOGGING;
 use super::AgentLib;
 use super::{Agent, AgentFactoryTrait};
 use crate::error::PluginError;
 use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorMQTTCommand;
 use libloading::Library;
-use ripe_core::{error::AgentError, AgentMessage, AgentTrait, PluginDeclaration};
+use ripe_core::{error::AgentError, AgentTrait, PluginDeclaration};
+use ripe_core::{AgentStream, AgentStreamSender};
 use std::path::Path;
 use std::sync::Arc;
 use std::{collections::HashMap, fmt::Debug};
-use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug)]
 pub struct NativeAgentFactory {
@@ -24,17 +24,16 @@ impl AgentFactoryTrait for NativeAgentFactory {
         agent_name: &str,
         domain: &str,
         state_json: Option<&str>,
-        plugin_sender: Sender<AgentMessage>,
-        plugin_receiver: Receiver<AgentMessage>,
+        stream: AgentStream,
     ) -> Result<Agent, AgentError> {
         // UNSAFE: Build agent from checked native lib
         let native_agent =
-            unsafe { self.build_native_agent(agent_name, state_json, plugin_sender) };
+            unsafe { self.build_native_agent(agent_name, state_json, stream.sender) };
 
         if let Some((plugin_agent, lib)) = native_agent {
             Ok(Agent::new(
                 self.iac_sender.clone(),
-                plugin_receiver,
+                stream.receiver,
                 sensor_id,
                 domain.to_owned(),
                 AgentLib(lib),
@@ -99,8 +98,8 @@ impl NativeAgentFactory {
             .get::<*mut PluginDeclaration>(b"plugin_declaration\0")?
             .read();
 
-        if decl.rustc_version > ripe_core::RUSTC_VERSION
-            || decl.core_version > ripe_core::CORE_VERSION
+        if decl.rustc_version != ripe_core::RUSTC_VERSION
+            || decl.core_version != ripe_core::CORE_VERSION
         {
             // version checks to prevent accidental ABI incompatibilities
             return Err(PluginError::CompilerMismatch(
@@ -130,7 +129,7 @@ impl NativeAgentFactory {
         &self,
         agent_name: &str,
         state_json: Option<&str>,
-        plugin_sender: Sender<AgentMessage>,
+        plugin_sender: AgentStreamSender,
     ) -> Option<(Box<dyn AgentTrait>, Arc<Library>)> {
         if let Some(library) = self.libraries.get(agent_name) {
             let decl = library
@@ -138,7 +137,7 @@ impl NativeAgentFactory {
                 .unwrap()
                 .read(); // Panic is impossible
 
-            let logger = PLUGIN_LOGGING.clone();
+            let logger = APP_LOGGING.clone();
             let proxy = (decl.agent_builder)(state_json, logger, plugin_sender);
             Some((proxy, library.clone()))
         } else {

@@ -4,19 +4,21 @@ extern crate slog;
 mod agent;
 pub mod error;
 mod messaging;
+mod stream;
 mod stubs;
 
 pub use agent::*;
 pub use messaging::*;
+pub use stream::*;
 pub use stubs::*;
 
 pub static CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static RUSTC_VERSION: &str = env!("RUSTC_VERSION");
 
-type AgentBuilder = fn(
+type AgentBuilder = extern "Rust" fn(
     config: Option<&str>,
     logger: slog::Logger,
-    sender: tokio::sync::mpsc::Sender<AgentMessage>,
+    sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait>;
 
 pub struct PluginDeclaration {

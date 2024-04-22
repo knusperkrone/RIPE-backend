@@ -5,7 +5,7 @@ database:
   url: "postgres://localhost:localhost@localhost:5432/postgres"
 
 plugin:
-  dir: "./target/debug"
+  dir: "/Users/knukro/Coding/priv/RIPE/backend/target/debug"
 
 mqtt:
   client_id: "master-dev"
@@ -16,14 +16,11 @@ mqtt:
   brokers:
     - internal:
         connection:
-          scheme: "tcp"
-          host: "broker.hivemq.com"
-          port: 1883
+          scheme: "wss"
+          host: "wss01.knukro.com"
+          port: 443
       external:
         connections:
-          - scheme: "tcp"
-            host: "broker.hivemq.com"
-            port: 1883
           - scheme: "wss"
-            host: "broker.hivemq.com"
-            port: 8884
+            host: "wss01.knukro.com"
+            port: 443

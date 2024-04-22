@@ -21,19 +21,18 @@ libloading = "*"
 parking_lot = "*"
 rand = "*"
 chrono-tz = "*"
-async-recursion = "1.0.5"
-base64 = "0.21"
+base64 = "0.22"
 ctrlc = "3.4"
 dotenv = "0.15" 
-env_logger = "0.10"
-notify = "6.0"
-rumqttc = { version = "0.23", features = [ "websocket" , "use-rustls" ] }
+env_logger = "0.11.3"
+notify = "6.1"
+rumqttc = { version = "0.24", features = [ "websocket" , "use-rustls" ] }
 serde_json = "1" 
 sqlx = { version = "0.7", features = [ "postgres", "macros", "migrate", "chrono", "runtime-tokio-rustls" ] }
 sloggers = "2"
 thiserror = "1.0"
-uuid = { version = "1.6", features = [ "v4", "fast-rng" ] }
-utoipa-swagger-ui = "3"
-warp = "0.3.6"
+uuid = { version = "1.8", features = [ "v4", "fast-rng" ] }
+utoipa-swagger-ui = "6"
+warp = "0.3.7"
 wasmer = "3"
 yaml-rust = "0.4"

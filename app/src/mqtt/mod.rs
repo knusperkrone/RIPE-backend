@@ -1,4 +1,3 @@
-use async_recursion::async_recursion;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
     Arc,
@@ -127,36 +126,37 @@ impl MqttSensorClientInner {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    #[async_recursion]
     pub async fn connect(self: Arc<MqttSensorClientInner>) {
-        let brokers = CONFIG.brokers();
-        let i = self.broker_index.fetch_add(1, Relaxed);
-        let broker = &brokers[i % brokers.len()].internal;
+        while !self.is_connected.load(Relaxed) {
+            let brokers = CONFIG.brokers();
+            let i = self.broker_index.fetch_add(1, Relaxed);
+            let broker = &brokers[i % brokers.len()].internal;
 
-        info!(
-            APP_LOGGING,
-            "Connecting to MQTT broker: {:?}://{}:{}",
-            broker.connection.scheme,
-            broker.connection.host,
-            broker.connection.port
-        );
-        let mqttoptions = Self::build_connection(broker).expect("Invalid broker uri");
-        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 1024);
+            info!(
+                APP_LOGGING,
+                "Connecting to MQTT broker: {:?}://{}:{}",
+                broker.connection.scheme,
+                broker.connection.host,
+                broker.connection.port
+            );
+            let mqttoptions = Self::build_connection(broker).expect("Invalid broker uri");
+            let (client, mut eventloop) = AsyncClient::new(mqttoptions, 1024);
 
-        match eventloop.poll().await {
-            Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                info!(APP_LOGGING, "Connected to MQTT broker");
+            match eventloop.poll().await {
+                Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                    info!(APP_LOGGING, "Connected to MQTT broker");
+                    let handle = self.clone().listen(eventloop);
+                    self.cli.write().await.replace((client, handle));
+                    self.is_connected.store(true, Relaxed);
+                    return;
+                }
+                Err(e) => {
+                    error!(APP_LOGGING, "Couldn't connect to MQTT broker {}", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                e => unreachable!("Unexpected event: {:?}", e),
             }
-            Err(e) => {
-                error!(APP_LOGGING, "Couldn't connect to MQTT broker {}", e);
-                return self.connect().await;
-            }
-            e => unreachable!("Unexpected event: {:?}", e),
-        }
-
-        let handle = self.clone().listen(eventloop);
-        self.cli.write().await.replace((client, handle));
-        self.is_connected.store(true, Relaxed);
+        } 
     }
 
     fn listen(self: Arc<MqttSensorClientInner>, mut mqtt_stream: EventLoop) -> JoinHandle<()> {

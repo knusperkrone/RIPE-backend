@@ -320,13 +320,10 @@ impl Agent {
                 delay,
             );
 
-            //let mut is_finished = tokio::false;
-
             loop {
                 let _ = TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                let handle = rt.handle().clone();
+                let handle = tokio::runtime::Handle::current();
                 let result = tokio::join!(tokio::spawn(interval_task.build_future(handle)));
 
                 let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;

@@ -16,11 +16,11 @@ mqtt:
   brokers:
     - internal:
         connection:
-          scheme: "wss"
-          host: "wss01.knukro.com"
-          port: 443
+          scheme: "tcp"
+          host: "broker.hivemq.com"
+          port: 1883
       external:
         connections:
           - scheme: "wss"
-            host: "wss01.knukro.com"
-            port: 443
+            host: "broker.hivemq.com"
+            port: 8884

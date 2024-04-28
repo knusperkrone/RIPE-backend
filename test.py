@@ -4,8 +4,8 @@ import paho.mqtt.client as mqtt
 import time as t
 
 BASE_URL = "http://127.0.0.1:8000/api"
-MQTT_URL = "wss01.knukro.com"
-MQTT_PORT = 443
+MQTT_URL = "broker.hivemq.com"
+MQTT_PORT = 8884
 
 
 sensor_id = None
@@ -21,29 +21,29 @@ def main():
         sensor_key = r.json()["key"]
 
         print(f"Registered sensor {sensor_id} {sensor_key}")
-        # r = re.post(
-        #     f"{BASE_URL}/agent/{sensor_id}",
-        #     headers={"X-KEY": sensor_key},
-        #     json={"domain": "01_Licht", "agent_name": "TimeAgent"},
-        # )
+        r = re.post(
+            f"{BASE_URL}/agent/{sensor_id}",
+            headers={"X-KEY": sensor_key},
+            json={"domain": "01_Licht", "agent_name": "TimeAgent"},
+        )
 
         r = re.post(
             f"{BASE_URL}/agent/{sensor_id}",
             headers={"X-KEY": sensor_key},
             json={"domain": "02_Wasser", "agent_name": "ThresholdAgent"},
         )
-        # print("TestAgent")
-        # r = re.post(
-        #     f"{BASE_URL}/agent/{sensor_id}",
-        #     headers={"X-KEY": sensor_key},
-        #     json={"domain": "03_Test", "agent_name": "TestAgent"},
-        # )
-        # print("PercentAgent")
-        # r = re.post(
-        #     f"{BASE_URL}/agent/{sensor_id}",
-        #     headers={"X-KEY": sensor_key},
-        #     json={"domain": "04_Lüftung", "agent_name": "PercentAgent"},
-        # )
+        print("TestAgent")
+        r = re.post(
+            f"{BASE_URL}/agent/{sensor_id}",
+            headers={"X-KEY": sensor_key},
+            json={"domain": "03_Test", "agent_name": "TestAgent"},
+        )
+        print("PercentAgent")
+        r = re.post(
+            f"{BASE_URL}/agent/{sensor_id}",
+            headers={"X-KEY": sensor_key},
+            json={"domain": "04_Lüftung", "agent_name": "PercentAgent"},
+        )
     else:
         print(f"Using sensor {sensor_id} {sensor_key}")
 

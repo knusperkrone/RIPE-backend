@@ -222,7 +222,7 @@ impl Default for TimeAgentInner {
         TimeAgentInner {
             logger: ripe_core::logger_sentinel(),
             sender: ripe_core::sender_sentinel(),
-            last_state: RwLock::new(AgentState::default()),
+            last_state: RwLock::new(AgentState::Stopped(Utc::now())),
             start_time_ms: AtomicU32::new(0),
             end_time_ms: AtomicU32::new(0),
         }

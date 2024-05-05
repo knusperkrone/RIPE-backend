@@ -289,6 +289,11 @@ impl TimeAgentInner {
             end_time_ms -= DAY_MS;
         }
         self.end_time_ms.store(end_time_ms, Ordering::Relaxed);
+        if self.now_in_range() {
+            self.set_state(AgentState::Executing(self.until()));
+        } else {
+            self.set_state(AgentState::Ready);
+        }
     }
 
     fn set_state(&self, state: AgentState) {

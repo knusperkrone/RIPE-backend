@@ -246,7 +246,7 @@ impl Agent {
             info!(APP_LOGGING, "Task was declined due too many running tasks");
             return;
         }
-        debug!(
+        info!(
             APP_LOGGING,
             "[{}][{}] Dispatching oneshot task for", agent.sensor_id, agent.agent_name
         );
@@ -263,8 +263,8 @@ impl Agent {
             );
 
             // This is actual vodoo
-            let runtime = tokio::runtime::Handle::current();
-            let res = tokio::join!(tokio::spawn(agent_task.build_future(runtime)));
+            let handle = tokio::runtime::Handle::current();
+            let res = tokio::join!(tokio::spawn(agent_task.build_future(handle)));
             if let (Err(err),) = res {
                 error!(
                     APP_LOGGING,
@@ -273,7 +273,7 @@ impl Agent {
             }
 
             task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
-            debug!(
+            info!(
                 APP_LOGGING,
                 "Ended new oneshot task for sensor: {} - active tasks: {}",
                 agent.sensor_id,
@@ -306,7 +306,7 @@ impl Agent {
             );
             return;
         }
-        debug!(
+        info!(
             APP_LOGGING,
             "[{}][{}] Dispatching repeating task", agent.sensor_id, agent.agent_name
         );
@@ -322,7 +322,6 @@ impl Agent {
 
             loop {
                 let _ = TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
-
                 let handle = tokio::runtime::Handle::current();
                 let result = tokio::join!(tokio::spawn(interval_task.build_future(handle)));
 
@@ -334,7 +333,7 @@ impl Agent {
                 match result {
                     (Ok(is_finished),) => {
                         if is_finished {
-                            return;
+                            break;
                         }
                     }
                     (Err(_),) => {
@@ -347,8 +346,8 @@ impl Agent {
                 };
                 tokio::time::sleep(delay).await;
             }
-
-            debug!(
+            
+            info!(
                 APP_LOGGING,
                 "Ended repeating task for sensor: {}", repeat_agent.sensor_id
             );

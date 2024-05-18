@@ -60,6 +60,7 @@ impl CountRecord {
 }
 
 pub mod agent;
+pub mod agent_command;
 pub mod sensor;
 pub mod sensor_data;
 pub mod sensor_log;

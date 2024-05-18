@@ -1,9 +1,8 @@
-use super::{build_response, SwaggerHostDefinition};
+use super::{build_response, query::DateQuery, SwaggerHostDefinition};
 use crate::error;
 use crate::rest::AgentStatusDto;
 use crate::sensor::observer::controller::SensorObserver;
 use crate::sensor::ConcurrentObserver;
-use chrono::DateTime;
 use chrono_tz::Tz;
 use chrono_tz::UTC;
 use ripe_core::SensorDataMessage;
@@ -242,12 +241,6 @@ fn sensor_logs(
         .boxed()
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct DataQuery {
-    from: DateTime<chrono::Utc>,
-    until: DateTime<chrono::Utc>,
-}
-
 #[utoipa::path(
     post,
     path = "/api/sensor/{id}/data",
@@ -312,8 +305,8 @@ fn sensor_data_within(
             |observer: SensorObserver,
              key_b64: String,
              sensor_id: i32,
-             query: DataQuery| async move {
-                if query.from >= query.until || query.until - query.from > chrono::Duration::days(1)
+             query: DateQuery| async move {
+                if !query.is_valid() || query.is_larger_than(chrono::Duration::days(1))
                 {
                     return build_response(Err(error::ObserverError::from(
                         error::ApiError::ArgumentError(),
@@ -323,8 +316,8 @@ fn sensor_data_within(
                     .data(
                         sensor_id,
                         &key_b64,
-                        query.from,
-                        query.until,
+                        query.from(),
+                        query.until(),
                     )
                     .await;
                 build_response(resp)

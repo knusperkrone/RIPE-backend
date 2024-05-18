@@ -5,6 +5,7 @@ use crate::config::CONFIG;
 use crate::logging::APP_LOGGING;
 use crate::models::{
     agent::{self as agent_model, AgentConfigDao},
+    agent_command::{self as agent_command_model},
     sensor::{self as sensor_model, SensorDao},
     sensor_data::{self as sensor_data_model},
     sensor_log::{self as sensor_log_model},
@@ -18,6 +19,7 @@ use notify::{Config, PollWatcher, Watcher};
 use ripe_core::AgentUI;
 use ripe_core::SensorDataMessage;
 use sqlx::PgPool;
+use std::iter::zip;
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
@@ -136,7 +138,19 @@ impl ConcurrentObserver {
                 if let Some(sensor) = sensor_opt {
                     for i in 0..max_retries {
                         match self.mqtt_client.send_cmd(&sensor).await {
-                            Ok(_) => break,
+                            Ok(_) => {
+                                if let Err(e) = agent_command_model::insert(
+                                    &self.db_conn,
+                                    item.sensor_id,
+                                    &item.domain,
+                                    item.payload,
+                                )
+                                .await
+                                {
+                                    error!(APP_LOGGING, "Failed persisting agent command: {}", e);
+                                }
+                                break;
+                            }
                             Err(e) => {
                                 error!(
                                     APP_LOGGING,
@@ -233,8 +247,7 @@ impl ConcurrentObserver {
 
     async fn persist_sensor_log(&self, sensor_id: i32, log_msg: std::string::String) {
         let max_logs = CONFIG.mqtt_log_count();
-        if let Err(e) =
-            sensor_log_model::upsert(&self.db_conn, sensor_id, log_msg, max_logs).await
+        if let Err(e) = sensor_log_model::upsert(&self.db_conn, sensor_id, log_msg, max_logs).await
         {
             error!(APP_LOGGING, "Failed persiting sensor log: {}", e);
         }
@@ -311,6 +324,22 @@ impl ConcurrentObserver {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
                 error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
             } else {
+                for (agent, command) in zip(sensor.agents(), sensor.format_cmds()) {
+                    if let Err(e) = agent_command_model::insert(
+                        &self.db_conn,
+                        sensor.id(),
+                        agent.domain(),
+                        command,
+                    )
+                    .await
+                    {
+                        error!(
+                            APP_LOGGING,
+                            "Failed persisting initial agent command: {}", e
+                        );
+                    }
+                }
+
                 debug!(
                     APP_LOGGING,
                     "Sent initial mqtt command to sensor {}",

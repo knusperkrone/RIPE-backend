@@ -1,4 +1,5 @@
-use super::{build_response, SwaggerHostDefinition};
+use super::{build_response, query::DateQuery, SwaggerHostDefinition};
+use crate::error;
 use crate::sensor::AgentObserver;
 use crate::sensor::ConcurrentObserver;
 use chrono_tz::Tz;
@@ -18,7 +19,7 @@ pub fn routes(
     #[derive(OpenApi)]
     #[openapi(
         paths(get_active_agents, register_agent, unregister_agent, on_agent_cmd, agent_config, set_agent_config),
-        components(schemas(dto::AgentDto, dto::AgentStatusDto, dto::ForceRequest, super::ErrorResponseDto,
+        components(schemas(dto::AgentDto, dto::AgentStatusDto, dto::ForceRequest, dto::AgentCommandDto, super::ErrorResponseDto,
             ErrorResponseDto, AgentStatusDto),
         ),
         tags((name = "agent", description = "Agent related API"))
@@ -34,6 +35,7 @@ pub fn routes(
             .or(register_agent(agent_observer.clone()))
             .or(unregister_agent(agent_observer.clone()))
             .or(on_agent_cmd(agent_observer.clone()))
+            .or(agent_commands(agent_observer.clone()))
             .or(agent_config(agent_observer.clone()))
             .or(set_agent_config(agent_observer.clone()))
             .or(warp::path!("api" / "doc" / "agent-api.json")
@@ -99,7 +101,12 @@ fn register_agent(
                 let domain = body.domain;
                 let agent_name = body.agent_name;
                 let resp = observer
-                    .register(sensor_id, &key_b64.unwrap_or_default(), &domain, &agent_name)
+                    .register(
+                        sensor_id,
+                        &key_b64.unwrap_or_default(),
+                        &domain,
+                        &agent_name,
+                    )
                     .await
                     .map(|_| dto::AgentDto { domain, agent_name });
 
@@ -191,6 +198,49 @@ fn on_agent_cmd(
                         &decode_b64(domain_b64),
                         body.payload,
                     )
+                    .await;
+                build_response(resp)
+            },
+        )
+        .boxed()
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/agent/{id}",
+    tag = "agent",
+    params(
+        ("id" = i32, Path, description = "The sensor id"),
+        ("x-key" = String, Header, description = "The sensor key"),
+        ("from" = NaiveDateTime, Query, description = "From date"),
+        ("until" = NaiveDateTime, Query, description = "Until date"),
+    ),
+    responses(
+        (status = 200, description = "The Command in the given time range", body = Vec<AgentCommandDto>, content_type = "application/json"),
+        (status = 400, description = "Agent not found or invalid credentials", body = ErrorResponseDto, content_type = "application/json"),
+        (status = 500, description = "Internal error", body = ErrorResponseDto, content_type = "application/json"),
+    ),
+)]
+fn agent_commands(
+    observer: AgentObserver,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let key_header = warp::header::<String>("X-KEY");
+    warp::any()
+        .map(move || observer.clone())
+        .and(warp::get())
+        .and(warp::path!("api" / "agent" / i32))
+        .and(key_header)
+        .and(warp::query())
+        .and_then(
+            |observer: AgentObserver, sensor_id: i32, key_b64: String, query: DateQuery| async move {
+                //let key_b64 = Some("".to_owned());
+                if !query.is_valid() || query.is_larger_than(chrono::Duration::days(1)) {
+                    return build_response(Err(error::ObserverError::from(
+                        error::ApiError::ArgumentError(),
+                    )));
+                }
+                let resp: Result<Vec<dto::AgentCommandDto>, _> = observer
+                    .commands(sensor_id, &key_b64, query.from(), query.until())
                     .await;
                 build_response(resp)
             },
@@ -316,7 +366,7 @@ pub mod dto {
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;
 
-    use crate::sensor::observer::Agent;
+    use crate::{models::agent_command, sensor::observer::Agent};
 
     #[derive(Serialize, Deserialize, Debug, ToSchema)]
     pub struct AgentDto {
@@ -345,6 +395,23 @@ pub mod dto {
     pub struct ForceRequest {
         pub payload: i64,
     }
+
+    #[derive(Serialize, Deserialize, ToSchema)]
+    pub struct AgentCommandDto {
+        domain: std::string::String,
+        command: i32,
+        created_at: chrono::NaiveDateTime,
+    }
+
+    impl From<agent_command::AgentCommandDao> for AgentCommandDto {
+        fn from(other: agent_command::AgentCommandDao) -> Self {
+            AgentCommandDto {
+                domain: other.domain,
+                command: other.command,
+                created_at: other.created_at,
+            }
+        }
+    }
 }
 
 ///
@@ -361,7 +428,8 @@ mod test {
     }
 
     use crate::{
-        config::CONFIG, models::establish_db_connection, sensor::observer::controller::SensorObserver,
+        config::CONFIG, models::establish_db_connection,
+        sensor::observer::controller::SensorObserver,
     };
 
     async fn build_mocked_observer() -> (Arc<ConcurrentObserver>, AgentObserver, SensorObserver) {

@@ -1,8 +1,12 @@
 use super::ConcurrentObserver;
 use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
-use crate::models::agent;
+use crate::models::{
+    agent,
+    agent_command::{self, AgentCommandDao},
+};
 
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use ripe_core::AgentConfigType;
 use std::collections::HashMap;
@@ -91,6 +95,31 @@ impl AgentObserver {
 
         sensor.handle_agent_cmd(domain, payload)?;
         Ok(())
+    }
+
+    pub async fn commands<T>(
+        &self,
+        sensor_id: i32,
+        domain: &str,
+        from: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> Result<Vec<T>, ObserverError>
+    where
+        T: From<AgentCommandDao>,
+    {
+        let container = self.inner.container.read().await;
+        let _ = container
+            .sensor(sensor_id, domain)
+            .await
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        let mut commands = agent_command::get(&self.inner.db_conn, sensor_id, from, until)
+            .await
+            .ok()
+            .ok_or(DBError::SensorNotFound(sensor_id))?;
+
+        let transformed: Vec<T> = commands.drain(..).map(|dao| T::from(dao)).collect();
+        Ok(transformed)
     }
 
     pub async fn config(

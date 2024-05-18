@@ -12,6 +12,7 @@ mod agent_routes;
 mod doc_routes;
 mod metric_routes;
 mod sensor_routes;
+mod query;
 
 pub use agent_routes::dto::*;
 

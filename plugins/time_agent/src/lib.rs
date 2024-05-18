@@ -302,8 +302,11 @@ impl TimeAgentInner {
             _ => CMD_INACTIVE,
         };
 
-        *self.last_state.write().unwrap() = state;
-        self.sender.send(AgentMessage::Command(curr_cmd));
+        let last_state = *self.last_state.read().unwrap();
+        if last_state != state {
+            self.sender.send(AgentMessage::Command(curr_cmd));
+            *self.last_state.write().unwrap() = state;
+        }
     }
 
     fn cmd(&self) -> i32 {

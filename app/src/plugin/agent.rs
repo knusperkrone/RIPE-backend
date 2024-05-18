@@ -1,6 +1,6 @@
 use super::AgentLib;
 use crate::logging::APP_LOGGING;
-use crate::{models::dao::AgentConfigDao, sensor::handle::SensorMQTTCommand};
+use crate::{models::agent::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use chrono_tz::Tz;
 use parking_lot::{Mutex, RwLock};
 use ripe_core::{
@@ -346,7 +346,7 @@ impl Agent {
                 };
                 tokio::time::sleep(delay).await;
             }
-            
+
             info!(
                 APP_LOGGING,
                 "Ended repeating task for sensor: {}", repeat_agent.sensor_id

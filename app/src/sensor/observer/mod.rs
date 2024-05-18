@@ -4,8 +4,10 @@ use super::SensorMessage;
 use crate::config::CONFIG;
 use crate::logging::APP_LOGGING;
 use crate::models::{
-    self,
-    dao::{AgentConfigDao, SensorDao},
+    agent::{self as agent_model, AgentConfigDao},
+    sensor::{self as sensor_model, SensorDao},
+    sensor_data::{self as sensor_data_model},
+    sensor_log::{self as sensor_log_model},
 };
 use crate::mqtt::MqttSensorClient;
 use crate::plugin::AgentFactory;
@@ -189,7 +191,7 @@ impl ConcurrentObserver {
                         sensor.update(&lib_names, &agent_factory);
 
                         if let Ok(Some(data)) =
-                            models::get_latest_sensor_data_unchecked(&self.db_conn, sensor.id())
+                            sensor_data_model::get_latest_unchecked(&self.db_conn, sensor.id())
                                 .await
                         {
                             let casted: SensorDataMessage = data.into();
@@ -214,7 +216,7 @@ impl ConcurrentObserver {
             .await
         {
             sensor.handle_data(&data);
-            if let Err(e) = models::insert_sensor_data(
+            if let Err(e) = sensor_data_model::insert(
                 &self.db_conn,
                 sensor_id,
                 data,
@@ -231,7 +233,8 @@ impl ConcurrentObserver {
 
     async fn persist_sensor_log(&self, sensor_id: i32, log_msg: std::string::String) {
         let max_logs = CONFIG.mqtt_log_count();
-        if let Err(e) = models::insert_sensor_log(&self.db_conn, sensor_id, log_msg, max_logs).await
+        if let Err(e) =
+            sensor_log_model::upsert(&self.db_conn, sensor_id, log_msg, max_logs).await
         {
             error!(APP_LOGGING, "Failed persiting sensor log: {}", e);
         }
@@ -261,10 +264,8 @@ impl ConcurrentObserver {
         // TODO: Stream
         let start = Utc::now();
         let mut sensor_daos = Vec::new();
-        for sensor_dao in models::get_sensors(&self.db_conn).await? {
-            let agent_configs = models::get_agent_config(&self.db_conn, &sensor_dao)
-                .await
-                .unwrap();
+        for sensor_dao in sensor_model::read(&self.db_conn).await? {
+            let agent_configs = agent_model::get(&self.db_conn, &sensor_dao).await.unwrap();
             sensor_daos.push((sensor_dao, agent_configs));
         }
 

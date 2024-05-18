@@ -1,5 +1,6 @@
 use crate::logging::APP_LOGGING;
-use crate::models::dao::{AgentConfigDao, SensorDao};
+use crate::models::agent::AgentConfigDao;
+use crate::models::sensor::SensorDao;
 use crate::plugin::Agent;
 use crate::{
     error::{DBError, ObserverError},

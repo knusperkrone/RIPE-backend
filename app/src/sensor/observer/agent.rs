@@ -1,7 +1,7 @@
 use super::ConcurrentObserver;
 use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
-use crate::models::{self};
+use crate::models::agent;
 
 use chrono_tz::Tz;
 use ripe_core::AgentConfigType;
@@ -40,7 +40,7 @@ impl AgentObserver {
 
         let factory = self.inner.agent_factory.read().await;
         let agent = factory.create_agent(sensor_id, agent_name, domain, None)?;
-        models::create_agent_config(&self.inner.db_conn, &agent.deserialize()).await?;
+        agent::insert(&self.inner.db_conn, &agent.deserialize()).await?;
 
         sensor.add_agent(agent);
 
@@ -67,7 +67,7 @@ impl AgentObserver {
         let agent = sensor
             .remove_agent(agent_name, domain)
             .ok_or(DBError::SensorNotFound(sensor_id))?;
-        models::delete_sensor_agent(&self.inner.db_conn, sensor.id(), agent).await?;
+        agent::delete(&self.inner.db_conn, sensor.id(), agent).await?;
 
         info!(
             APP_LOGGING,
@@ -126,7 +126,7 @@ impl AgentObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         let agent = sensor.set_agent_config(domain, config, timezone)?;
-        models::update_agent_config(&self.inner.db_conn, &agent.deserialize()).await?;
+        agent::update(&self.inner.db_conn, &agent.deserialize()).await?;
         Ok(())
     }
 }
@@ -135,7 +135,8 @@ impl AgentObserver {
 mod test {
     use super::*;
     use crate::{
-        config::CONFIG, models::establish_db_connection, sensor::observer::controller::SensorObserver,
+        config::CONFIG, models::establish_db_connection,
+        sensor::observer::controller::SensorObserver,
     };
     use chrono_tz::UTC;
 

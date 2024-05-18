@@ -2,8 +2,11 @@ use super::ConcurrentObserver;
 use crate::config::CONFIG;
 use crate::error::{DBError, ObserverError};
 use crate::logging::APP_LOGGING;
-use crate::models::dao::SensorDataDao;
-use crate::models::{self};
+use crate::models::{
+    sensor,
+    sensor_data::{self, SensorDataDao},
+    sensor_log,
+};
 use crate::mqtt::MqttBroker;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -32,7 +35,7 @@ impl SensorObserver {
     pub async fn register(&self, name: Option<String>) -> Result<Sensor, ObserverError> {
         // Create sensor dao
         let key = self.generate_sensor_key();
-        let sensor_dao = models::create_new_sensor(&self.inner.db_conn, &key, name).await?;
+        let sensor_dao = sensor::insert(&self.inner.db_conn, &key, name).await?;
         let dao_id = sensor_dao.id();
 
         // Create agents and persist
@@ -43,14 +46,14 @@ impl SensorObserver {
                 Ok(Sensor { id, key })
             }
             Err(err) => {
-                models::delete_sensor(&self.inner.db_conn, dao_id).await?; // Fallback delete
+                sensor::delete(&self.inner.db_conn, dao_id).await?; // Fallback delete
                 Err(err)
             }
         }
     }
 
     pub async fn unregister(&self, sensor_id: i32, key_b64: &str) -> Result<(), ObserverError> {
-        models::delete_sensor(&self.inner.db_conn, sensor_id).await?;
+        sensor::delete(&self.inner.db_conn, sensor_id).await?;
 
         let sensor_mtx = self
             .inner
@@ -80,11 +83,10 @@ impl SensorObserver {
             .ok_or_else(|| DBError::SensorNotFound(sensor_id))?;
 
         // Get sensor data
-        let data =
-            match models::get_latest_sensor_data(&self.inner.db_conn, sensor_id, &key_b64).await? {
-                Some(dao) => dao.into(),
-                None => SensorDataMessage::default(),
-            };
+        let data = match sensor_data::get_latest(&self.inner.db_conn, sensor_id, &key_b64).await? {
+            Some(dao) => dao.into(),
+            None => SensorDataMessage::default(),
+        };
 
         let agents: Vec<Agent> = sensor
             .agents()
@@ -112,7 +114,7 @@ impl SensorObserver {
             .sensor(sensor_id, key)
             .await
             .ok_or(DBError::SensorNotFound(sensor_id))?;
-        models::insert_sensor_log(&self.inner.db_conn, sensor_id, log_msg, max_logs).await?;
+        sensor_log::upsert(&self.inner.db_conn, sensor_id, log_msg, max_logs).await?;
         Ok(())
     }
 
@@ -122,11 +124,11 @@ impl SensorObserver {
         key_b64: &String,
         tz: Tz,
     ) -> Result<Vec<String>, ObserverError> {
-        if !models::sensor_exists(&self.inner.db_conn, sensor_id, key_b64).await {
+        if !sensor::exists_with_key(&self.inner.db_conn, sensor_id, key_b64).await {
             return Err(DBError::SensorNotFound(sensor_id).into());
         }
 
-        let mut logs = models::get_sensor_logs(&self.inner.db_conn, sensor_id).await?;
+        let mut logs = sensor_log::get(&self.inner.db_conn, sensor_id).await?;
         Ok(logs
             .drain(..)
             .map(|l| format!("[{}] {}", l.time(&tz).format("%b %e %T %Y"), l.log()))
@@ -146,7 +148,7 @@ impl SensorObserver {
             .ok_or(DBError::SensorNotFound(sensor_id))?;
 
         sensor.handle_data(&data);
-        models::insert_sensor_data(
+        sensor_data::insert(
             &self.inner.db_conn,
             sensor_id,
             data,
@@ -164,11 +166,11 @@ impl SensorObserver {
     where
         T: From<SensorDataDao>,
     {
-        if !models::sensor_exists(&self.inner.db_conn, sensor_id, key_b64).await {
+        if !sensor::exists_with_key(&self.inner.db_conn, sensor_id, key_b64).await {
             return Err(DBError::SensorNotFound(sensor_id).into());
         }
 
-        if let Ok(data) = models::get_first_sensor_data(&self.inner.db_conn, sensor_id).await {
+        if let Ok(data) = sensor_data::get_first(&self.inner.db_conn, sensor_id).await {
             Ok(Some(T::from(data)))
         } else {
             Ok(None)
@@ -185,11 +187,11 @@ impl SensorObserver {
     where
         T: From<SensorDataDao>,
     {
-        if !models::sensor_exists(&self.inner.db_conn, sensor_id, key_b64).await {
+        if !sensor::exists_with_key(&self.inner.db_conn, sensor_id, key_b64).await {
             return Err(DBError::SensorNotFound(sensor_id).into());
         }
 
-        let mut data = models::get_sensor_data(&self.inner.db_conn, sensor_id, from, until).await?;
+        let mut data = sensor_data::get(&self.inner.db_conn, sensor_id, from, until).await?;
         let transformed: Vec<T> = data.drain(..).map(|dao| T::from(dao)).collect();
 
         Ok(transformed)

@@ -400,7 +400,7 @@ fn sensor_reload(
 /// DTO
 ///
 pub mod dto {
-    use crate::{models::dao::SensorDataDao, mqtt::MqttScheme, rest::AgentStatusDto};
+    use crate::{models::sensor_data::SensorDataDao, mqtt::MqttScheme, rest::AgentStatusDto};
     use ripe_core::SensorDataMessage;
     use serde::{Deserialize, Serialize};
     use utoipa::ToSchema;

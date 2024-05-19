@@ -1,14 +1,11 @@
-#[macro_use]
-extern crate slog;
-
+use chrono_tz::Tz;
+use ripe_core::*;
 use std::sync::{
     atomic::{AtomicI32, Ordering},
     Arc,
 };
 use std::{collections::HashMap, pin::Pin};
-
-use chrono_tz::Tz;
-use ripe_core::*;
+use tracing::{error, info};
 
 const NAME: &str = "TestAgent";
 const VERSION_CODE: u32 = 2;
@@ -21,12 +18,10 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 #[no_mangle]
 extern "Rust" fn build_agent(
     _config: Option<&str>,
-    logger: slog::Logger,
     sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     Box::new(TestAgent {
         val: 0.5,
-        logger: logger,
         sender: Arc::new(sender),
         config_active: true,
         config_daytime_ms: 0,
@@ -39,7 +34,6 @@ extern "Rust" fn build_agent(
 #[derive(Debug)]
 struct TestAgent {
     val: f32,
-    logger: slog::Logger,
     sender: Arc<AgentStreamSender>,
     config_active: bool,
     config_daytime_ms: u64,
@@ -50,7 +44,6 @@ struct TestAgent {
 
 struct TestFutBuilder {
     is_oneshot: bool,
-    logger: slog::Logger,
     counter: Arc<AtomicI32>,
     sender: Arc<AgentStreamSender>,
 }
@@ -60,14 +53,13 @@ impl FutBuilder for TestFutBuilder {
         &self,
         runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
-        let logger = self.logger.clone();
         let sender = self.sender.clone();
         if self.is_oneshot {
             std::boxed::Box::pin(async move {
-                error!(logger, "TASK IS SLEEPING");
+                error!("TASK IS SLEEPING");
                 ripe_core::sleep(&runtime, std::time::Duration::from_secs(5));
 
-                error!(logger, "TASK IS AWAKE");
+                error!("TASK IS AWAKE");
                 sender.send(AgentMessage::Command(1));
 
                 true
@@ -76,7 +68,7 @@ impl FutBuilder for TestFutBuilder {
             let counter = self.counter.clone();
             std::boxed::Box::pin(async move {
                 let count = counter.load(Ordering::Relaxed);
-                error!(logger, "REPEATING {}", count);
+                error!("REPEATING {}", count);
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
                 sender.send(AgentMessage::Command(count));
@@ -120,14 +112,13 @@ impl AgentTrait for TestAgent {
             Box::new(TestFutBuilder {
                 is_oneshot: false,
                 sender: sender_arc.clone(),
-                logger: self.logger.clone(),
                 counter: Arc::new(AtomicI32::new(5)),
             }),
         ));
     }
 
     fn handle_data(&mut self, data: &SensorDataMessage) {
-        debug!(self.logger, "Received data: {:?}", data);
+        info!("Received data: {:?}", data);
     }
 
     fn handle_cmd(&mut self, payload: i64) {

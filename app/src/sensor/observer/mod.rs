@@ -2,7 +2,7 @@ use super::container::SensorContainer;
 use super::handle::{SensorHandle, SensorMQTTCommand};
 use super::SensorMessage;
 use crate::config::CONFIG;
-use crate::logging::APP_LOGGING;
+use crate::error::{DBError, ObserverError};
 use crate::models::{
     agent::{self as agent_model, AgentConfigDao},
     agent_command::{self as agent_command_model},
@@ -13,16 +13,17 @@ use crate::models::{
 use crate::mqtt::MqttSensorClient;
 use crate::plugin::AgentFactory;
 
-use crate::error::{DBError, ObserverError};
 use chrono::Utc;
 use notify::{Config, PollWatcher, Watcher};
 use ripe_core::AgentUI;
 use ripe_core::SensorDataMessage;
 use sqlx::PgPool;
+use std::fmt::Debug;
 use std::iter::zip;
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{Mutex, RwLock};
+use tracing::{debug, error, info, info_span, warn, Instrument};
 
 pub mod agent;
 pub mod controller;
@@ -48,6 +49,12 @@ pub struct ConcurrentObserver {
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,
 }
 
+impl Debug for ConcurrentObserver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConcurrentObserver").finish()
+    }
+}
+
 impl ConcurrentObserver {
     pub fn new(plugin_dir: &Path, db_conn: PgPool) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
@@ -68,15 +75,17 @@ impl ConcurrentObserver {
         Arc::new(observer)
     }
 
+    #[tracing::instrument]
     pub async fn init(&self) {
         self.load_plugins().await;
         self.mqtt_client.connect().await;
         if let Err(e) = self.populate_agents().await {
-            crit!(APP_LOGGING, "{}", e);
+            error!("{}", e);
             panic!();
         }
     }
 
+    #[tracing::instrument]
     pub async fn load_plugins(&self) {
         let mut agent_factory = self.agent_factory.write().await;
         agent_factory.load_new_plugins(self.plugin_dir.as_path());
@@ -89,32 +98,45 @@ impl ConcurrentObserver {
     pub async fn dispatch_mqtt_receive_loop(self: Arc<ConcurrentObserver>) {
         let reveiver_res = self.data_receveiver.try_lock();
         if reveiver_res.is_err() {
-            error!(APP_LOGGING, "dispatch_mqtt_receive_loop() already called!");
+            error!("dispatch_mqtt_receive_loop() already called!");
             return;
         }
         let mut receiver = reveiver_res.unwrap();
 
         loop {
-            info!(APP_LOGGING, "Start capturing sensor data events");
+            info!("Start capturing sensor data events");
             while let Some((sensor_id, msg)) = receiver.recv().await {
                 match msg {
-                    SensorMessage::Data(data) => self.persist_sensor_data(sensor_id, data).await,
-                    SensorMessage::Log(log) => self.persist_sensor_log(sensor_id, log).await,
-                    SensorMessage::Reconnect => {
-                        let resubscribe_count = self.resubscribe_sensors().await;
+                    SensorMessage::Data(tracing, data) => {
+                        let span = info_span!(parent: &tracing, "data");
+                        let _enter = span.enter();
+                        self.persist_sensor_data(sensor_id, data)
+                            .instrument(span.clone())
+                            .await
+                    }
+                    SensorMessage::Log(tracing, log) => {
+                        let span = info_span!(parent: &tracing, "logging");
+                        let _enter = span.enter();
+                        self.persist_sensor_log(sensor_id, log)
+                            .instrument(span.clone())
+                            .await
+                    }
+                    SensorMessage::Reconnected(tracing) => {
+                        let span = info_span!(parent: &tracing, "logging");
+                        let _enter = span.enter();
+
+                        let resubscribe_count =
+                            self.resubscribe_sensors().instrument(span.clone()).await;
                         let all_count = self.container.read().await.len();
                         if resubscribe_count != all_count {
-                            info!(
-                                APP_LOGGING,
-                                "Resubscribed {}/{} sensors", resubscribe_count, all_count
-                            )
+                            info!("Resubscribed {}/{} sensors", resubscribe_count, all_count)
                         } else {
-                            info!(APP_LOGGING, "Resubscribed all sensors",)
+                            info!("Resubscribed all sensors",)
                         }
                     }
                 };
             }
-            crit!(APP_LOGGING, "Failed listening sensor data events");
+            error!("Failed listening sensor data events");
         }
     }
 
@@ -124,20 +146,32 @@ impl ConcurrentObserver {
     pub async fn dispatch_iac_loop(self: Arc<ConcurrentObserver>) {
         let receiver_res = self.iac_receiver.try_lock();
         if receiver_res.is_err() {
-            error!(APP_LOGGING, "dispatch_mqtt_send_loop() already called!");
+            error!("dispatch_mqtt_send_loop() already called!");
             return;
         }
 
         let mut receiver = receiver_res.unwrap();
         let max_retries = CONFIG.mqtt_send_retries();
         loop {
-            info!(APP_LOGGING, "Start capturing iac events");
+            info!("Start capturing iac events");
             while let Some(item) = receiver.recv().await {
+                let span = info_span!(parent: &item.tracing, "iac_message_received");
+                let _enter = span.enter();
+
                 let container = self.container.read().await;
-                let sensor_opt = container.sensor_unchecked(item.sensor_id).await;
+                let sensor_opt = container
+                    .sensor_unchecked(item.sensor_id)
+                    .instrument(span.clone())
+                    .await;
                 if let Some(sensor) = sensor_opt {
+                    let mut is_sent = false;
                     for i in 0..max_retries {
-                        match self.mqtt_client.send_cmd(&sensor).await {
+                        match self
+                            .mqtt_client
+                            .send_cmd(&sensor)
+                            .instrument(span.clone())
+                            .await
+                        {
                             Ok(_) => {
                                 if let Err(e) = agent_command_model::insert(
                                     &self.db_conn,
@@ -147,21 +181,25 @@ impl ConcurrentObserver {
                                 )
                                 .await
                                 {
-                                    error!(APP_LOGGING, "Failed persisting agent command: {}", e);
+                                    error!("Failed persisting agent command: {}", e);
                                 }
+                                is_sent = true;
                                 break;
                             }
                             Err(e) => {
-                                error!(
-                                    APP_LOGGING,
+                                warn!(
                                     "[{}/{}] Failed sending command {:?} with {}",
-                                    i,
-                                    max_retries,
-                                    item,
-                                    e
+                                    i, max_retries, item, e
                                 )
                             }
                         }
+                    }
+
+                    if !is_sent {
+                        error!(
+                            "Failed sending command after {} retries: {:?}",
+                            max_retries, item
+                        );
                     }
                 }
             }
@@ -185,17 +223,17 @@ impl ConcurrentObserver {
         .unwrap();
 
         if let Err(e) = watcher.watch(plugin_dir, notify::RecursiveMode::NonRecursive) {
-            crit!(APP_LOGGING, "Cannot watch plugin dir: {}", e);
+            error!("Cannot watch plugin dir: {}", e);
             return;
         }
 
-        info!(APP_LOGGING, "Start watching plugin dir: {:?}", plugin_dir);
+        info!("Start watching plugin dir: {:?}", plugin_dir);
         loop {
             if rx.try_recv().is_ok() {
                 let mut agent_factory = self.agent_factory.write().await;
                 let lib_names = agent_factory.load_new_plugins(plugin_dir);
                 if !lib_names.is_empty() {
-                    info!(APP_LOGGING, "Updating plugins {:?}", lib_names);
+                    info!("Updating plugins {:?}", lib_names);
 
                     let now = Utc::now();
                     let container = self.container.write().await;
@@ -238,10 +276,10 @@ impl ConcurrentObserver {
             )
             .await
             {
-                error!(APP_LOGGING, "Failed persiting sensor data: {}", e);
+                error!(sensor_id = sensor_id, "Failed persiting sensor data: {}", e);
             }
         } else {
-            warn!(APP_LOGGING, "Sensor not found: {}", sensor_id);
+            warn!(sensor_id = sensor_id, "Sensor not found");
         }
     }
 
@@ -249,7 +287,7 @@ impl ConcurrentObserver {
         let max_logs = CONFIG.mqtt_log_count();
         if let Err(e) = sensor_log_model::upsert(&self.db_conn, sensor_id, log_msg, max_logs).await
         {
-            error!(APP_LOGGING, "Failed persiting sensor log: {}", e);
+            error!("Failed persiting sensor log: {}", e);
         }
     }
 
@@ -259,14 +297,9 @@ impl ConcurrentObserver {
         for sensor_mtx in container.sensors() {
             let sensor = sensor_mtx.lock().await;
             if let Err(e) = self.subscribe_sensor(&sensor).await {
-                error!(
-                    APP_LOGGING,
-                    "Failed observing sensor {} - {}",
-                    sensor.id(),
-                    e
-                );
+                error!(sensr_id = sensor.id(), "Failed observing sensor: {}", e);
             } else {
-                debug!(APP_LOGGING, "Resubscribed sensor {}", sensor.id());
+                debug!(sensor_id = sensor.id(), "Resubscribed sensor");
                 count += 1;
             }
         }
@@ -290,13 +323,12 @@ impl ConcurrentObserver {
                 .await
             {
                 count -= 1;
-                error!(APP_LOGGING, "{}", e)
+                error!("{}", e)
             }
         }
 
         let duration = Utc::now() - start;
         info!(
-            APP_LOGGING,
             "Restored {} sensors in {} ms",
             count,
             duration.num_milliseconds()
@@ -322,8 +354,12 @@ impl ConcurrentObserver {
         self.mqtt_client.subscribe_sensor(sensor).await?;
         for _ in 0..CONFIG.mqtt_send_retries() {
             if let Err(e) = self.mqtt_client.send_cmd(sensor).await {
-                error!(APP_LOGGING, "Failed sending initial mqtt command: {}", e);
+                error!(
+                    sensor_id = sensor.id(),
+                    "Failed sending initial mqtt command: {}", e
+                );
             } else {
+                debug!(sensor_id = sensor.id(), "Sent initial mqtt command");
                 for (agent, command) in zip(sensor.agents(), sensor.format_cmds()) {
                     if let Err(e) = agent_command_model::insert(
                         &self.db_conn,
@@ -333,18 +369,9 @@ impl ConcurrentObserver {
                     )
                     .await
                     {
-                        error!(
-                            APP_LOGGING,
-                            "Failed persisting initial agent command: {}", e
-                        );
+                        error!("Failed persisting initial agent command: {}", e);
                     }
                 }
-
-                debug!(
-                    APP_LOGGING,
-                    "Sent initial mqtt command to sensor {}",
-                    sensor.id()
-                );
                 break;
             }
         }

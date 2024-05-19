@@ -9,7 +9,7 @@ pub use observer::agent::AgentObserver;
 pub use observer::ConcurrentObserver;
 
 pub enum SensorMessage {
-    Data(ripe_core::SensorDataMessage),
-    Log(std::string::String),
-    Reconnect,
+    Data(tracing::Span, ripe_core::SensorDataMessage),
+    Log(tracing::Span, std::string::String),
+    Reconnected(tracing::Span),
 }

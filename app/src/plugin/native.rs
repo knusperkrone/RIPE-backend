@@ -1,7 +1,6 @@
 use super::AgentLib;
 use super::{Agent, AgentFactoryTrait};
 use crate::error::PluginError;
-use crate::logging::APP_LOGGING;
 use crate::sensor::handle::SensorMQTTCommand;
 use libloading::Library;
 use ripe_core::{error::AgentError, AgentTrait, PluginDeclaration};
@@ -10,6 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::{collections::HashMap, fmt::Debug};
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::{info, warn};
 
 #[derive(Debug)]
 pub struct NativeAgentFactory {
@@ -61,11 +61,11 @@ impl AgentFactoryTrait for NativeAgentFactory {
             let res = unsafe { self.load_native_library(filename) };
             return match res {
                 Ok((lib_name, _version)) => {
-                    info!(APP_LOGGING, "Loaded native: {}", filename);
+                    info!("Loaded native: {}", filename);
                     Some(lib_name)
                 }
                 Err(err) => {
-                    warn!(APP_LOGGING, "Invalid native {}: {}", filename, err);
+                    warn!("Invalid native {}: {}", filename, err);
                     None
                 }
             };
@@ -137,8 +137,7 @@ impl NativeAgentFactory {
                 .unwrap()
                 .read(); // Panic is impossible
 
-            let logger = APP_LOGGING.clone();
-            let proxy = (decl.agent_builder)(state_json, logger, plugin_sender);
+            let proxy = (decl.agent_builder)(state_json, plugin_sender);
             Some((proxy, library.clone()))
         } else {
             None

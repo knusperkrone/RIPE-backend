@@ -1,9 +1,10 @@
 use super::{stubs, WasmerMallocPtr};
-use crate::{error::WasmPluginError, logging::APP_LOGGING};
+use crate::error::WasmPluginError;
 use chrono_tz::Tz;
 use parking_lot::{Mutex, RwLock};
 use ripe_core::{AgentTrait, AgentUIDecorator};
 use std::{collections::HashMap, sync::Arc};
+use tracing::error;
 use wasmer::{AsStoreMut, AsStoreRef, Instance, Memory, Store, TypedFunction};
 
 pub struct WasmAgent {
@@ -28,7 +29,7 @@ impl WasmAgent {
         E: std::error::Error + Clone + Into<WasmPluginError>,
     {
         let mut lock = self.error_indicator.lock();
-        error!(APP_LOGGING, "WasmAgent has {:?} in {}", err, method);
+        error!("WasmAgent has {:?} in {}", err, method);
         *lock = Some(err.clone().into());
         err.into()
     }
@@ -143,7 +144,7 @@ impl AgentTrait for WasmAgent {
                     if let Ok(state) = serde_json::from_str(&json_str) {
                         return state;
                     } else {
-                        crit!(APP_LOGGING, "Failed serializing: {}", json_str);
+                        error!("Failed serializing: {}", json_str);
                     }
                 }
             }

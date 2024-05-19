@@ -1,6 +1,6 @@
 use crate::AgentStreamSender;
-use once_cell::sync::Lazy;
 use std::sync::Arc;
+use tracing::debug;
 
 /*
  * conventions
@@ -11,9 +11,13 @@ pub const CMD_INACTIVE: i32 = 0;
 
 pub const DAY_MS: u32 = 86_400_000;
 
+#[tracing::instrument]
 pub fn sleep(runtime: &tokio::runtime::Handle, duration: std::time::Duration) {
+    debug!("Sleeping for {:?}", duration);
     let _guard = runtime.enter();
+    debug!("Entered runtime");
     runtime.block_on(tokio::time::sleep(duration));
+    debug!("Slept for {:?}", duration);
 }
 
 pub fn ms_to_hr(time_ms: u32) -> String {
@@ -34,12 +38,6 @@ pub fn ms_to_hr(time_ms: u32) -> String {
 /*
  * Serde Workaround
  */
-
-static LOGGER: Lazy<slog::Logger> = Lazy::new(|| slog::Logger::root(slog::Discard, o!("" => "")));
-
-pub fn logger_sentinel() -> slog::Logger {
-    LOGGER.clone()
-}
 
 pub fn sender_sentinel() -> AgentStreamSender {
     AgentStreamSender::sentinel()

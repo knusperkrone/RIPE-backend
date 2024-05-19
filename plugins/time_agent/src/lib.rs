@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate slog;
-
 use chrono::{DateTime, Duration, Timelike, Utc};
 use chrono_tz::Tz;
 use ripe_core::*;
@@ -13,6 +10,7 @@ use std::{
         Arc, RwLock,
     },
 };
+use tracing::{error, info, warn};
 
 mod time;
 use crate::time::*;
@@ -29,25 +27,20 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 #[no_mangle]
 extern "Rust" fn build_agent(
     config: Option<&str>,
-    logger: slog::Logger,
     sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     let mut inner_agent = TimeAgentInner::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<TimeAgentInner>(&config_json) {
-            debug!(logger, "Restored {} from config", NAME);
+            info!("Restored {} from config", NAME);
             inner_agent = deserialized;
         } else {
-            warn!(
-                logger,
-                "{} coulnd't restore from config {}", NAME, config_json
-            );
+            warn!("{} coulnd't restore from config {}", NAME, config_json);
         }
     }
 
     Box::new(TimeAgent {
         inner: Arc::new(TimeAgentInner {
-            logger: logger,
             sender: sender,
             ..inner_agent
         }),
@@ -74,14 +67,14 @@ impl AgentTrait for TimeAgent {
         let until_opt = AgentUIDecorator::transform_cmd_timepane(payload);
         if let Some(until) = until_opt {
             if is_enabled {
-                debug!(self.inner.logger, "Time agent received force");
+                info!("Time agent received force");
                 self.inner.force(until);
             } else {
-                debug!(self.inner.logger, "Time agent received stop");
+                info!("Time agent received stop");
                 self.inner.stop(until);
             }
         } else {
-            error!(self.inner.logger, "Invalid payload!");
+            error!("Invalid payload!");
         }
     }
 
@@ -151,27 +144,24 @@ impl AgentTrait for TimeAgent {
         if let AgentConfigType::Switch(val) = &values["01_active"] {
             active = *val;
         } else {
-            error!(self.inner.logger, "No active");
+            error!("Not active");
             return false;
         }
         if let AgentConfigType::DayTime(val) = &values["02_start_time"] {
             time = ms_clear_offset(*val as u32, timezone);
         } else {
-            error!(self.inner.logger, "No start_time");
+            error!("No start_time");
             return false;
         }
         if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["03_slider"] {
             duration = *val;
         } else {
-            error!(self.inner.logger, "No slider");
+            error!("No slider");
             return false;
         }
 
         self.inner.set_config(time as u32, duration as u32);
-        info!(
-            self.inner.logger,
-            "Set config: {} {} {}", active, time, duration,
-        );
+        info!("Set config: {} {} {}", active, time, duration,);
         return true;
     }
 }
@@ -207,8 +197,6 @@ impl FutBuilder for TickerFutBuilder {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TimeAgentInner {
-    #[serde(skip, default = "ripe_core::logger_sentinel")]
-    logger: slog::Logger,
     #[serde(skip, default = "ripe_core::sender_sentinel")]
     sender: AgentStreamSender,
     #[serde(skip, default)]
@@ -220,7 +208,6 @@ pub struct TimeAgentInner {
 impl Default for TimeAgentInner {
     fn default() -> Self {
         TimeAgentInner {
-            logger: ripe_core::logger_sentinel(),
             sender: ripe_core::sender_sentinel(),
             last_state: RwLock::new(AgentState::Stopped(Utc::now())),
             start_time_ms: AtomicU32::new(0),
@@ -302,11 +289,8 @@ impl TimeAgentInner {
             _ => CMD_INACTIVE,
         };
 
-        let last_state = *self.last_state.read().unwrap();
-        if last_state != state {
-            self.sender.send(AgentMessage::Command(curr_cmd));
-            *self.last_state.write().unwrap() = state;
-        }
+        self.sender.send(AgentMessage::Command(curr_cmd));
+        *self.last_state.write().unwrap() = state;
     }
 
     fn cmd(&self) -> i32 {

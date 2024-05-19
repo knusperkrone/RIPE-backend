@@ -1,7 +1,6 @@
 pub mod agent;
 pub mod test;
 
-mod logging;
 mod native;
 mod wasm;
 
@@ -13,8 +12,9 @@ pub use agent::Agent;
 pub(crate) use native::NativeAgentFactory;
 pub(crate) use wasm::WasmAgentFactory;
 
-use crate::{logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
+use crate::sensor::handle::SensorMQTTCommand;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::{error, warn};
 
 #[derive(Clone)]
 pub struct AgentLib(std::sync::Arc<dyn std::any::Any>);
@@ -34,6 +34,7 @@ pub trait AgentFactoryTrait {
     fn load_plugin_file(&mut self, path: &Path) -> Option<String>;
 }
 
+#[derive(Debug)]
 pub struct AgentFactory {
     sender: UnboundedSender<SensorMQTTCommand>,
     wasm_factory: WasmAgentFactory,
@@ -55,7 +56,7 @@ impl AgentFactory {
         // Read files and filter all "basename.extension"
         let entries_res = std::fs::read_dir(dir);
         if entries_res.is_err() {
-            error!(crate::logging::APP_LOGGING, "Invalid plugin dir: {:?}", dir);
+            error!("Invalid plugin dir: {:?}", dir);
         }
 
         let entries = entries_res
@@ -67,11 +68,11 @@ impl AgentFactory {
                     if let Ok(created) = metadata.created() {
                         modified = created;
                     } else {
-                        warn!(APP_LOGGING, "No created metadata for {:?}", entry);
+                        warn!("No created metadata for {:?}", entry);
                     }
                     (entry, modified)
                 } else {
-                    warn!(APP_LOGGING, "No metadata for {:?}", entry);
+                    warn!("No metadata for {:?}", entry);
                     (entry, SystemTime::UNIX_EPOCH)
                 }
             })
@@ -111,7 +112,7 @@ impl AgentFactory {
         domain: &str,
         state_json: Option<&str>,
     ) -> Result<Agent, ripe_core::error::AgentError> {
-        let stream = AgentStream::new(APP_LOGGING.clone());
+        let stream = AgentStream::default();
         if cfg!(test) && agent_name == "MockAgent" {
             Ok(Agent::new(
                 self.sender.clone(),

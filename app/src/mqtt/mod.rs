@@ -1,17 +1,15 @@
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
-    Arc,
-};
-
 use crate::config::CONFIG;
 use crate::error::MQTTError;
-use crate::logging::APP_LOGGING;
 use crate::sensor::{handle::SensorHandle, SensorMessage};
 use ripe_core::SensorDataMessage;
 use rumqttc::{
     AsyncClient, Event, EventLoop, LastWill, MqttOptions, Packet, Publish, QoS, Transport,
 };
-
+use std::fmt::Debug;
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
+    Arc,
+};
 use tokio::{
     sync::{
         mpsc::UnboundedSender,
@@ -19,6 +17,7 @@ use tokio::{
     },
     task::JoinHandle,
 };
+use tracing::{debug, error, info, info_span, Instrument};
 
 #[cfg(test)]
 mod test;
@@ -53,6 +52,7 @@ pub struct MqttBroker {
 
 type MqttSender = UnboundedSender<(i32, SensorMessage)>;
 
+#[derive(Debug)]
 pub struct MqttSensorClient {
     inner: Arc<MqttSensorClientInner>,
 }
@@ -63,6 +63,12 @@ struct MqttSensorClientInner {
     is_connected: AtomicBool,
     sender: MqttSender,
     timeout_ms: u64,
+}
+
+impl Debug for MqttSensorClientInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MqttSensorClientInner").finish()
+    }
 }
 
 impl MqttSensorClient {
@@ -110,10 +116,7 @@ impl Drop for MqttSensorClientInner {
             if let Some((_, abort_handle)) = guard.as_ref() {
                 abort_handle.abort();
             } else {
-                crit!(
-                    APP_LOGGING,
-                    "No async context, client may leak connection ressources"
-                );
+                error!("No async context, client may leak connection ressources");
             }
         }
     }
@@ -126,6 +129,7 @@ impl MqttSensorClientInner {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
+    #[tracing::instrument]
     pub async fn connect(self: Arc<MqttSensorClientInner>) {
         while !self.is_connected.load(Relaxed) {
             let brokers = CONFIG.brokers();
@@ -133,54 +137,54 @@ impl MqttSensorClientInner {
             let broker = &brokers[i % brokers.len()].internal;
 
             info!(
-                APP_LOGGING,
                 "Connecting to MQTT broker: {:?}://{}:{}",
-                broker.connection.scheme,
-                broker.connection.host,
-                broker.connection.port
+                broker.connection.scheme, broker.connection.host, broker.connection.port
             );
             let mqttoptions = Self::build_connection(broker).expect("Invalid broker uri");
             let (client, mut eventloop) = AsyncClient::new(mqttoptions, 1024);
 
             match eventloop.poll().await {
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                    info!(APP_LOGGING, "Connected to MQTT broker");
+                    info!("Connected to MQTT broker");
                     let handle = self.clone().listen(eventloop);
                     self.cli.write().await.replace((client, handle));
                     self.is_connected.store(true, Relaxed);
                     return;
                 }
                 Err(e) => {
-                    error!(APP_LOGGING, "Couldn't connect to MQTT broker {}", e);
+                    error!("Couldn't connect to MQTT broker {}", e);
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
                 e => unreachable!("Unexpected event: {:?}", e),
             }
-        } 
+        }
     }
 
     fn listen(self: Arc<MqttSensorClientInner>, mut mqtt_stream: EventLoop) -> JoinHandle<()> {
         tokio::spawn(async move {
-            while let Ok(event) = mqtt_stream.poll().await {
+            let span = info_span!("mqtt_listener");
+            while let Ok(event) = mqtt_stream.poll().instrument(span.clone()).await {
                 if let Event::Incoming(Packet::Publish(msg)) = event {
                     debug!(
-                        APP_LOGGING,
-                        "Received topic: {}, {:?}",
-                        msg.topic,
+                        topic = msg.topic,
+                        "Received Message {:?}",
                         std::str::from_utf8(&msg.payload)
                     );
                     if let Err(e) = Self::on_sensor_message(&self.sender, msg) {
-                        error!(APP_LOGGING, "Received message threw error: {}", e);
+                        error!("Received message threw error: {}", e);
                     }
                 }
             }
 
             self.is_connected.store(false, Relaxed);
-            error!(APP_LOGGING, "MQTT disconnected - reconnecting");
+            error!("MQTT disconnected - reconnecting");
 
-            Self::connect(self.clone()).await;
-            while let Err(e) = self.sender.send((0, SensorMessage::Reconnect)) {
-                warn!(APP_LOGGING, "Failed broadcast reconnect {}", e);
+            Self::connect(self.clone()).instrument(span.clone()).await;
+            while let Err(e) = self
+                .sender
+                .send((0, SensorMessage::Reconnected(span.clone())))
+            {
+                error!("Failed broadcast reconnect {}", e);
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         })
@@ -190,6 +194,7 @@ impl MqttSensorClientInner {
         self.is_connected.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    #[tracing::instrument]
     pub async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         if cfg!(test) {
             return Ok(());
@@ -202,13 +207,14 @@ impl MqttSensorClientInner {
                 client.subscribe(topic, QOS).await?;
             }
 
-            debug!(APP_LOGGING, "Subscribed topics {:?}", topics);
+            debug!("Subscribed topics {:?}", topics);
             Ok(())
         } else {
             Err(MQTTError::NotConnected())
         }
     }
 
+    #[tracing::instrument]
     pub async fn unsubscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         if cfg!(test) {
             return Ok(());
@@ -221,13 +227,14 @@ impl MqttSensorClientInner {
                 client.unsubscribe(topic).await?;
             }
 
-            debug!(APP_LOGGING, "Unsubscribed topics {:?}", topics);
+            debug!("Unsubscribed topics {:?}", topics);
             Ok(())
         } else {
             Err(MQTTError::NotConnected())
         }
     }
 
+    #[tracing::instrument]
     pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         if cfg!(test) {
             return Ok(());
@@ -240,7 +247,7 @@ impl MqttSensorClientInner {
             let payload: Vec<u8> = cmds.drain(..).map(|i| i.to_ne_bytes()[0]).collect();
             client.publish(&cmd_topic, QOS, true, payload).await?;
 
-            debug!(APP_LOGGING, "Published command {:?}", cmd_topic);
+            debug!("Published command {:?}", cmd_topic);
             Ok(())
         } else {
             Err(MQTTError::NotConnected())
@@ -276,24 +283,31 @@ impl MqttSensorClientInner {
                 let sensor_dto = serde_json::from_str::<SensorDataMessage>(payload)?;
 
                 // propagate event to rest of the app
-                if let Err(e) =
-                    sensor_data_sender.send((sensor_id, SensorMessage::Data(sensor_dto)))
-                {
-                    crit!(APP_LOGGING, "Failed broadcast SensorDataMessage: {}", e);
+                if let Err(e) = sensor_data_sender.send((
+                    sensor_id,
+                    SensorMessage::Data(tracing::Span::current(), sensor_dto),
+                )) {
+                    error!(
+                        sensor_id = sensor_id,
+                        "Failed broadcast SensorDataMessage: {}", e
+                    );
                 }
                 Ok(())
             }
             Self::LOG_TOPIC => {
                 debug!(
-                    APP_LOGGING,
-                    "[Sensor({})] logs: {}",
-                    sensor_id,
+                    sensor_id = sensor_id,
+                    "Sensor logged: {}",
                     payload.to_string()
                 );
-                if let Err(e) =
-                    sensor_data_sender.send((sensor_id, SensorMessage::Log(payload.to_string())))
-                {
-                    crit!(APP_LOGGING, "Failed broadcast SensorLogMessage: {}", e);
+                if let Err(e) = sensor_data_sender.send((
+                    sensor_id,
+                    SensorMessage::Log(tracing::Span::current(), payload.to_string()),
+                )) {
+                    error!(
+                        sensor_id = sensor_id,
+                        "Failed broadcast SensorLogMessage: {}", e
+                    );
                 }
                 Ok(())
             }
@@ -348,10 +362,7 @@ impl MqttSensorClientInner {
             false,
         ));
         if let Some(credentials) = &broker.credentials {
-            debug!(
-                APP_LOGGING,
-                "Authentication to broker as: {}", credentials.username
-            );
+            debug!("Authentication to broker as: {}", credentials.username);
             options.set_credentials(credentials.username.clone(), credentials.password.clone());
         }
         Ok(options)

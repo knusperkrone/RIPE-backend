@@ -1,16 +1,16 @@
 use crate::AgentMessage;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tracing::{debug, error};
 
 #[derive(Debug)]
 pub struct AgentStreamReceiver {
-    _logger: slog::Logger,
     proxy: Receiver<AgentMessage>,
     last_command: Option<i32>,
 }
 
 #[derive(Debug)]
 pub struct AgentStreamSender {
-    proxy: Option<(slog::Logger, Sender<AgentMessage>)>,
+    proxy: Option<Sender<AgentMessage>>,
 }
 
 #[derive(Debug)]
@@ -19,16 +19,15 @@ pub struct AgentStream {
     pub receiver: AgentStreamReceiver,
 }
 
-impl AgentStream {
-    pub fn new(logger: slog::Logger) -> Self {
+impl Default for AgentStream {
+    fn default() -> Self {
         let (sender, receiver) = channel::<AgentMessage>(16);
 
         Self {
             sender: AgentStreamSender {
-                proxy: Some((logger.clone(), sender)),
+                proxy: Some(sender),
             },
             receiver: AgentStreamReceiver {
-                _logger: logger.clone(),
                 last_command: None,
                 proxy: receiver,
             },
@@ -42,9 +41,10 @@ impl AgentStreamSender {
     }
 
     pub fn send(&self, msg: AgentMessage) {
-        if let Some((logger, sender)) = &self.proxy {
+        debug!("Sending message: {:?}", msg);
+        if let Some(sender) = &self.proxy {
             if let Err(e) = sender.try_send(msg) {
-                error!(logger, "Failed to send message to Sender {}", e);
+                error!("Failed to send message to Sender {}", e);
             }
         } else {
             panic!("Tried to send message from a sentinel");
@@ -56,15 +56,19 @@ impl AgentStreamReceiver {
     pub async fn recv(&mut self) -> Result<Option<AgentMessage>, std::io::Error> {
         match self.proxy.recv().await {
             Some(msg) => {
-                if let Some(last_command) = self.last_command {
-                    if let AgentMessage::Command(cmd) = msg {
-                        if cmd == last_command {
-                            return Ok(None);
+                if let AgentMessage::Command(cmd) = msg {
+                    match self.last_command {
+                        Some(last_command) => {
+                            if cmd == last_command {
+                                return Ok(None);
+                            }
+                            self.last_command = Some(cmd);
                         }
-                        self.last_command = Some(cmd);
+                        None => {
+                            self.last_command = Some(cmd);
+                        }
                     }
                 }
-
                 Ok(Some(msg))
             }
             None => Err(std::io::Error::new(

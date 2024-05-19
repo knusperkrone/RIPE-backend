@@ -1,7 +1,9 @@
 mod agent;
 mod ticker;
 
-use crate::{error::WasmPluginError, logging::APP_LOGGING, sensor::handle::SensorMQTTCommand};
+use self::agent::WasmAgent;
+use super::{Agent, AgentFactoryTrait, AgentLib};
+use crate::{error::WasmPluginError, sensor::handle::SensorMQTTCommand};
 use parking_lot::{Mutex, RwLock};
 use ripe_core::{error::AgentError, AgentStream, AgentStreamSender, AgentTrait, SensorDataMessage};
 use std::{
@@ -14,13 +16,11 @@ use std::{
 };
 use ticker::TimerFuture;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::{debug, error, info, warn};
 use wasmer::{
     imports, wat2wasm, AsStoreMut, Function, FunctionEnv, Instance, Memory, MemoryType, Module,
     Store, TypedFunction, WasmTypeList,
 };
-
-use self::agent::WasmAgent;
-use super::{Agent, AgentFactoryTrait, AgentLib};
 
 #[derive(Clone)]
 pub struct WasmerInstanceCallEnv {
@@ -43,6 +43,7 @@ impl<'a> Drop for WasmerMallocPtr<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct WasmAgentFactory {
     store: Arc<RwLock<Store>>,
     libraries: HashMap<String, Arc<Module>>, // <agent_name, Module>
@@ -110,11 +111,11 @@ impl AgentFactoryTrait for WasmAgentFactory {
             let bytes = bytes_res.unwrap();
             return match self.load_wasm_file(bytes, agent_name) {
                 Ok(_) => {
-                    info!(APP_LOGGING, "Loaded wasm {}", filename);
+                    info!("Loaded wasm {}", filename);
                     Some(agent_name.to_owned())
                 }
                 Err(err) => {
-                    warn!(APP_LOGGING, "Invalid wasm {:?}: {}", filename, err);
+                    warn!("Invalid wasm {:?}: {}", filename, err);
                     None
                 }
             };
@@ -284,8 +285,6 @@ impl WasmAgentFactory {
 mod stubs {
     use wasmer::{AsStoreRef, FunctionEnvMut};
 
-    use crate::plugin::logging::PLUGIN_LOGGING;
-
     use super::*;
 
     pub fn abort(
@@ -301,10 +300,9 @@ mod stubs {
         let filename =
             read_c_str(&store.as_store_ref(), &env.memory, filename_ptr).unwrap_or_default();
         error!(
-            PLUGIN_LOGGING,
-            "sensor[{}][{}] ABORT with {} at {}:{}:{}",
-            env.sensor_id,
-            env.agent_name,
+            sensor_id = env.sensor_id,
+            agent_name = env.agent_name.as_str(),
+            "ABORT with {} at {}:{}:{}",
             msg,
             filename,
             line_nr,
@@ -319,14 +317,17 @@ mod stubs {
         }
 
         if let Some(msg) = read_c_str(&env.store.read().as_store_ref(), &env.memory, ptr) {
-            debug!(
-                PLUGIN_LOGGING,
-                "sensor[{}][{}] log: {}", env.sensor_id, env.agent_name, msg
+            info!(
+                sensor_id = env.sensor_id,
+                agent_name = env.agent_name.as_str(),
+                "log: {}",
+                msg
             );
         } else {
             warn!(
-                PLUGIN_LOGGING,
-                "sensor[{}][{}] invalid msg buffer!", env.sensor_id, env.agent_name
+                sensor_id = env.sensor_id,
+                agent_name = env.agent_name.as_str(),
+                "Invalid msg buffer!",
             );
         }
     }
@@ -334,8 +335,10 @@ mod stubs {
     pub fn sleep(env: FunctionEnvMut<WasmerInstanceCallEnv>, ms: u64) {
         let env = env.data();
         debug!(
-            PLUGIN_LOGGING,
-            "sensor[{}][{}] sleep for {}", env.sensor_id, env.agent_name, ms
+            sensor_id = env.sensor_id,
+            agent_name = env.agent_name.as_str(),
+            "Sleeping for {}",
+            ms
         );
         tokio::runtime::Handle::current()
             .block_on(TimerFuture::new(std::time::Duration::from_millis(ms)));

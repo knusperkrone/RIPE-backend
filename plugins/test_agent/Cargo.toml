@@ -11,5 +11,5 @@ crate-type = ["cdylib"]
 [dependencies]
 ripe_core = { path = "../../core" }
 chrono-tz = "*"
-slog = "*"
 tokio = "*"
+tracing = "*"

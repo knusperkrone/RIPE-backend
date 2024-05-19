@@ -1,14 +1,11 @@
 use crate::config::CONFIG;
-use logging::APP_LOGGING;
 use sqlx::migrate::Migrator;
+use tracing::{error, info, Level};
 
-#[macro_use]
-extern crate slog;
 extern crate yaml_rust;
 
 mod config;
 mod error;
-mod logging;
 mod models;
 mod mqtt;
 mod plugin;
@@ -25,13 +22,15 @@ async fn connect_db() -> sqlx::PgPool {
         )
         .await
         {
-            if MIGRATOR.run(&db_conn).await.is_ok() {
-                info!(APP_LOGGING, "Run migrations");
-                return db_conn;
+            match MIGRATOR.run(&db_conn).await {
+                Ok(_) => info!("Migrations run successfully"),
+                Err(e) => {
+                    error!("Failed to run migrations: {:?}", e);
+                }
             }
             return db_conn;
         }
-        error!(APP_LOGGING, "Couldn't connect to db [{}/15]", i);
+        error!("Couldn't connect to db [{}/15]", i);
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
     panic!("No db connection etablished");
@@ -39,9 +38,10 @@ async fn connect_db() -> sqlx::PgPool {
 
 #[tokio::main]
 pub async fn main() -> std::io::Result<()> {
-    env_logger::init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
     plugin::agent::register_sigint_handler();
 
+    info!("Starting up");
     // Init Observer service
     let plugin_path = CONFIG.plugin_dir();
     let plugin_dir = std::path::Path::new(&plugin_path);

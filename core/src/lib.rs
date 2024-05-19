@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate slog;
-
 mod agent;
 pub mod error;
 mod messaging;
@@ -15,11 +12,8 @@ pub use stubs::*;
 pub static CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static RUSTC_VERSION: &str = env!("RUSTC_VERSION");
 
-type AgentBuilder = extern "Rust" fn(
-    config: Option<&str>,
-    logger: slog::Logger,
-    sender: AgentStreamSender,
-) -> Box<dyn AgentTrait>;
+type AgentBuilder =
+    extern "Rust" fn(config: Option<&str>, sender: AgentStreamSender) -> Box<dyn AgentTrait>;
 
 pub struct PluginDeclaration {
     pub rustc_version: &'static str,

@@ -12,6 +12,6 @@ ripe_core = { path = "../../core" }
 chrono = "*"
 chrono-tz = "*"
 serde= "*"
-slog = "*"
 tokio = "*"
 serde_json = "1" 
+tracing = "*"

@@ -1,14 +1,11 @@
-#[macro_use]
-extern crate slog;
-
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
 use chrono_tz::Tz;
 use ripe_core::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{info, error};
 
 const NAME: &str = "PercentAgent";
-const VERSION_CODE: u32 = 1;
+const VERSION_CODE: u32 = 2;
 
 export_plugin!(NAME, VERSION_CODE, build_agent);
 
@@ -18,7 +15,6 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 #[no_mangle]
 extern "Rust" fn build_agent(
     config: Option<&str>,
-    logger: slog::Logger,
     sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     let mut agent = PercentAgent::default();
@@ -28,18 +24,12 @@ extern "Rust" fn build_agent(
         }
     }
 
-    Box::new(PercentAgent {
-        logger,
-        sender,
-        ..agent
-    })
+    Box::new(PercentAgent { sender, ..agent })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct PercentAgent {
     val: i32,
-    #[serde(skip, default = "ripe_core::logger_sentinel")]
-    logger: slog::Logger,
     #[serde(skip, default = "ripe_core::sender_sentinel")]
     sender: AgentStreamSender,
 }
@@ -48,7 +38,6 @@ impl Default for PercentAgent {
     fn default() -> Self {
         PercentAgent {
             val: 50,
-            logger: ripe_core::logger_sentinel(),
             sender: ripe_core::sender_sentinel(),
         }
     }
@@ -64,11 +53,13 @@ impl AgentTrait for PercentAgent {
     fn handle_cmd(&mut self, mut payload: i64) {
         payload /= 10;
         if payload < 0 || payload > 100 {
-            warn!(self.logger, "Invalid command {}", payload);
+            error!("Invalid command {}", payload);
             return;
         }
 
         self.val = payload as i32;
+
+        info!("Transient set command to: {}", self.val);
         self.sender.send(AgentMessage::Command(self.val));
     }
 

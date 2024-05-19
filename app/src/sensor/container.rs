@@ -4,6 +4,7 @@ use crate::error::DBError;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
+#[derive(Debug)]
 pub struct SensorContainer {
     sensors: HashMap<i32, Mutex<SensorHandle>>,
 }

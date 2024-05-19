@@ -1,16 +1,15 @@
 use super::ConcurrentObserver;
 use crate::error::{DBError, ObserverError};
-use crate::logging::APP_LOGGING;
 use crate::models::{
     agent,
     agent_command::{self, AgentCommandDao},
 };
-
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use ripe_core::AgentConfigType;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::info;
 
 pub struct AgentObserver {
     inner: Arc<ConcurrentObserver>,
@@ -49,8 +48,10 @@ impl AgentObserver {
         sensor.add_agent(agent);
 
         info!(
-            APP_LOGGING,
-            "Added agent {}, {} to sensor {}", agent_name, domain, sensor_id
+            sensor_id = sensor.id(),
+            agent_name = agent_name,
+            domain = domain,
+            "Added agent to sensor",
         );
         Ok(())
     }
@@ -74,8 +75,10 @@ impl AgentObserver {
         agent::delete(&self.inner.db_conn, sensor.id(), agent).await?;
 
         info!(
-            APP_LOGGING,
-            "Removed agent {}, {} from sensor {}", agent_name, domain, sensor_id
+            sensor_id = sensor_id,
+            agent_name = agent_name,
+            domain = domain,
+            "Removed agent from sensor"
         );
         Ok(())
     }

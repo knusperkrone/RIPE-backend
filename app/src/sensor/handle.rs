@@ -1,4 +1,3 @@
-use crate::logging::APP_LOGGING;
 use crate::models::agent::AgentConfigDao;
 use crate::models::sensor::SensorDao;
 use crate::plugin::Agent;
@@ -6,18 +5,22 @@ use crate::{
     error::{DBError, ObserverError},
     plugin::AgentFactory,
 };
+
 use chrono_tz::Tz;
 use ripe_core::{error::AgentError, AgentConfigType, SensorDataMessage};
 use std::sync::Arc;
 use std::{collections::HashMap, vec::Vec};
+use tracing::{debug, error, info};
 
 #[derive(Debug)]
 pub struct SensorMQTTCommand {
+    pub tracing: tracing::Span,
     pub sensor_id: i32,
     pub domain: Arc<String>,
     pub payload: i32,
 }
 
+#[derive(Debug)]
 pub struct SensorHandle {
     pub dao: SensorDao,
     pub agents: Vec<Agent>,
@@ -44,8 +47,7 @@ impl SensorHandle {
             .collect();
         agents.sort_by(|a, b| a.domain().cmp(b.domain()));
 
-        debug!(
-            APP_LOGGING,
+        info!(
             "Loaded sensor \"{}\" with {} agents",
             sensor.name(),
             agents.len()
@@ -73,18 +75,11 @@ impl SensorHandle {
                     Some(outdated.deserialize().state_json()),
                 ) {
                     *outdated = updated;
-                    debug!(
-                        APP_LOGGING,
-                        "Sensor {} updated: {}",
-                        self.dao.id(),
-                        updated_lib
-                    );
+                    debug!(sensor_id = self.dao.id(), "Sensor updated: {}", updated_lib);
                 } else {
                     error!(
-                        APP_LOGGING,
-                        "Sensor {} failed updating: {}",
-                        self.dao.id(),
-                        updated_lib
+                        sensor_id = self.dao.id(),
+                        "Failed to update sensor: {}", updated_lib
                     );
                 }
             }

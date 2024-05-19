@@ -1,5 +1,4 @@
 use super::AgentLib;
-use crate::logging::APP_LOGGING;
 use crate::{models::agent::AgentConfigDao, sensor::handle::SensorMQTTCommand};
 use chrono_tz::Tz;
 use parking_lot::{Mutex, RwLock};
@@ -16,6 +15,7 @@ use std::{
     },
 };
 use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
+use tracing::{debug, error, info, warn, Instrument};
 use uuid::Uuid;
 
 static TERMINATED: AtomicBool = AtomicBool::new(false);
@@ -34,10 +34,7 @@ pub fn register_sigint_handler() {
         }
 
         TERMINATED.store(true, Ordering::Relaxed);
-        info!(
-            APP_LOGGING,
-            "Waiting for {} agent tasks to finish..", task_count
-        );
+        info!("Waiting for {} agent tasks to finish..", task_count);
     })
     .unwrap();
 }
@@ -78,7 +75,6 @@ impl Drop for Agent {
         }
 
         debug!(
-            APP_LOGGING,
             "Lib references {}",
             Arc::strong_count(&self.inner.agent_lib.0)
         );
@@ -126,8 +122,11 @@ impl Agent {
 
     pub fn handle_cmd(&mut self, cmd: i64) {
         info!(
-            APP_LOGGING,
-            "{}-{} agent cmd: {}", self.inner.sensor_id, self.inner.domain, cmd
+            sensor_id = &self.inner.sensor_id,
+            domain = *self.inner.domain,
+            agent_name = *self.inner.agent_name,
+            "Handle cmd: {}",
+            cmd
         );
         self.agent_proxy.handle_cmd(cmd);
     }
@@ -184,29 +183,42 @@ impl Agent {
         iac_sender: UnboundedSender<SensorMQTTCommand>,
         mut plugin_receiver: AgentStreamReceiver,
     ) {
-        info!(
-            APP_LOGGING,
-            "[{}][{}]Iac ready", agent.sensor_id, agent.domain
+        let span = tracing::info_span!(
+            "dispatch_iac",
+            sensor_id = agent.sensor_id,
+            domain = *agent.domain,
+            agent_name = *agent.agent_name
         );
+        let _enter = span.enter();
 
-        while let Ok(payload_opt) = plugin_receiver.recv().await {
+        info!("Iac ready",);
+
+        while let Ok(payload_opt) = plugin_receiver.recv().instrument(span.clone()).await {
             if payload_opt.is_none() {
                 continue;
             }
             match payload_opt.unwrap() {
                 AgentMessage::OneshotTask(agent_task_builder) => {
-                    Agent::dispatch_oneshot_task(agent.clone(), agent_task_builder).await;
+                    Agent::dispatch_oneshot_task(agent.clone(), agent_task_builder)
+                        .instrument(span.clone())
+                        .await;
                 }
                 AgentMessage::RepeatedTask(delay, interval_task) => {
-                    Agent::dispatch_repating_task(agent.clone(), delay, interval_task).await;
+                    Agent::dispatch_repating_task(agent.clone(), delay, interval_task)
+                        .instrument(span.clone())
+                        .await;
                 }
                 AgentMessage::Command(command) => {
                     debug!(
-                        APP_LOGGING,
-                        "[{}][{}] Received command {:?}", agent.sensor_id, agent.domain, command
+                        sensor_id = agent.sensor_id,
+                        domain = *agent.domain,
+                        agent_name = *agent.agent_name,
+                        "Received command {:?}",
+                        command
                     );
                     // Notify main loop over agent
                     let mut msg = SensorMQTTCommand {
+                        tracing: span.clone(),
                         sensor_id: agent.sensor_id,
                         domain: agent.domain.clone(),
                         payload: command,
@@ -214,42 +226,47 @@ impl Agent {
                     let mut tries = 3;
                     while tries != 0 {
                         if let Err(e) = iac_sender.send(msg) {
-                            error!(APP_LOGGING, "[{}/3] Failed iac send: {}", tries, e);
+                            error!(
+                                sensor_id = agent.sensor_id,
+                                domain = *agent.domain,
+                                agent_name = *agent.agent_name,
+                                "[{}/3] Failed iac send: {}",
+                                tries,
+                                e
+                            );
                             tries -= 1;
                             msg = e.0;
                         } else {
                             break;
                         }
                     }
-                    debug!(APP_LOGGING, "Handled receive command {:?}", command);
+                    info!(
+                        sensor_id = agent.sensor_id,
+                        domain = *agent.domain,
+                        agent_name = *agent.agent_name,
+                        "Handled command {:?}",
+                        command
+                    );
                 }
             };
-            debug!(
-                APP_LOGGING,
-                "[{}][{}]Iac ready for next message", agent.sensor_id, agent.domain
-            );
         }
         info!(
-            APP_LOGGING,
-            "[{}][{}]Iac ended", agent.sensor_id, agent.domain
+            sensor_id = agent.sensor_id,
+            domain = *agent.domain,
+            agent_name = *agent.agent_name,
+            "Iac ended"
         );
     }
 
     async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) {
-            info!(
-                APP_LOGGING,
-                "Task for {} {} was declined as app recv SIGINT", agent.sensor_id, agent.agent_name
-            );
+            info!("Task for was declined as app recv SIGINT");
             return;
         } else if agent.task_handles.lock().len() > MAX_TASK_COUNT {
-            info!(APP_LOGGING, "Task was declined due too many running tasks");
+            info!("Task was declined due too many running tasks");
             return;
         }
-        info!(
-            APP_LOGGING,
-            "[{}][{}] Dispatching oneshot task for", agent.sensor_id, agent.agent_name
-        );
+        info!("Dispatching oneshot task");
 
         // Run as task a sender messenges are blocked otherwise
         let task_id = Uuid::new_v4();
@@ -258,28 +275,24 @@ impl Agent {
         let one_shot_future = async move {
             let mut task_count = TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
             debug!(
-                APP_LOGGING,
-                "Spawning new task for sensor: {} - active tasks: {}", agent.sensor_id, task_count
+                "Spawning new task for sensor, with active tasks: {}",
+                task_count
             );
 
             // This is actual vodoo
             let handle = tokio::runtime::Handle::current();
             let res = tokio::join!(tokio::spawn(agent_task.build_future(handle)));
             if let (Err(err),) = res {
-                error!(
-                    APP_LOGGING,
-                    "Task for {} {} failed: {:?}", agent.sensor_id, agent.agent_name, err
-                );
+                error!("Task failed: {:?}", err);
             }
 
             task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
             info!(
-                APP_LOGGING,
-                "Ended new oneshot task for sensor: {} - active tasks: {}",
-                agent.sensor_id,
+                "Ended new oneshot task, remaining active tasks: {}",
                 task_count
             );
             if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
+                info!("Last task finished - exiting app as SIGINT was received");
                 std::process::exit(0);
             }
 
@@ -300,23 +313,14 @@ impl Agent {
     ) {
         let repeat_agent = agent.clone();
         if agent.repeat_task_handle.read().is_some() {
-            warn!(
-                APP_LOGGING,
-                "[{}][{}] already has a repeating task", agent.sensor_id, agent.agent_name,
-            );
+            warn!("Agent already has a repeating task - aborting new task");
             return;
         }
-        info!(
-            APP_LOGGING,
-            "[{}][{}] Dispatching repeating task", agent.sensor_id, agent.agent_name
-        );
+        info!("Dispatching repeating task");
 
         let repeating_future = async move {
             debug!(
-                APP_LOGGING,
-                "Starting repeating task for sensor: {}, {} - sleep duration: {:?}",
-                repeat_agent.sensor_id,
-                repeat_agent.agent_name,
+                "Starting repeating task for sensor, with sleep duration: {:?}",
                 delay,
             );
 
@@ -327,6 +331,7 @@ impl Agent {
 
                 let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                 if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
+                    info!("Last task finished - exiting app as SIGINT was received");
                     std::process::exit(0);
                 }
 
@@ -337,20 +342,14 @@ impl Agent {
                         }
                     }
                     (Err(_),) => {
-                        warn!(
-                            APP_LOGGING,
-                            "Repeating task for sensor: {} was aborted", repeat_agent.sensor_id
-                        );
+                        error!("Repeating task for sensor was aborted",);
                         break;
                     }
                 };
                 tokio::time::sleep(delay).await;
             }
 
-            info!(
-                APP_LOGGING,
-                "Ended repeating task for sensor: {}", repeat_agent.sensor_id
-            );
+            info!("Ended repeating task",);
             *repeat_agent.repeat_task_handle.write() = None;
         };
 

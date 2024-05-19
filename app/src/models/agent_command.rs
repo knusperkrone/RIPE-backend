@@ -15,7 +15,7 @@ pub async fn insert(
     domain: &str,
     command: i32,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    sql_stmnt!(
         r#"INSERT INTO agent_commands
                 (sensor_id, domain, command)
                 VALUES ($1, $2, $3)"#,
@@ -34,7 +34,7 @@ pub async fn get(
     from: DateTime<Utc>,
     until: DateTime<Utc>,
 ) -> Result<Vec<AgentCommandDao>, sqlx::Error> {
-    let result = sqlx::query_as!(
+    let result = sql_stmnt!(
         AgentCommandDao,
         r#"SELECT *
                 FROM agent_commands

@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate slog;
-
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_tz::Tz;
 use crossbeam::atomic::AtomicCell;
@@ -14,6 +11,7 @@ use std::{
         Arc, RwLock,
     },
 };
+use tracing::{error, info, warn};
 
 const NAME: &str = "ThresholdAgent";
 const VERSION_CODE: u32 = 1;
@@ -27,24 +25,19 @@ export_plugin!(NAME, VERSION_CODE, build_agent);
 #[no_mangle]
 extern "Rust" fn build_agent(
     config: Option<&str>,
-    logger: slog::Logger,
     sender: AgentStreamSender,
 ) -> Box<dyn AgentTrait> {
     let mut agent: ThresholdAgent = ThresholdAgent::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdAgent>(&config_json) {
-            debug!(logger, "Restored {} from config", NAME);
+            info!("Restored {} from config", NAME);
             agent = deserialized;
         } else {
-            warn!(
-                logger,
-                "{} coulnd't get restored from config {}", NAME, config_json
-            );
+            warn!("{} coulnd't get restored from config {}", NAME, config_json);
         }
     };
 
     Box::new(ThresholdAgent {
-        logger,
         sender: Arc::new(sender),
         ..agent
     })
@@ -52,8 +45,6 @@ extern "Rust" fn build_agent(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ThresholdAgent {
-    #[serde(skip, default = "ripe_core::logger_sentinel")]
-    logger: slog::Logger,
     #[serde(skip, default = "ripe_core::sender_sentinel_arc")]
     sender: Arc<AgentStreamSender>,
     #[serde(skip)]
@@ -80,7 +71,6 @@ impl PartialEq for ThresholdAgent {
 impl Default for ThresholdAgent {
     fn default() -> Self {
         ThresholdAgent {
-            logger: ripe_core::logger_sentinel(),
             sender: ripe_core::sender_sentinel_arc(),
             task_cell: RwLock::default(),
             state: AgentState::Ready.into(),
@@ -97,9 +87,14 @@ impl AgentTrait for ThresholdAgent {
     fn init(&mut self) {}
 
     fn handle_data(&mut self, data: &SensorDataMessage) {
+        if data.moisture.is_none() {
+            warn!("No moisture provided");
+            return;
+        }
+
         if let Ok(task) = self.task_cell.read() {
             if task.is_active() {
-                debug!(self.logger, "No action, as already running");
+                info!("No action, we are already running");
                 return;
             }
         }
@@ -109,31 +104,25 @@ impl AgentTrait for ThresholdAgent {
                 .last_action
                 .unwrap_or(DateTime::from_naive_utc_and_offset(NaiveDateTime::MIN, Utc));
         if watering_delta.num_milliseconds() < self.action_cooldown_ms {
-            debug!(
-                self.logger,
+            info!(
                 "Still in cooldown for {} ms",
                 self.action_cooldown_ms - watering_delta.num_milliseconds()
             );
             return;
         }
 
-        if data.moisture.is_none() {
-            debug!(self.logger, "No moisture provided");
-            return;
-        }
-
         let moisture = data.moisture.unwrap_or(std::f64::MAX) as u32;
         if moisture < self.min_threshold {
-            debug!(self.logger, "{} moisture below threshold", NAME);
+            info!("{} moisture below threshold", NAME);
             let until = Utc::now() + Duration::milliseconds(self.action_duration_ms);
             self.last_action = Some(until);
             if let Ok(mut task) = self.task_cell.write() {
-                task.kickoff(false, until, self.logger.clone(), self.sender.clone());
+                task.kickoff(false, until, self.sender.clone());
             }
         } else {
-            debug!(
-                self.logger,
-                "{} moisture was fine {}% < {}%", NAME, moisture, self.min_threshold
+            info!(
+                "{} moisture was fine {}% < {}%",
+                NAME, moisture, self.min_threshold
             );
         }
     }
@@ -144,12 +133,12 @@ impl AgentTrait for ThresholdAgent {
         if let Ok(mut task) = self.task_cell.write() {
             if is_enabled {
                 if let Some(until) = AgentUIDecorator::transform_cmd_timepane(payload) {
-                    debug!(self.logger, "Threshold agent received run until {}", until);
+                    info!("Threshold agent received run until {}", until);
                     self.last_action = Some(Utc::now());
-                    task.kickoff(true, until, self.logger.clone(), self.sender.clone());
+                    task.kickoff(true, until, self.sender.clone());
                 }
             } else {
-                debug!(self.logger, "Threshold agent received abort");
+                info!("Threshold agent received abort");
                 task.abort();
             }
         }
@@ -241,25 +230,25 @@ impl AgentTrait for ThresholdAgent {
         if let AgentConfigType::Switch(_val) = &values["01_active"] {
             //
         } else {
-            error!(self.logger, "No active");
+            error!("No active");
             return false;
         }
         if let AgentConfigType::IntSlider(_l, _u, val) = &values["02_min_threshold"] {
             min_threshold = *val;
         } else {
-            error!(self.logger, "No min_threshold");
+            error!("No min_threshold");
             return false;
         }
         if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["03_action_duration_ms"] {
             action_duration_ms = *val;
         } else {
-            error!(self.logger, "No action_duration_ms");
+            error!("No action_duration_ms");
             return false;
         }
         if let AgentConfigType::TimeSlider(_l, _u, val, _s) = &values["04_action_cooldown_ms"] {
             action_cooldown_ms = *val;
         } else {
-            error!(self.logger, "No action_cooldown_ms");
+            error!("No action_cooldown_ms");
             return false;
         }
 
@@ -286,7 +275,6 @@ struct ThresholdTaskInner {
     state: AtomicCell<AgentState>,
     sender: Arc<AgentStreamSender>,
     until: AtomicCell<DateTime<Utc>>,
-    logger: slog::Logger,
     is_forced: bool,
 }
 
@@ -297,7 +285,6 @@ impl Default for ThresholdTask {
                 aborted: Arc::new(AtomicBool::from(false)),
                 state: AtomicCell::new(AgentState::Ready),
                 until: AtomicCell::new(Utc::now()),
-                logger: ripe_core::logger_sentinel(),
                 sender: Arc::new(ripe_core::sender_sentinel()),
                 is_forced: false,
             }),
@@ -310,7 +297,6 @@ impl ThresholdTask {
         &mut self,
         is_forced: bool,
         until: DateTime<Utc>,
-        logger: slog::Logger,
         sender: Arc<AgentStreamSender>,
     ) {
         if self.is_active() {
@@ -329,7 +315,6 @@ impl ThresholdTask {
             aborted: Arc::new(AtomicBool::new(false)),
             state: AtomicCell::new(AgentState::Ready),
             until: AtomicCell::new(until),
-            logger,
             sender,
             is_forced,
         });
@@ -342,7 +327,11 @@ impl ThresholdTask {
     }
 
     pub fn abort(&mut self) {
+        self.task_config
+            .sender
+            .send(AgentMessage::Command(CMD_INACTIVE));
         self.task_config.aborted.store(true, Ordering::Relaxed);
+        info!("{} aborted Task and disabled", NAME)
     }
 
     fn state(&self) -> AgentState {
@@ -365,7 +354,6 @@ impl FutBuilder for ThresholdTaskBuilder {
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let config = self.task_config.clone();
         Box::pin(async move {
-            let start = Utc::now();
             let running_state = if config.is_forced {
                 AgentState::Forced(config.until.load())
             } else {
@@ -375,32 +363,23 @@ impl FutBuilder for ThresholdTaskBuilder {
             config.state.store(running_state);
             config.sender.send(AgentMessage::Command(CMD_ACTIVE));
 
-            debug!(
-                config.logger,
-                "{} started Task until {}",
-                NAME,
-                config.until.load()
+            info!("{} started Task until {}", NAME, config.until.load());
+
+            let delta = config.until.load() - Utc::now();
+            ripe_core::sleep(
+                &runtime,
+                std::time::Duration::from_millis(delta.num_milliseconds() as u64),
             );
 
-            while Utc::now() < config.until.load() && !config.aborted.load(Ordering::Relaxed) {
-                ripe_core::sleep(&runtime, std::time::Duration::from_secs(1));
+            if config.aborted.load(Ordering::Relaxed) {
+                info!("{} exiting aborted Task handle", NAME);
+                return true;
             }
 
             config.state.store(AgentState::Ready);
             config.sender.send(AgentMessage::Command(CMD_INACTIVE));
+            info!("{} ended Task after {} secs", NAME, delta);
 
-            let delta_secs = (Utc::now() - start).num_seconds();
-            if config.aborted.load(Ordering::Relaxed) {
-                debug!(
-                    config.logger,
-                    "{} aborted Task after {} secs", NAME, delta_secs
-                );
-            } else {
-                debug!(
-                    config.logger,
-                    "{} ended Task after {} secs", NAME, delta_secs
-                );
-            }
             true
         })
     }

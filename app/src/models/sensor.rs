@@ -1,7 +1,7 @@
 use super::CountRecord;
 use crate::error::DBError;
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, Debug)]
 pub struct SensorDao {
     pub(crate) id: i32,
     pub(crate) key_b64: String,

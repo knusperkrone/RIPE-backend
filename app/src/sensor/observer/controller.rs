@@ -1,7 +1,7 @@
 use super::ConcurrentObserver;
+use super::{Agent, Sensor};
 use crate::config::CONFIG;
 use crate::error::{DBError, ObserverError};
-use crate::logging::APP_LOGGING;
 use crate::models::{
     sensor,
     sensor_data::{self, SensorDataDao},
@@ -12,8 +12,7 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use ripe_core::SensorDataMessage;
 use std::sync::Arc;
-
-use super::{Agent, Sensor};
+use tracing::{debug, info};
 
 pub struct SensorObserver {
     inner: Arc<ConcurrentObserver>,
@@ -42,7 +41,7 @@ impl SensorObserver {
         let factory = self.inner.agent_factory.read().await;
         match self.inner.insert_sensor(&factory, sensor_dao, None).await {
             Ok(id) => {
-                info!(APP_LOGGING, "Registered new sensor: {}", id);
+                info!(sensor_id = id, "Registered new sensor");
                 Ok(Sensor { id, key })
             }
             Err(err) => {
@@ -65,7 +64,7 @@ impl SensorObserver {
         let sensor = sensor_mtx.lock().await;
         self.inner.mqtt_client.unsubscribe_sensor(&sensor).await?;
 
-        info!(APP_LOGGING, "Removed sensor: {}", sensor_id);
+        info!(sensor_id = sensor_id, "Removed sensor");
         Ok(())
     }
 
@@ -98,7 +97,7 @@ impl SensorObserver {
             })
             .collect();
 
-        debug!(APP_LOGGING, "Fetched sensor status: {}", sensor_id);
+        debug!(sensor_id = sensor_id, "Fetched sensor status");
         Ok((data, agents))
     }
 

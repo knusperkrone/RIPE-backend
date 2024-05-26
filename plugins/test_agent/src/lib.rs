@@ -51,13 +51,12 @@ struct TestFutBuilder {
 impl FutBuilder for TestFutBuilder {
     fn build_future(
         &self,
-        runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let sender = self.sender.clone();
         if self.is_oneshot {
             std::boxed::Box::pin(async move {
                 error!("TASK IS SLEEPING");
-                ripe_core::sleep(&runtime, std::time::Duration::from_secs(5));
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
                 error!("TASK IS AWAKE");
                 sender.send(AgentMessage::Command(1));
@@ -72,7 +71,6 @@ impl FutBuilder for TestFutBuilder {
                 let i = counter.fetch_sub(1, Ordering::Relaxed);
 
                 sender.send(AgentMessage::Command(count));
-
                 i == 0
             })
         }
@@ -115,10 +113,17 @@ impl AgentTrait for TestAgent {
                 counter: Arc::new(AtomicI32::new(5)),
             }),
         ));
+        sender_arc
+            .clone()
+            .send(AgentMessage::OneshotTask(Box::new(TestFutBuilder {
+                is_oneshot: true,
+                sender: sender_arc.clone(),
+                counter: Arc::new(AtomicI32::new(5)),
+            })));
     }
 
-    fn handle_data(&mut self, data: &SensorDataMessage) {
-        info!("Received data: {:?}", data);
+    fn handle_data(&mut self, _data: &SensorDataMessage) {
+        info!("Handle data called");
     }
 
     fn handle_cmd(&mut self, payload: i64) {

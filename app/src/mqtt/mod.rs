@@ -129,7 +129,7 @@ impl MqttSensorClientInner {
     pub const DATA_TOPIC: &'static str = "data";
     pub const LOG_TOPIC: &'static str = "log";
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     pub async fn connect(self: Arc<MqttSensorClientInner>) {
         while !self.is_connected.load(Relaxed) {
             let brokers = CONFIG.brokers();
@@ -145,7 +145,7 @@ impl MqttSensorClientInner {
 
             match eventloop.poll().await {
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                    info!("Connected to MQTT broker");
+                    info!(host = broker.connection.host, "Connected to MQTT broker");
                     let handle = self.clone().listen(eventloop);
                     self.cli.write().await.replace((client, handle));
                     self.is_connected.store(true, Relaxed);
@@ -285,7 +285,10 @@ impl MqttSensorClientInner {
                 // propagate event to rest of the app
                 if let Err(e) = sensor_data_sender.send((
                     sensor_id,
-                    SensorMessage::Data(tracing::Span::current(), sensor_dto),
+                    SensorMessage::Data(
+                        info_span!("mqtt_on_sensor_data", sensor_id = sensor_id, data = ?sensor_dto),
+                        sensor_dto,
+                    ),
                 )) {
                     error!(
                         sensor_id = sensor_id,
@@ -302,7 +305,10 @@ impl MqttSensorClientInner {
                 );
                 if let Err(e) = sensor_data_sender.send((
                     sensor_id,
-                    SensorMessage::Log(tracing::Span::current(), payload.to_string()),
+                    SensorMessage::Log(
+                        info_span!("mqtt_on_sensor_log", sensor_id = sensor_id),
+                        payload.to_string(),
+                    ),
                 )) {
                     error!(
                         sensor_id = sensor_id,

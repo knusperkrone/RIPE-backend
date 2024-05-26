@@ -13,3 +13,4 @@ ripe_core = { path = "../../core" }
 chrono-tz = "*"
 tokio = "*"
 tracing = "*"
+tracing-subscriber = "*"

@@ -10,7 +10,7 @@ use std::{
         Arc, RwLock,
     },
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod time;
 use crate::time::*;
@@ -32,7 +32,7 @@ extern "Rust" fn build_agent(
     let mut inner_agent = TimeAgentInner::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<TimeAgentInner>(&config_json) {
-            info!("Restored {} from config", NAME);
+            debug!("Restored {} from config", NAME);
             inner_agent = deserialized;
         } else {
             warn!("{} coulnd't restore from config {}", NAME, config_json);
@@ -185,7 +185,6 @@ struct TickerFutBuilder {
 impl FutBuilder for TickerFutBuilder {
     fn build_future(
         &self,
-        _runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let inner = self.inner.clone();
         Box::pin(async move {

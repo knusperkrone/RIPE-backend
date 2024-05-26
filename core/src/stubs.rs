@@ -1,6 +1,5 @@
 use crate::AgentStreamSender;
 use std::sync::Arc;
-use tracing::debug;
 
 /*
  * conventions
@@ -10,15 +9,6 @@ pub const CMD_ACTIVE: i32 = 1;
 pub const CMD_INACTIVE: i32 = 0;
 
 pub const DAY_MS: u32 = 86_400_000;
-
-#[tracing::instrument]
-pub fn sleep(runtime: &tokio::runtime::Handle, duration: std::time::Duration) {
-    debug!("Sleeping for {:?}", duration);
-    let _guard = runtime.enter();
-    debug!("Entered runtime");
-    runtime.block_on(tokio::time::sleep(duration));
-    debug!("Slept for {:?}", duration);
-}
 
 pub fn ms_to_hr(time_ms: u32) -> String {
     let seconds = time_ms / 1000;

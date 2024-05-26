@@ -8,6 +8,7 @@ use ripe_core::{
 };
 use std::{
     collections::HashMap,
+    fmt::Debug,
     string::String,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -15,7 +16,7 @@ use std::{
     },
 };
 use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
-use tracing::{debug, error, info, warn, Instrument};
+use tracing::{debug, error, info, warn, Instrument, Span};
 use uuid::Uuid;
 
 static TERMINATED: AtomicBool = AtomicBool::new(false);
@@ -58,6 +59,16 @@ pub struct AgentInner {
     agent_lib: AgentLib,
     repeat_task_handle: RwLock<Option<JoinHandle<()>>>,
     task_handles: Mutex<HashMap<Uuid, JoinHandle<()>>>,
+}
+
+impl Debug for AgentInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        f.debug_struct("AgentInner")
+            .field("sensor_id", &self.sensor_id)
+            .field("domain", &self.domain)
+            .field("agent_name", &self.agent_name)
+            .finish()
+    }
 }
 
 impl Drop for Agent {
@@ -177,23 +188,15 @@ impl Agent {
     /*
      * Helpers
      */
-
+    #[tracing::instrument(skip(iac_sender, plugin_receiver))]
     async fn dispatch_iac(
         agent: Arc<AgentInner>,
         iac_sender: UnboundedSender<SensorMQTTCommand>,
         mut plugin_receiver: AgentStreamReceiver,
     ) {
-        let span = tracing::info_span!(
-            "dispatch_iac",
-            sensor_id = agent.sensor_id,
-            domain = *agent.domain,
-            agent_name = *agent.agent_name
-        );
-        let _enter = span.enter();
-
-        info!("Iac ready",);
-
-        while let Ok(payload_opt) = plugin_receiver.recv().instrument(span.clone()).await {
+        let span = Span::current();
+        info!("Iac ready");
+        while let Ok(payload_opt) = plugin_receiver.recv().await {
             if payload_opt.is_none() {
                 continue;
             }
@@ -204,7 +207,7 @@ impl Agent {
                         .await;
                 }
                 AgentMessage::RepeatedTask(delay, interval_task) => {
-                    Agent::dispatch_repating_task(agent.clone(), delay, interval_task)
+                    Agent::dispatch_repeating_task(agent.clone(), delay, interval_task)
                         .instrument(span.clone())
                         .await;
                 }
@@ -240,12 +243,11 @@ impl Agent {
                             break;
                         }
                     }
-                    info!(
+                    debug!(
                         sensor_id = agent.sensor_id,
                         domain = *agent.domain,
                         agent_name = *agent.agent_name,
-                        "Handled command {:?}",
-                        command
+                        "Dispatched command",
                     );
                 }
             };
@@ -258,6 +260,7 @@ impl Agent {
         );
     }
 
+    #[tracing::instrument(skip_all)]
     async fn dispatch_oneshot_task(agent: Arc<AgentInner>, agent_task: Box<dyn FutBuilder>) {
         if TERMINATED.load(Ordering::Relaxed) {
             info!("Task for was declined as app recv SIGINT");
@@ -280,9 +283,9 @@ impl Agent {
             );
 
             // This is actual vodoo
-            let handle = tokio::runtime::Handle::current();
-            let res = tokio::join!(tokio::spawn(agent_task.build_future(handle)));
-            if let (Err(err),) = res {
+            let fut = agent_task.build_future().in_current_span();
+            let res = tokio::join!(tokio::spawn(fut)).in_current_span();
+            if let (Err(err),) = res.inner() {
                 error!("Task failed: {:?}", err);
             }
 
@@ -299,14 +302,15 @@ impl Agent {
             // remove handle from the list
             let mut handles = future_agent.task_handles.lock();
             handles.remove(&task_id);
-        };
+        }
+        .in_current_span();
 
         // Start abortable task, safe handle and remove handle after completion
         let handle = tokio::task::spawn(one_shot_future);
         task_agent.task_handles.lock().insert(task_id, handle);
     }
 
-    async fn dispatch_repating_task(
+    async fn dispatch_repeating_task(
         agent: Arc<AgentInner>,
         delay: std::time::Duration,
         interval_task: Box<dyn FutBuilder>,
@@ -326,8 +330,8 @@ impl Agent {
 
             loop {
                 let _ = TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let handle = tokio::runtime::Handle::current();
-                let result = tokio::join!(tokio::spawn(interval_task.build_future(handle)));
+                let fut = interval_task.build_future().in_current_span();
+                let result = tokio::join!(tokio::spawn(fut)).in_current_span();
 
                 let task_count = TASK_COUNTER.fetch_sub(1, Ordering::Relaxed) - 1;
                 if task_count == 0 && TERMINATED.load(Ordering::Relaxed) {
@@ -335,9 +339,9 @@ impl Agent {
                     std::process::exit(0);
                 }
 
-                match result {
+                match result.inner() {
                     (Ok(is_finished),) => {
-                        if is_finished {
+                        if *is_finished {
                             break;
                         }
                     }
@@ -351,7 +355,8 @@ impl Agent {
 
             info!("Ended repeating task",);
             *repeat_agent.repeat_task_handle.write() = None;
-        };
+        }
+        .in_current_span();
 
         let handle = tokio::spawn(repeating_future);
         *agent.repeat_task_handle.write() = Some(handle);

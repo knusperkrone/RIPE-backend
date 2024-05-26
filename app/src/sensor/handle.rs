@@ -10,7 +10,7 @@ use chrono_tz::Tz;
 use ripe_core::{error::AgentError, AgentConfigType, SensorDataMessage};
 use std::sync::Arc;
 use std::{collections::HashMap, vec::Vec};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 #[derive(Debug)]
 pub struct SensorMQTTCommand {
@@ -47,7 +47,7 @@ impl SensorHandle {
             .collect();
         agents.sort_by(|a, b| a.domain().cmp(b.domain()));
 
-        info!(
+        debug!(
             "Loaded sensor \"{}\" with {} agents",
             sensor.name(),
             agents.len()

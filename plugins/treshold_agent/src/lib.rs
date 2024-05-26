@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
-    },
+    sync::{Arc, RwLock},
 };
-use tracing::{error, info, warn};
+use tokio::sync::Notify;
+use tokio::time::sleep;
+
+use tracing::{debug, error, info, warn};
 
 const NAME: &str = "ThresholdAgent";
 const VERSION_CODE: u32 = 1;
@@ -30,7 +30,7 @@ extern "Rust" fn build_agent(
     let mut agent: ThresholdAgent = ThresholdAgent::default();
     if let Some(config_json) = config {
         if let Ok(deserialized) = serde_json::from_str::<ThresholdAgent>(&config_json) {
-            info!("Restored {} from config", NAME);
+            debug!("Restored {} from config", NAME);
             agent = deserialized;
         } else {
             warn!("{} coulnd't get restored from config {}", NAME, config_json);
@@ -271,10 +271,10 @@ struct ThresholdTaskBuilder {
 
 #[derive(Debug)]
 struct ThresholdTaskInner {
-    aborted: Arc<AtomicBool>,
     state: AtomicCell<AgentState>,
     sender: Arc<AgentStreamSender>,
     until: AtomicCell<DateTime<Utc>>,
+    notify: Notify,
     is_forced: bool,
 }
 
@@ -282,10 +282,10 @@ impl Default for ThresholdTask {
     fn default() -> Self {
         ThresholdTask {
             task_config: Arc::new(ThresholdTaskInner {
-                aborted: Arc::new(AtomicBool::from(false)),
                 state: AtomicCell::new(AgentState::Ready),
                 until: AtomicCell::new(Utc::now()),
                 sender: Arc::new(ripe_core::sender_sentinel()),
+                notify: Notify::default(),
                 is_forced: false,
             }),
         }
@@ -312,9 +312,9 @@ impl ThresholdTask {
 
         // send new task
         self.task_config = Arc::new(ThresholdTaskInner {
-            aborted: Arc::new(AtomicBool::new(false)),
             state: AtomicCell::new(AgentState::Ready),
             until: AtomicCell::new(until),
+            notify: Notify::default(),
             sender,
             is_forced,
         });
@@ -330,8 +330,7 @@ impl ThresholdTask {
         self.task_config
             .sender
             .send(AgentMessage::Command(CMD_INACTIVE));
-        self.task_config.aborted.store(true, Ordering::Relaxed);
-        info!("{} aborted Task and disabled", NAME)
+        self.task_config.notify.notify_one();
     }
 
     fn state(&self) -> AgentState {
@@ -350,7 +349,6 @@ impl ThresholdTask {
 impl FutBuilder for ThresholdTaskBuilder {
     fn build_future(
         &self,
-        runtime: tokio::runtime::Handle,
     ) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + Sync + 'static>> {
         let config = self.task_config.clone();
         Box::pin(async move {
@@ -365,20 +363,22 @@ impl FutBuilder for ThresholdTaskBuilder {
 
             info!("{} started Task until {}", NAME, config.until.load());
 
-            let delta = config.until.load() - Utc::now();
-            ripe_core::sleep(
-                &runtime,
-                std::time::Duration::from_millis(delta.num_milliseconds() as u64),
+            let start = Utc::now();
+            let delta = config.until.load() - start;
+            tokio::select!(
+                _ = config.notify.notified() => {
+                    info!("{} received abort signal", NAME);
+                },
+                _ = sleep(std::time::Duration::from_millis(delta.num_milliseconds() as u64)) => {}
             );
-
-            if config.aborted.load(Ordering::Relaxed) {
-                info!("{} exiting aborted Task handle", NAME);
-                return true;
-            }
 
             config.state.store(AgentState::Ready);
             config.sender.send(AgentMessage::Command(CMD_INACTIVE));
-            info!("{} ended Task after {} secs", NAME, delta);
+            info!(
+                "{} ended Task after {} secs",
+                NAME,
+                (Utc::now() - start).num_seconds()
+            );
 
             true
         })

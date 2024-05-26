@@ -41,7 +41,6 @@ impl AgentStreamSender {
     }
 
     pub fn send(&self, msg: AgentMessage) {
-        debug!("Sending message: {:?}", msg);
         if let Some(sender) = &self.proxy {
             if let Err(e) = sender.try_send(msg) {
                 error!("Failed to send message to Sender {}", e);
@@ -69,6 +68,7 @@ impl AgentStreamReceiver {
                         }
                     }
                 }
+                debug!("Received message: {:?}", msg);
                 Ok(Some(msg))
             }
             None => Err(std::io::Error::new(

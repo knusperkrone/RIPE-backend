@@ -202,6 +202,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "build_cfg"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f95329d496e3914b5e70366e72f9f2fd96b6a8c03745ca861377643cbbfc512f"
+dependencies = [
+ "build_cfg_macros",
+ "build_cfg_shared",
+]
+
+[[package]]
+name = "build_cfg_macros"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "270ae0088c61152c648c49d7b294280f33d0c916ba7815d44ca9bc3a34c91476"
+dependencies = [
+ "build_cfg_shared",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "build_cfg_shared"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9f6da7ae2d9f5d54c8373c6c42e919889f20aea45c5ae0cc7ae1b5f4dfb4d78"
+dependencies = [
+ "derive_more",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -301,6 +332,12 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "convert_case"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
 name = "core-foundation"
@@ -595,6 +632,19 @@ checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
 dependencies = [
  "proc-macro2",
  "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "derive_more"
+version = "0.99.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
+dependencies = [
+ "convert_case",
+ "proc-macro2",
+ "quote",
+ "rustc_version",
  "syn 1.0.109",
 ]
 
@@ -1714,6 +1764,7 @@ dependencies = [
  "slog",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2073,6 +2124,7 @@ dependencies = [
 name = "ripe_core"
 version = "0.1.0"
 dependencies = [
+ "build_cfg",
  "chrono",
  "chrono-tz",
  "once_cell",
@@ -2849,6 +2901,7 @@ dependencies = [
  "ripe_core",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2892,6 +2945,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3081,6 +3135,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

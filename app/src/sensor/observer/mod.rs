@@ -18,7 +18,6 @@ use notify::{Config, PollWatcher, Watcher};
 use ripe_core::AgentUI;
 use ripe_core::SensorDataMessage;
 use sqlx::PgPool;
-use std::fmt::Debug;
 use std::iter::zip;
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -49,12 +48,6 @@ pub struct ConcurrentObserver {
     data_receveiver: Mutex<UnboundedReceiver<(i32, SensorMessage)>>,
 }
 
-impl Debug for ConcurrentObserver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConcurrentObserver").finish()
-    }
-}
-
 impl ConcurrentObserver {
     pub fn new(plugin_dir: &Path, db_conn: PgPool) -> Arc<Self> {
         let (iac_sender, iac_receiver) = unbounded_channel::<SensorMQTTCommand>();
@@ -75,7 +68,7 @@ impl ConcurrentObserver {
         Arc::new(observer)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     pub async fn init(&self) {
         self.load_plugins().await;
         self.mqtt_client.connect().await;
@@ -85,7 +78,7 @@ impl ConcurrentObserver {
         }
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     pub async fn load_plugins(&self) {
         let mut agent_factory = self.agent_factory.write().await;
         agent_factory.load_new_plugins(self.plugin_dir.as_path());
@@ -95,6 +88,7 @@ impl ConcurrentObserver {
     /// After a successful connection, the agent's get inited from the database
     /// On each message event the according sensor get's called and the data get's persistet
     /// Blocks caller thread in infinite loop
+    #[tracing::instrument(skip(self))]
     pub async fn dispatch_mqtt_receive_loop(self: Arc<ConcurrentObserver>) {
         let reveiver_res = self.data_receveiver.try_lock();
         if reveiver_res.is_err() {
@@ -108,25 +102,18 @@ impl ConcurrentObserver {
             while let Some((sensor_id, msg)) = receiver.recv().await {
                 match msg {
                     SensorMessage::Data(tracing, data) => {
-                        let span = info_span!(parent: &tracing, "data");
-                        let _enter = span.enter();
-                        self.persist_sensor_data(sensor_id, data)
-                            .instrument(span.clone())
+                        self.on_sensor_data(sensor_id, data)
+                            .instrument(tracing.clone())
                             .await
                     }
                     SensorMessage::Log(tracing, log) => {
-                        let span = info_span!(parent: &tracing, "logging");
-                        let _enter = span.enter();
                         self.persist_sensor_log(sensor_id, log)
-                            .instrument(span.clone())
+                            .instrument(tracing.clone())
                             .await
                     }
                     SensorMessage::Reconnected(tracing) => {
-                        let span = info_span!(parent: &tracing, "logging");
-                        let _enter = span.enter();
-
                         let resubscribe_count =
-                            self.resubscribe_sensors().instrument(span.clone()).await;
+                            self.resubscribe_sensors().instrument(tracing.clone()).await;
                         let all_count = self.container.read().await.len();
                         if resubscribe_count != all_count {
                             info!("Resubscribed {}/{} sensors", resubscribe_count, all_count)
@@ -143,6 +130,7 @@ impl ConcurrentObserver {
     /// Dispatches the inter-agent-communication (iac) stream
     /// Each agent sends it's mqtt command over this channel
     /// Blocks caller thread in infinite loop
+    #[tracing::instrument(skip(self))]
     pub async fn dispatch_iac_loop(self: Arc<ConcurrentObserver>) {
         let receiver_res = self.iac_receiver.try_lock();
         if receiver_res.is_err() {
@@ -209,6 +197,7 @@ impl ConcurrentObserver {
     /// Dispatches a interval checking loop
     /// checks if the plugin libary files got updated
     /// Blocks caller thread in infinite loop
+    #[tracing::instrument(skip(self))]
     pub async fn dispatch_plugin_refresh_loop(self: Arc<ConcurrentObserver>) {
         let plugin_dir = self.plugin_dir.as_path();
 
@@ -259,7 +248,8 @@ impl ConcurrentObserver {
         }
     }
 
-    async fn persist_sensor_data(&self, sensor_id: i32, data: SensorDataMessage) {
+    #[tracing::instrument(skip_all)]
+    async fn on_sensor_data(&self, sensor_id: i32, data: SensorDataMessage) {
         if let Some(mut sensor) = self
             .container
             .write()
@@ -276,13 +266,12 @@ impl ConcurrentObserver {
             )
             .await
             {
-                error!(sensor_id = sensor_id, "Failed persiting sensor data: {}", e);
+                error!(sensor_id = sensor_id, "Failed handling sensor data: {}", e);
             }
         } else {
-            warn!(sensor_id = sensor_id, "Sensor not found");
+            error!(sensor_id = sensor_id, "Sensor not found");
         }
     }
-
     async fn persist_sensor_log(&self, sensor_id: i32, log_msg: std::string::String) {
         let max_logs = CONFIG.mqtt_log_count();
         if let Err(e) = sensor_log_model::upsert(&self.db_conn, sensor_id, log_msg, max_logs).await
@@ -291,6 +280,7 @@ impl ConcurrentObserver {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn resubscribe_sensors(&self) -> usize {
         let mut count = 0;
         let container = self.container.read().await;
@@ -306,6 +296,7 @@ impl ConcurrentObserver {
         count
     }
 
+    #[tracing::instrument(skip(self))]
     async fn populate_agents(&self) -> Result<(), DBError> {
         // TODO: Stream
         let start = Utc::now();
@@ -350,6 +341,7 @@ impl ConcurrentObserver {
         Ok(sensor_id)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn subscribe_sensor(&self, sensor: &SensorHandle) -> Result<(), ObserverError> {
         self.mqtt_client.subscribe_sensor(sensor).await?;
         for _ in 0..CONFIG.mqtt_send_retries() {

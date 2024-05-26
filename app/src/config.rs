@@ -1,13 +1,22 @@
+use notify::{PollWatcher, Watcher};
 use once_cell::sync::Lazy;
-use std::sync::Arc;
+use std::sync::mpsc::channel;
+use std::{
+    sync::{Arc, RwLock},
+    time::Duration,
+};
+use tokio::sync::broadcast::{channel as broadcast, Receiver, Sender};
+use tracing::{error, info};
 use yaml_rust::{Yaml, YamlLoader};
 
 use crate::mqtt::{BrokerCredentials, MqttBroker, MqttConnectionDetail, MqttScheme};
 
 pub struct Config {
-    inner: Arc<InnerConfig>,
+    tx: Sender<()>,
+    inner: Arc<RwLock<InnerConfig>>,
 }
 
+#[derive(Debug, Clone)]
 pub struct MappedBroker {
     pub internal: MqttBroker,
     pub external: Vec<MqttBroker>,
@@ -25,36 +34,40 @@ struct InnerConfig {
 }
 
 impl Config {
-    pub fn database_url(&self) -> &String {
-        &self.inner.database_url
+    pub fn updated(&self) -> Receiver<()> {
+        self.tx.subscribe()
     }
 
-    pub fn brokers(&self) -> &Vec<MappedBroker> {
-        &self.inner.brokers
+    pub fn database_url(&self) -> String {
+        self.inner.read().unwrap().database_url.clone()
     }
 
-    pub fn mqtt_client_id(&self) -> &String {
-        &self.inner.mqtt_client_id
+    pub fn brokers(&self) -> Vec<MappedBroker> {
+        self.inner.read().unwrap().brokers.clone()
+    }
+
+    pub fn mqtt_client_id(&self) -> String {
+        self.inner.read().unwrap().mqtt_client_id.clone()
     }
 
     pub fn mqtt_timeout_ms(&self) -> u64 {
-        self.inner.mqtt_timeout_ms
+        self.inner.read().unwrap().mqtt_timeout_ms
     }
 
     pub fn mqtt_send_retries(&self) -> usize {
-        self.inner.mqtt_send_retries
+        self.inner.read().unwrap().mqtt_send_retries
     }
 
     pub fn mqtt_log_count(&self) -> i64 {
-        self.inner.mqtt_log_count
+        self.inner.read().unwrap().mqtt_log_count
     }
 
-    pub fn plugin_dir(&self) -> &String {
-        &self.inner.plugin_dir
+    pub fn plugin_dir(&self) -> String {
+        self.inner.read().unwrap().plugin_dir.clone()
     }
 
-    pub fn server_port(&self) -> &String {
-        &self.inner.server_port
+    pub fn server_port(&self) -> String {
+        self.inner.read().unwrap().server_port.clone()
     }
 }
 
@@ -159,7 +172,7 @@ fn from_external_brokers(yaml: Yaml) -> Vec<MqttBroker> {
 // Usage:
 //let external_brokers: Vec<MqttBroker> = yaml["external"].into();
 
-impl From<Yaml> for Config {
+impl From<Yaml> for InnerConfig {
     fn from(yaml: Yaml) -> Self {
         let database_url = yaml["database"]["url"]
             .as_str()
@@ -196,35 +209,72 @@ impl From<Yaml> for Config {
             .map(MappedBroker::from)
             .collect();
 
+        InnerConfig {
+            plugin_dir: plugin_dir.to_owned(),
+            server_port: server_port.to_owned(),
+            database_url: database_url.to_string(),
+            brokers,
+            mqtt_client_id,
+            mqtt_timeout_ms,
+            mqtt_send_retries,
+            mqtt_log_count,
+        }
+    }
+}
+
+impl From<Yaml> for Config {
+    fn from(yaml: Yaml) -> Self {
+        let (tx, _) = broadcast(128);
         Config {
-            inner: Arc::new(InnerConfig {
-                plugin_dir: plugin_dir.to_owned(),
-                server_port: server_port.to_owned(),
-                database_url: database_url.to_string(),
-                brokers,
-                mqtt_client_id,
-                mqtt_timeout_ms,
-                mqtt_send_retries,
-                mqtt_log_count,
-            }),
+            tx,
+            inner: Arc::new(RwLock::new(InnerConfig::from(yaml))),
         }
     }
 }
 
 pub static CONFIG: Lazy<Config> = Lazy::new(|| {
-    let config = if cfg!(test) {
-        YamlLoader::load_from_str(
-            &std::fs::read_to_string("../config.yaml").expect("Couldn't read config.yaml"),
-        )
-        .expect("Couldn't parse config.yaml")[0]
-            .clone()
+    let config_path = if cfg!(test) {
+        std::path::Path::new("../config.yaml")
     } else {
-        YamlLoader::load_from_str(
-            &std::fs::read_to_string("config.yaml").expect("Couldn't read config.yaml"),
-        )
-        .expect("Couldn't parse config.yaml")[0]
-            .clone()
+        std::path::Path::new("config.yaml")
     };
+    let config = YamlLoader::load_from_str(
+        &std::fs::read_to_string(config_path).expect("Couldn't read config.yaml"),
+    )
+    .expect("Couldn't parse config.yaml")[0]
+        .clone();
+
+    let (tx, rx) = channel();
+    let mut watcher = PollWatcher::new(
+        tx,
+        notify::Config::default()
+            .with_poll_interval(Duration::from_secs(5))
+            .with_compare_contents(true),
+    )
+    .unwrap();
+    if let Err(e) = watcher.watch(config_path, notify::RecursiveMode::NonRecursive) {
+        panic!("Failed to watch plugin directory: {}", e);
+    }
+
+    std::thread::spawn(move || loop {
+        let _ = watcher; // Don't drop the watcher
+        match rx.recv() {
+            Ok(_) => {
+                if let Ok(new_config) = YamlLoader::load_from_str(
+                    &std::fs::read_to_string(config_path).expect("Couldn't read config.yaml"),
+                ) {
+                    *CONFIG.inner.write().unwrap() = InnerConfig::from(new_config[0].clone());
+                    info!("Config file updated");
+                    CONFIG.tx.send(()).unwrap();
+                } else {
+                    error!("Failed to parse config file");
+                }
+            }
+            Err(e) => {
+                error!("Error watching config file: {}", e);
+            }
+        }
+    });
 
     Config::from(config)
 });

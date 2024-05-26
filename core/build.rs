@@ -81,6 +81,6 @@ fn main() {
     }
 
     if !found {
-        panic!("Failed to find std lib in toolchain directory!");
+        eprintln!("Failed to find std lib in toolchain directory!");
     }
 }

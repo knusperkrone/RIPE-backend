@@ -36,7 +36,7 @@ macro_rules! sql_stmnt {
 pub async fn establish_db_connection() -> Option<sqlx::PgPool> {
     let database_url = CONFIG.database_url();
     sqlx::postgres::PgPoolOptions::new()
-        .connect(database_url)
+        .connect(&database_url)
         .await
         .ok()
 }

@@ -16,7 +16,6 @@ once_cell = "*"
 utoipa = { version = "*", features = ["chrono"] }
 
 # derived duplicate dependencies
-slog = "*"
 libloading = "*"
 parking_lot = "*"
 rand = "*"

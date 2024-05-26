@@ -54,6 +54,7 @@ type MqttSender = UnboundedSender<(i32, SensorMessage)>;
 
 #[derive(Debug)]
 pub struct MqttSensorClient {
+    config_updated_handle: JoinHandle<()>,
     inner: Arc<MqttSensorClientInner>,
 }
 
@@ -73,14 +74,29 @@ impl Debug for MqttSensorClientInner {
 
 impl MqttSensorClient {
     pub fn new(sender: MqttSender) -> Self {
+        let inner = Arc::new(MqttSensorClientInner {
+            cli: RwLock::new(None),
+            broker_index: AtomicUsize::new(0),
+            timeout_ms: CONFIG.mqtt_timeout_ms(),
+            is_connected: AtomicBool::new(false),
+            sender,
+        });
+
+        let updated_inner = inner.clone();
+        let config_updated_handle = tokio::spawn(async move {
+            let mut rx = CONFIG.updated();
+            while let Ok(_) = rx.recv().await {
+                let cli = updated_inner.cli.write().await;
+                if let Some((client, _)) = cli.as_ref() {
+                    info!("Config updated, disconnecting MQTT client");
+                    let _ = client.disconnect().await;
+                }
+            }
+        });
+
         MqttSensorClient {
-            inner: Arc::new(MqttSensorClientInner {
-                cli: RwLock::new(None),
-                broker_index: AtomicUsize::new(0),
-                timeout_ms: CONFIG.mqtt_timeout_ms(),
-                is_connected: AtomicBool::new(false),
-                sender,
-            }),
+            inner,
+            config_updated_handle,
         }
     }
 
@@ -88,10 +104,14 @@ impl MqttSensorClient {
         MqttSensorClientInner::connect(self.inner.clone()).await
     }
 
-    pub fn external_brokers(&self) -> Option<&Vec<MqttBroker>> {
+    pub fn external_brokers(&self) -> Option<Vec<MqttBroker>> {
         if self.inner.is_connected() {
             let brokers = CONFIG.brokers();
-            Some(&brokers[self.inner.broker_index.load(Relaxed) % brokers.len()].external)
+            Some(
+                brokers[self.inner.broker_index.load(Relaxed) % brokers.len()]
+                    .clone()
+                    .external,
+            )
         } else {
             None
         }
@@ -107,6 +127,12 @@ impl MqttSensorClient {
 
     pub async fn send_cmd(&self, sensor: &SensorHandle) -> Result<(), MQTTError> {
         self.inner.send_cmd(sensor).await
+    }
+}
+
+impl Drop for MqttSensorClient {
+    fn drop(&mut self) {
+        self.config_updated_handle.abort();
     }
 }
 

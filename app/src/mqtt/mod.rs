@@ -85,7 +85,7 @@ impl MqttSensorClient {
         let updated_inner = inner.clone();
         let config_updated_handle = tokio::spawn(async move {
             let mut rx = CONFIG.updated();
-            while let Ok(_) = rx.recv().await {
+            while rx.recv().await.is_ok() {
                 let cli = updated_inner.cli.write().await;
                 if let Some((client, _)) = cli.as_ref() {
                     info!("Config updated, disconnecting MQTT client");

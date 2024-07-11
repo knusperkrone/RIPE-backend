@@ -77,7 +77,7 @@ fn register_sensor(
                         .map(|sensor| dto::SensorCredentialDto {
                             id: sensor.id,
                             key: sensor.key,
-                            broker: observer.brokers().unwrap_or(vec![]).into(),
+                            broker: observer.brokers().unwrap_or_default().into(),
                         });
                 build_response(resp)
             },
@@ -156,7 +156,7 @@ fn sensor_status(
                     .map(|(data, mut agents)| dto::SensorStatusDto {
                         data: dto::SensorDataDto::from(data),
                         agents: agents.drain(..).map(AgentStatusDto::from).collect(),
-                        broker: observer.brokers().unwrap_or(vec![]).into(),
+                        broker: observer.brokers().unwrap_or_default().into(),
                     });
                 build_response(resp)
             },

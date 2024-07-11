@@ -197,11 +197,7 @@ impl SensorObserver {
     }
 
     pub fn brokers(&self) -> Option<Vec<MqttBroker>> {
-        if let Some(brokers) = self.inner.mqtt_client.external_brokers() {
-            Some(brokers)
-        } else {
-            None
-        }
+        self.inner.mqtt_client.external_brokers()
     }
 
     /*

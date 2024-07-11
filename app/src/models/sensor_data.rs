@@ -14,6 +14,7 @@ pub struct SensorDataDao {
     pub(crate) carbon: Option<i32>,
     pub(crate) conductivity: Option<i32>,
     pub(crate) light: Option<i32>,
+    pub(crate) humidity: Option<f64>,
 }
 
 impl From<SensorDataDao> for SensorDataMessage {
@@ -26,6 +27,7 @@ impl From<SensorDataDao> for SensorDataMessage {
             carbon: val.carbon,
             conductivity: val.conductivity,
             light: val.light,
+            humidity: val.humidity,
         }
     }
 }
@@ -38,7 +40,7 @@ pub async fn insert(
 ) -> Result<(), DBError> {
     let update_result = sql_stmnt!(
         r#"UPDATE sensor_data 
-            SET battery = $3, moisture = $4, temperature = $5, carbon = $6, conductivity = $7, light = $8
+            SET battery = $3, moisture = $4, temperature = $5, carbon = $6, conductivity = $7, light = $8, humidity = $9
             WHERE sensor_id = $1 AND timestamp > NOW() - $2::text::interval"#,
         sensor_id,
         format!("'{} milliseconds'", overleap.num_milliseconds()),
@@ -47,7 +49,8 @@ pub async fn insert(
         dto.temperature,
         dto.carbon,
         dto.conductivity,
-        dto.light
+        dto.light,
+        dto.humidity
     )
     .execute(conn)
     .await?;
@@ -55,8 +58,8 @@ pub async fn insert(
     if update_result.rows_affected() == 0 {
         sql_stmnt!(
             r#"INSERT INTO sensor_data
-                (sensor_id, timestamp, battery, moisture, temperature, carbon, conductivity, light)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+                (sensor_id, timestamp, battery, moisture, temperature, carbon, conductivity, light, humidity)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
             sensor_id,
             dto.timestamp.naive_utc(),
             dto.battery,
@@ -64,7 +67,8 @@ pub async fn insert(
             dto.temperature,
             dto.carbon,
             dto.conductivity,
-            dto.light
+            dto.light,
+            dto.humidity
         )
         .execute(conn)
         .await?;
@@ -79,7 +83,7 @@ pub async fn get_latest(
 ) -> Result<Option<SensorDataDao>, DBError> {
     Ok(sql_stmnt!(
         SensorDataDao,
-        r#"SELECT sd.timestamp, sd.battery, sd.moisture, sd.temperature, sd.carbon, sd.conductivity, sd.light  
+        r#"SELECT sd.timestamp, sd.battery, sd.moisture, sd.temperature, sd.carbon, sd.conductivity, sd.light, sd.humidity
             FROM sensor_data as sd
             JOIN sensors ON (sd.sensor_id = sensors.id)
             WHERE sensors.id = $1 AND sensors.key_b64 = $2
@@ -98,7 +102,7 @@ pub async fn get_latest_unchecked(
 ) -> Result<Option<SensorDataDao>, DBError> {
     Ok(sql_stmnt!(
         SensorDataDao,
-        r#"SELECT sd.timestamp, sd.battery, sd.moisture, sd.temperature, sd.carbon, sd.conductivity, sd.light  
+        r#"SELECT sd.timestamp, sd.battery, sd.moisture, sd.temperature, sd.carbon, sd.conductivity, sd.light, sd.humidity 
             FROM sensor_data as sd
             JOIN sensors ON (sd.sensor_id = sensors.id)
             WHERE sensors.id = $1"#,
@@ -116,7 +120,7 @@ pub async fn get(
 ) -> Result<Vec<SensorDataDao>, DBError> {
     Ok(sql_stmnt!(
         SensorDataDao,
-        r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light   
+        r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light, humidity
             FROM sensor_data 
             WHERE sensor_id = $1 
             AND timestamp >= $2 and timestamp < $3
@@ -133,7 +137,7 @@ pub async fn get(
 pub async fn get_first(conn: &sqlx::PgPool, sensor_id: i32) -> Result<SensorDataDao, DBError> {
     Ok(sql_stmnt!(
         SensorDataDao,
-        r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light   
+        r#"SELECT timestamp, battery, moisture, temperature, carbon, conductivity, light, humidity
             FROM sensor_data 
             WHERE sensor_id = $1 
             ORDER BY timestamp ASC

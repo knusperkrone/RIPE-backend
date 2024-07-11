@@ -299,7 +299,7 @@ impl ThresholdTask {
         until: DateTime<Utc>,
         sender: Arc<AgentStreamSender>,
     ) {
-        if (until - Utc::now()) < Duration::seconds(1) {
+        if (until - Utc::now()) < Duration::seconds(5) {
             warn!("{} received invalid until time", NAME);
             return;
         }

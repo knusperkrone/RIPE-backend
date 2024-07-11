@@ -31,6 +31,7 @@ pub struct SensorDataMessage {
     pub carbon: Option<i32>,
     pub conductivity: Option<i32>,
     pub light: Option<i32>,
+    pub humidity: Option<f64>,
 }
 
 impl std::default::Default for SensorDataMessage {
@@ -43,6 +44,7 @@ impl std::default::Default for SensorDataMessage {
             conductivity: None,
             battery: None,
             carbon: None,
+            humidity: None,
         }
     }
 }

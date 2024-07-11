@@ -112,7 +112,7 @@ impl AgentTrait for ThresholdAgent {
         }
 
         let moisture = data.moisture.unwrap_or(std::f64::MAX) as u32;
-        if moisture < self.min_threshold && self.action_duration_ms > 0 {
+        if moisture < self.min_threshold {
             info!("{} moisture below threshold", NAME);
             let until = Utc::now() + Duration::milliseconds(self.action_duration_ms);
             self.last_action = Some(until);
@@ -299,6 +299,11 @@ impl ThresholdTask {
         until: DateTime<Utc>,
         sender: Arc<AgentStreamSender>,
     ) {
+        if (until - Utc::now()) < Duration::seconds(1) {
+            warn!("{} received invalid until time", NAME);
+            return;
+        }
+
         if self.is_active() {
             let running_state = if is_forced {
                 AgentState::Forced(until)
